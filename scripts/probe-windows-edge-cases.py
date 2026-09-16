@@ -115,7 +115,7 @@ def main():
                 if failures <= 30:
                     print("FAIL", label, len(differences), differences[:16])
 
-        for width in (2, 3, 4, 6, 7, 8):
+        for width in (2, 3, 4, 6, 7, 8, 9, 12, 17):
             pen = check(gdi.CreatePen(0, width, 0), "CreatePen")
             previous = check(gdi.SelectObject(dc, pen), "SelectObject")
             try:

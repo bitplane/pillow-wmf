@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from itertools import chain
 from math import ceil, floor, sqrt
 
 from .geometry import Point, Polygon, StrokeSegment, flatten_cubic
@@ -78,15 +79,11 @@ def _support_index(pen: PenGeometry, dx: int, dy: int) -> int:
     vertices = pen.vertices
     half = len(vertices) // 2
 
-    def support(index):
-        x, y = vertices[index]
-        # Native diamond and hexagonal pen contours resolve equal support
-        # in Y; the other contours resolve it in X. The choice matters
-        # because support vertices are subsequently rounded to half pixels.
-        tie = (y, x) if half <= 3 else (x, y)
-        return (x * dy - y * dx, *tie)
-
-    return max(range(len(vertices)), key=support)
+    # The two centrally reflected half-contours are walked in opposite
+    # directions. Preserve that traversal order at equal cross products,
+    # including the seams: screen-coordinate sorting changes seam ownership.
+    order = chain(range(len(vertices) - 1, half - 1, -1), range(half))
+    return max(order, key=lambda index: vertices[index][0] * dy - vertices[index][1] * dx)
 
 
 def _body(value):
