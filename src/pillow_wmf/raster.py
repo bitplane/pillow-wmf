@@ -82,6 +82,7 @@ class RasterContext(TraceContext):
             "scale_viewport_extent",
             "move_to",
             "line_to",
+            "polygon",
             "rectangle",
             "ellipse",
             "set_pixel",
@@ -140,6 +141,11 @@ class RasterContext(TraceContext):
         elif name == "line_to":
             self._line(self._point(*self._position), self._point(a["x"], a["y"]))
             self._position = a["x"], a["y"]
+        elif name == "polygon":
+            path = [(x * 16, y * 16) for x, y in (self._point(*point) for point in a["points"])]
+            if len(path) >= 2:
+                self._fill_path(path, self._brush.color)
+                self._stroke_path(path, closed=True)
         elif name == "set_pixel":
             self._pixel(*self._point(a["x"], a["y"]), rgb(a["color"]))
         elif name == "save_dc":
