@@ -35,3 +35,26 @@ def test_save_restore_keeps_device_clip_without_copying_or_trimming_it() -> None
     context.set_pixel(5, 5, 0)
     assert context.image.getpixel((4, 4)) == (0, 0, 0)
     assert context.image.getpixel((5, 5)) == (255, 255, 255)
+
+
+def test_polygon_fill_mode_is_saved_and_restored() -> None:
+    context = RasterContext(20, 8)
+    context.select_object(context.create_pen(5, 0, 0))
+    context.select_object(context.create_brush(0, 0, 0))
+    contour = ((1, 1), (7, 1), (7, 7), (1, 7))
+    context.set_polygon_fill_mode(2)
+    context.save_dc()
+    context.set_polygon_fill_mode(1)
+    context.polygon(contour + contour)
+    context.restore_dc(-1)
+    shifted = tuple((x + 10, y) for x, y in contour)
+    context.polygon(shifted + shifted)
+    assert context.image.getpixel((3, 3)) == (255, 255, 255)
+    assert context.image.getpixel((13, 3)) == (0, 0, 0)
+
+
+def test_invalid_polygon_fill_mode_does_not_change_context() -> None:
+    context = RasterContext(8, 8)
+    with pytest.raises(UnsupportedOperation, match="Polygon fill mode"):
+        context.set_polygon_fill_mode(3)
+    assert context.calls == []

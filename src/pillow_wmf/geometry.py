@@ -40,15 +40,15 @@ def flatten_cubic(control: tuple[Point, Point, Point, Point]) -> Polygon:
     return points
 
 
-def contains(polygons: tuple[Polygon, ...], x: int, y: int) -> bool:
-    """Evaluate even-odd coverage at an integer device-pixel coordinate."""
+def contains(polygons: tuple[Polygon, ...], x: int, y: int, *, fill_mode: int = 1) -> bool:
+    """Evaluate alternate or winding coverage at a device-pixel coordinate."""
     px, py = x * 16, y * 16
-    enclosed = False
+    winding = 0
     for polygon in polygons:
         for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1]):
             if (y1 > py) == (y2 > py):
                 continue
             cross = (px - x1) * (y2 - y1) - (py - y1) * (x2 - x1)
             if (cross < 0) if y2 > y1 else (cross > 0):
-                enclosed = not enclosed
-    return enclosed
+                winding += 1 if y2 > y1 else -1
+    return winding != 0 if fill_mode == 2 else winding % 2 != 0
