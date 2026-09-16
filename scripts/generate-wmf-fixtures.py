@@ -69,6 +69,26 @@ def edge_cases():
             offset = index // 4 - 2
             recorder.arc(cx - 10, cy - 10, cx + 10, cy + 10, cx + distance, cy + offset, cx + distance, cy + offset + 1)
         yield f"arc-shallow-width-{width}", recorder
+    # These exact radials expose native control-point and angle-precision
+    # differences; small atlas cells can hide them after quantization.
+    for name, start, end in (
+        ("wrapping-axis", (67, 63), (67, 64)),
+        ("short-controls", (61, 65), (61, 66)),
+        ("cardinal-controls", (61, 64), (61, 65)),
+        ("far-coincident-angles", (62, -16236), (62, -16235)),
+    ):
+        for width in (1, 7):
+            recorder = mapped()
+            recorder.select_object(recorder.create_pen(0, width, 0))
+            recorder.arc(8, 8, 120, 120, *start, *end)
+            yield f"arc-edge-{name}-width-{width}", recorder
+    for width, delta in ((7, (-16, 39)), (8, (-19, 45))):
+        for direction in (-1, 1):
+            recorder = mapped()
+            recorder.select_object(recorder.create_pen(0, width, 0))
+            recorder.move_to(64, 64)
+            recorder.line_to(64 + direction * delta[0], 64 + direction * delta[1])
+            yield f"pen-support-tie-width-{width}-direction-{direction}", recorder
 
 
 def mapped():

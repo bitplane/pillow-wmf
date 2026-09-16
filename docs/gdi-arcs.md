@@ -66,3 +66,12 @@ The regression suite includes six native atlases (96 arcs): all octants,
 short and wrapping sweeps, circular and elliptical bounds, widths 1/3/6, and
 near/far points on identical rays. The old PNG expectations remain unchanged.
 This is measured compatibility coverage, not a claim of exhaustive GDI parity.
+
+Expanded edge probes in [run 35103332031](https://github.com/bitplane/pillow-wmf/actions/runs/35103332031)
+found **85 pixel failures in 360 Arc cases**. Native fixed-point path capture
+also disproves the current control-point model for short sweeps and wrapping
+cardinal endpoints. Very distant, nearly identical radials can produce a full
+native revolution where our model produces a tiny sweep. These are unresolved
+algorithm defects, not acceptable pixel tolerances. The `arc-edge-*` WMFs
+retain representative cases at the original size because small atlas cells
+can conceal control-point differences after rasterization.
