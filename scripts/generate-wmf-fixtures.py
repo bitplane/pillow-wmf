@@ -94,6 +94,30 @@ def arc_cases():
     recorder.line_to(58, 118)  # Arc must leave the current position unchanged.
     yield "arc-radials-and-position", recorder
 
+    recorder = mapped()
+    for style, width, box in (
+        (0, 0, (8, 8, 56, 56)),
+        (0, 3, (68, 8, 116, 56)),
+        (1, 1, (8, 68, 56, 116)),
+        (3, 1, (68, 68, 116, 116)),
+    ):
+        recorder.select_object(recorder.create_pen(style, width, 0))
+        left, top, right, bottom = box
+        recorder.arc(left, top, right, bottom, right + 20, (top + bottom) // 2, left, top)
+    yield "arc-pen-styles", recorder
+
+    for name, viewport, origin in (
+        ("reflect-x", (-128, 128), (64, 8)),
+        ("reflect-y", (128, -128), (8, 64)),
+        ("reflect-both", (-128, -128), (64, 64)),
+    ):
+        recorder = mapped()
+        recorder.set_viewport_extent(*viewport)
+        recorder.set_viewport_origin(*origin)
+        recorder.select_object(recorder.create_pen(0, 1, 0))
+        recorder.arc(8, 8, 56, 56, 56, 32, 32, 8)
+        yield f"arc-{name}", recorder
+
 
 def markers(recorder):
     """Asymmetric logical points; no pen, brush or curve realization involved."""
