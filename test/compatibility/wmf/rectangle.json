@@ -2,7 +2,7 @@
   "oracle": "Windows GDI PlayMetaFile",
   "oracle_version": 1,
   "png_sha256": "778b318466a2bd515259e45f373a5725070d4e0bd6124ce99e559eb3ae79c724",
-  "renderer_sha256": "2b7fcdc3ef8f55397d012b946bd54c46f0ddcdd9eb7e344d7a028ad443458bc5",
+  "renderer_sha256": "2586a1763d424079c8b188b8c7dbdc418ab367100acf9973ac4ae75f256aa7ab",
   "settings": {
     "background": "white",
     "height": 128,
