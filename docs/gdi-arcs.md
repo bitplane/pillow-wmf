@@ -38,11 +38,13 @@ also measures the cap at every subpixel origin: integer centers inset cap
 vertices by one fixed-point unit; fractional centers retain them unchanged.
 This accounts for the fifth pixel in the original wide-Arc failure.
 
-Combined fill/stroke processing flattens the contour before stroking when a
-brush participates. With a null brush, cubic tangents survive. This is measured
+Copy-mode combined fill/stroke processing flattens the contour before stroking
+when a brush participates. With a null brush, cubic tangents survive. This is measured
 with both direct Ellipse and StrokeAndFillPath in
 [run 35098803927](https://github.com/bitplane/pillow-wmf/actions/runs/35098803927),
 and is handled at the shared painting operation, not by an Ellipse rasterizer.
+The [Pie composition probes](gdi-pies.md) extend this result: non-copy ROP2
+modes retain the cubic tangents even when a brush participates.
 
 ## Angular arithmetic and handle construction
 

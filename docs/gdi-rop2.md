@@ -7,13 +7,20 @@ functions from 1 to 16. Subtracting one gives a four-bit truth table for
 to every bit of each RGB channel. The default is `R2_COPYPEN` (13); the
 selected mode is part of saved DC state.
 
-The compositor runs after path coverage and application clipping. A stroke
-first unions the pixels of all its segment bodies, caps and joins, so their
-overlap paints once. For a filled outlined shape, the pen owns pixels covered
-by the outline; the brush paints the remaining fill pixels. Separate drawing
-calls still paint separately, so drawing the same XOR line twice cancels it.
-This is one coverage/composition rule across lines, polylines, polygons,
-rectangles and ellipses.
+The compositor runs after path coverage and application clipping. Wide strokes
+union segment bodies and joins before painting. Cosmetic strokes instead emit
+pixels in path order: a retraced pixel is painted again, so XOR can cancel
+within a single figure as well as across separate calls.
+Opaque style gaps are emitted before foreground marks; both passes retain
+repeated coverage, with foreground priority where the style retraces itself.
+
+Filled cosmetic paths paint the brush fill first and then the outline; their
+coverage can overlap. Wide combined fill/stroke excludes outline coverage from
+the brush fill. Rectangle retains its existing reserved-outline contract.
+Copy-mode combined painting flattens curves before widening; non-copy ROP2
+modes preserve their endpoint tangents. These distinctions were exposed by the
+[Pie holdouts and cross-primitive composition probes](gdi-pies.md), rather than
+inferred from copy-mode images where overlapping writes can be invisible.
 
 The Windows reference suite checks all 16 modes with nontrivial RGB source and
 destination colours on both wide lines and solid fills. Further fixtures check

@@ -267,11 +267,11 @@ class RasterContext(TraceContext):
 
     def _stroke_path(self, path: DevicePath, *, miter=False) -> None:
         if self._realized_pen().cosmetic:
-            fragments = tuple(self._cosmetic_fragments((path,)))
             # Opaque style gaps are painted beneath foreground marks, even
             # when the figure retraces itself. Keep multiplicity in each pass.
-            for foreground in (False, True):
-                for (x, y), mark in fragments:
+            passes = (False, True) if self._pen.style != 0 and self._background_mode == 2 else (True,)
+            for foreground in passes:
+                for (x, y), mark in self._cosmetic_fragments((path,)):
                     if mark == foreground:
                         self._pixel(x, y, self._pen.color if foreground else self._background_color)
             return
