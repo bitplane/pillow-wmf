@@ -31,6 +31,7 @@ def main():
         bind(gdi, "DeleteObject", boolean, ptr)
         bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
         bind(gdi, "GdiFlush", boolean)
+        bind(gdi, "Polyline", boolean, ptr, ctypes.POINTER(wintypes.POINT), integer)
         for name, box in (
             ("even", (24, 24, 56, 56)),
             ("odd", (24, 24, 57, 57)),
@@ -48,9 +49,12 @@ def main():
             print(f"ellipse-{name}: {len(points)} vertices {points}")
             check(gdi.AbortPath(dc), "AbortPath")
 
-            def raster(*, path=False, flatten=False, box=box):
+            def raster(*, path=False, flatten=False, polyline=False, box=box, points=points):
                 ctypes.memset(bits, 255, 128 * 128 * 4)
-                if path:
+                if polyline:
+                    vertices = (wintypes.POINT * len(points))(*(wintypes.POINT(x, y) for x, y, _ in points))
+                    check(gdi.Polyline(dc, vertices, len(vertices)), "Polyline")
+                elif path:
                     check(gdi.BeginPath(dc), "BeginPath")
                     check(gdi.Ellipse(dc, *box), "Ellipse")
                     check(gdi.EndPath(dc), "EndPath")
@@ -63,7 +67,11 @@ def main():
                 return ctypes.string_at(bits, 128 * 128 * 4)
 
             direct = raster()
-            for variant, image in (("path", raster(path=True)), ("flat", raster(path=True, flatten=True))):
+            for variant, image in (
+                ("path", raster(path=True)),
+                ("flat", raster(path=True, flatten=True)),
+                ("polyline", raster(polyline=True)),
+            ):
                 different = sum(
                     direct[index : index + 4] != image[index : index + 4] for index in range(0, len(direct), 4)
                 )
