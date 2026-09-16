@@ -21,6 +21,7 @@ def main():
             bind(gdi, name, boolean, ptr) if name != "GdiFlush" else bind(gdi, name, boolean)
         bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
         bind(gdi, "Arc", boolean, ptr, *(integer for _ in range(8)))
+        bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
         cases = (
             (8, 8, 47, 47, 47, 27, 27, 8),
             (68, 8, 107, 47, 87, 8, 68, 27),
@@ -36,6 +37,13 @@ def main():
             check(gdi.FlattenPath(dc), "FlattenPath")
             print("arc-flat", case, path_points(gdi, dc))
             check(gdi.AbortPath(dc), "AbortPath")
+            check(gdi.SetViewportExtEx(dc, 2048, 2048, None), "SetViewportExtEx")
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.Arc(dc, *case), "Arc")
+            check(gdi.EndPath(dc), "EndPath")
+            print("arc-raw-16x", case, path_points(gdi, dc))
+            check(gdi.AbortPath(dc), "AbortPath")
+            check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
             ctypes.memset(bits, 255, 128 * 128 * 4)
             check(gdi.Arc(dc, *case), "Arc")
             check(gdi.GdiFlush(), "GdiFlush")
