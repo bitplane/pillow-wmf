@@ -54,7 +54,39 @@ def cases():
     yield from chord_cases("pie")
     yield from pie_regression_cases()
     yield from round_rect_cases()
+    yield from inside_frame_cases()
     yield from edge_cases()
+
+
+def inside_frame_cases():
+    for operation in ("rectangle", "ellipse", "round_rect", "arc", "chord", "pie"):
+        for brush in (0, 1):
+            recorder = mapped()
+            recorder.select_object(recorder.create_brush(brush, 0x00CC8844, 0))
+            for i, width in enumerate((0, 1, 2, 3, 4, 7, 20, 40)):
+                x, y = 6 + i % 4 * 32, 12 + i // 4 * 64
+                recorder.select_object(recorder.create_pen(6, width, 0x00402010))
+                args = (x, y, x + 21, y + 37)
+                if operation == "round_rect":
+                    args += (13, 19)
+                elif operation in ("arc", "chord", "pie"):
+                    args += (x + 30, y + 10, x - 10, y + 28)
+                getattr(recorder, operation)(*args)
+            yield f"insideframe-{operation}-brush-{brush}", recorder
+    for sx, sy in ((2, 1), (1, 2), (-1, 1), (2, 2)):
+        recorder = mapped()
+        recorder.set_viewport_origin(128 if sx < 0 else 0, 0)
+        recorder.set_viewport_extent(128 * sx, 128 * sy)
+        recorder.select_object(recorder.create_pen(6, 7, 0x00402010))
+        recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+        recorder.ellipse(8, 8, 56, 56)
+        recorder.rectangle(8, 64, 56, 112)
+        yield f"insideframe-mapping-{sx}-{sy}", recorder
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(6, 7, 0x00402010))
+    recorder.polyline(((8, 8), (112, 32), (8, 56)))
+    recorder.polygon(((8, 72), (112, 80), (48, 112)))
+    yield "insideframe-unbounded", recorder
 
 
 def round_rect_cases():
