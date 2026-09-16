@@ -631,6 +631,35 @@ def styled_pen_cases():
         recorder.line_to(120, y)
     yield "pen-styles-wide", recorder
 
+    for style in range(1, 5):
+        recorder = mapped()
+        recorder.set_background_mode(1)
+        recorder.select_object(recorder.create_pen(style, 1, 0x00CA5BE1))
+        recorder.select_object(recorder.create_brush(1, 0, 0))
+        recorder.ellipse(8, 8, 57, 43)
+        recorder.ellipse(66, 16, 121, 69)
+        recorder.ellipse(17, 76, 103, 111)
+        yield f"pen-style-{style}-ellipses", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(1, 1, 0x00CA5BE1))
+    recorder.set_window_extent(64, 64)
+    recorder.move_to(5, 10)
+    recorder.line_to(60, 10)
+    recorder.select_object(recorder.create_pen(2, 0, 0x00CA5BE1))
+    recorder.move_to(5, 20)
+    recorder.line_to(60, 20)
+    yield "pen-styles-scaled", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(1, 1, 0x00CA5BE1))
+    recorder.move_to(-20, 12)
+    recorder.line_to(120, 12)
+    recorder.intersect_clip_rect(35, 0, 80, 128)
+    recorder.move_to(7, 24)
+    recorder.line_to(120, 24)
+    yield "pen-style-clipped-phase", recorder
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
