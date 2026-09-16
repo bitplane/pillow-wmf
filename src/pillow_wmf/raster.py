@@ -394,6 +394,7 @@ class RasterContext(TraceContext):
                         pen,
                         cap_start=collapsed or not path.closed and index == 0,
                         cap_end=collapsed or not path.closed and index == len(path.segments) - 1,
+                        miter=miter and not collapsed,
                     )
                     pixels.update(self._contour_pixels((outline,)))
             if not pen.cosmetic:

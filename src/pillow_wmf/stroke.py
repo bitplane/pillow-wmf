@@ -69,7 +69,9 @@ def realize_pen(width: int, scale_x=1, scale_y=1) -> PenGeometry:
         half = [(rx, 0)]
         half += flatten_cubic(((rx, 0), (rx, -cy), (cx, -ry), (0, -ry)))
         half += flatten_cubic(((0, -ry), (-cx, -ry), (-rx, -cy), (-rx, 0)))
-        half.pop()
+        # Keep the semicircle's terminal vertex: reflection duplicates both
+        # seam vertices. Native contour traversal visits those duplicates;
+        # they matter when rounded body support differs from the pen vertex.
     return PenGeometry(tuple(half + [(-x, -y) for x, y in half]), cosmetic)
 
 
@@ -82,12 +84,15 @@ def _support_index(pen: PenGeometry, dx: int, dy: int) -> int:
     # The two centrally reflected half-contours are walked in opposite
     # directions. Preserve that traversal order at equal cross products,
     # including the seams: screen-coordinate sorting changes seam ownership.
-    order = chain(range(len(vertices) - 1, half - 1, -1), range(half))
+    terminal = int(vertices[half - 1] == vertices[half])
+    order = chain(range(len(vertices) - 1 - terminal, half - 1, -1), range(half - terminal))
     return max(order, key=lambda index: vertices[index][0] * dy - vertices[index][1] * dx)
 
 
-def _body(value):
-    return (1 if value >= 0 else -1) * ((abs(value) + 4) // 8) * 8
+def _body(value, *, miter=False):
+    # Direct GDI mitered frames own horizontal half-step ties inward;
+    # other support coordinates own them outward on the half-pixel grid.
+    return (1 if value >= 0 else -1) * ((abs(value) + (3 if miter else 4)) // 8) * 8
 
 
 def _cap(value, origin: Point):
@@ -97,7 +102,7 @@ def _cap(value, origin: Point):
     return value - (1 if value > 0 else -1 if value < 0 else 0) * inset
 
 
-def widen_segment(segment: StrokeSegment, pen: PenGeometry, *, cap_start=True, cap_end=True) -> Polygon:
+def widen_segment(segment: StrokeSegment, pen: PenGeometry, *, cap_start=True, cap_end=True, miter=False) -> Polygon:
     """Construct a stroke body and requested endpoint caps in 28.4 units."""
     vertices = pen.vertices
     half = len(vertices) // 2
@@ -106,8 +111,11 @@ def widen_segment(segment: StrokeSegment, pen: PenGeometry, *, cap_start=True, c
     outline = []
     for origin, cap in ((segment.start, cap_start), (segment.end, cap_end)):
         for offset in range(half + 1) if cap else (0, half):
-            x, y = vertices[(index + offset) % len(vertices)]
-            x, y = (_body(x), _body(y)) if offset in (0, half) else (_cap(x, origin), _cap(y, origin))
+            position = (index + offset) % len(vertices)
+            if offset not in (0, half) and vertices[position] == vertices[(position + 1) % len(vertices)]:
+                continue
+            x, y = vertices[position]
+            x, y = (_body(x, miter=miter), _body(y)) if offset in (0, half) else (_cap(x, origin), _cap(y, origin))
             outline.append((origin[0] + x, origin[1] + y))
         index = (index + half) % len(vertices)
     return outline
@@ -127,8 +135,8 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
     count = len(vertices)
     i = (_support_index(pen, dx1, dy1) + (count // 2 if turn < 0 else 0)) % count
     j = (_support_index(pen, dx2, dy2) + (count // 2 if turn < 0 else 0)) % count
-    start = tuple(vertex[axis] + _body(vertices[i][axis]) for axis in (0, 1))
-    end = tuple(vertex[axis] + _body(vertices[j][axis]) for axis in (0, 1))
+    start = tuple(vertex[axis] + _body(vertices[i][axis], miter=miter and axis == 0) for axis in (0, 1))
+    end = tuple(vertex[axis] + _body(vertices[j][axis], miter=miter and axis == 0) for axis in (0, 1))
     outline = [vertex, start]
     if miter:
         t = Fraction((end[0] - start[0]) * dy2 - (end[1] - start[1]) * dx2, turn)
@@ -138,6 +146,8 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
         while i != j:
             i = (i + step) % count
             if i != j:
+                if step > 0 and vertices[i] == vertices[(i + 1) % count]:
+                    continue
                 outline.append((vertex[0] + _cap(vertices[i][0], vertex), vertex[1] + _cap(vertices[i][1], vertex)))
     outline.append(end)
     return outline
