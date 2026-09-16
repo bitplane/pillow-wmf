@@ -1,17 +1,13 @@
 """Construct the exclusive-bound ellipse as a fixed-point device path."""
 
 from itertools import pairwise
-from math import atan2, ceil, cos, floor, pi, sin, sqrt
-from struct import pack, unpack
+from math import ceil, floor, sqrt
 
+from .gdi_math import SHORT_ANGLE, atan2_degrees, sincos_degrees
 from .geometry import Point, Polygon, flatten_cubic
 
 _SCALE = 16
 _CUBIC_CIRCLE_CONTROL = 4 * (sqrt(2) - 1) / 3
-# FLOAT pi in the degree conversion reproduces native quadrant ownership at
-# cardinal radials. Do not snap the resulting angles to multiples of 90.
-# This precision model is inferred from GetPath; see docs/gdi-arcs.md.
-_FLOAT_PI = unpack("<f", pack("<f", pi))[0]
 
 
 def ellipse_cubics(left: int, top: int, right: int, bottom: int) -> tuple[tuple[Point, Point, Point, Point], ...]:
@@ -81,16 +77,16 @@ def arc_cubics(
     radial_ry = (bottom - top) / 2
 
     def angle(point: tuple[int, int]) -> float:
-        value = atan2((radial_cy - point[1]) / radial_ry, (point[0] - radial_cx) / radial_rx) * 180 / _FLOAT_PI
-        return value if value >= 0 else value + 360
+        return atan2_degrees((radial_cy - point[1]) / radial_ry, (point[0] - radial_cx) / radial_rx)
 
     first, last = angle(start), angle(end)
+    accurate = 0 < abs(last - first) < SHORT_ANGLE
     if last <= first:
         last += 360
     boundaries = [first]
     for quadrant in range(1, 8):
         boundary = quadrant * 90
-        if first < boundary < last:
+        if first < boundary <= last:
             boundaries.append(boundary)
     boundaries.append(last)
 
@@ -103,15 +99,23 @@ def arc_cubics(
         if 0 < index < len(boundaries) - 2:
             cubics.append(quadrants[round(a / 90) % 4])
             continue
-        a, b = a * pi / 180, b * pi / 180
-        half = (b - a) / 2
-        factor = 4 / 3 * (1 - cos(half)) / sin(half)
-        cubic = (
-            device_point(cos(a), -sin(a)),
-            device_point(cos(a) - factor * sin(a), -sin(a) - factor * cos(a)),
-            device_point(cos(b) + factor * sin(b), -sin(b) + factor * cos(b)),
-            device_point(cos(b), -sin(b)),
-        )
+        s0, c0 = sincos_degrees(a, accurate=accurate)
+        s3, c3 = sincos_degrees(b, accurate=accurate)
+        determinant = c0 * s3 - c3 * s0
+        if determinant == 0:
+            cubic = (device_point(c0, -s0),) * 4
+        else:
+            # Intersect the endpoint tangent lines n.T = 1. With table
+            # trigonometry this is not interchangeable with tan(sweep/4).
+            tx, ty = (s3 - s0) / determinant, (c0 - c3) / determinant
+            _, half_cosine = sincos_degrees((b - a) / 2)
+            weight = 4 * half_cosine / (3 * (1 + half_cosine))
+            cubic = (
+                device_point(c0, -s0),
+                device_point(c0 + weight * (tx - c0), -s0 - weight * (ty - s0)),
+                device_point(c3 + weight * (tx - c3), -s3 - weight * (ty - s3)),
+                device_point(c3, -s3),
+            )
         # Quantize terminal-piece controls before flattening. Intermediate
         # quadrants use the ellipse construction, not this trigonometric cut.
         cubic = tuple(tuple(round(value) for value in point) for point in cubic)
