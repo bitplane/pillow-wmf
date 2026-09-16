@@ -98,6 +98,13 @@ silhouette; for example, a logical width of 3 at half scale selects the width-2
 device silhouette.
 
 Other pens are constructed from a cubic semicircle and its central reflection.
+The stored half-contours retain their terminal vertices. Support searches and
+forward walks omit the repeated terminals; reverse join walks visit them.
+This directional traversal matters when a seam's unrounded pen coordinate
+differs from its rounded body support. Deduplicating the two halves into a ring
+loses that boundary vertex. Native widened nearly-collapsed arcs in
+[run 35151070145](https://github.com/bitplane/pillow-wmf/actions/runs/35151070145)
+expose the distinction; the measured join is retained as a unit test.
 The transformed radii are quantized to 28.4 units. Cubic control quantization
 preserves the orientation of the transformed first basis vector; reflection
 can consequently change a boundary vertex by one fixed-point unit.
@@ -135,6 +142,10 @@ Direct `Rectangle` drawing uses square (mitered) corners. Recording a Rectangle
 in a path and calling WidenPath instead exposes the selected pen's round joins;
 those two native operations must not be conflated. Rectangle requests mitered
 joins from the shared stroker; Ellipse requests round joins.
+For these direct frames, horizontal support offsets own exact half-step ties
+toward zero, while vertical support retains the round stroker's outward tie.
+Non-ties use the same half-pixel quantization. This is the measured direct-frame
+contract, not a claim about arbitrary ExtCreatePen miter paths.
 
 ## Clipping
 

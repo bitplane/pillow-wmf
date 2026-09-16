@@ -84,6 +84,7 @@ def _support_index(pen: PenGeometry, dx: int, dy: int) -> int:
     # The two centrally reflected half-contours are walked in opposite
     # directions. Preserve that traversal order at equal cross products,
     # including the seams: screen-coordinate sorting changes seam ownership.
+    # A stored half-contour terminal is not another support candidate.
     terminal = int(vertices[half - 1] == vertices[half])
     order = chain(range(len(vertices) - 1 - terminal, half - 1, -1), range(half - terminal))
     return max(order, key=lambda index: vertices[index][0] * dy - vertices[index][1] * dx)
@@ -112,6 +113,7 @@ def widen_segment(segment: StrokeSegment, pen: PenGeometry, *, cap_start=True, c
     for origin, cap in ((segment.start, cap_start), (segment.end, cap_end)):
         for offset in range(half + 1) if cap else (0, half):
             position = (index + offset) % len(vertices)
+            # Forward cap enumeration excludes each half's terminal sentinel.
             if offset not in (0, half) and vertices[position] == vertices[(position + 1) % len(vertices)]:
                 continue
             x, y = vertices[position]
@@ -146,6 +148,8 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
         while i != j:
             i = (i + step) % count
             if i != j:
+                # The reverse walker visits terminal sentinels; the forward
+                # walker starts the next half at its head instead.
                 if step > 0 and vertices[i] == vertices[(i + 1) % count]:
                     continue
                 outline.append((vertex[0] + _cap(vertices[i][0], vertex), vertex[1] + _cap(vertices[i][1], vertex)))

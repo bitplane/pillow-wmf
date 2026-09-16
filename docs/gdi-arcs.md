@@ -8,7 +8,7 @@ and [GDI Arc contract](https://learn.microsoft.com/en-us/windows/win32/api/wingd
 
 The native path probes in `scripts/probe-windows-arcs.py` measure the following
 construction for the tested cases. GDI normalizes radial directions against the untrimmed
-device rectangle, then excludes the right and bottom edges from the drawn
+logical rectangle, preserving reflection, then excludes the right and bottom edges from the drawn
 ellipse. It divides the counterclockwise sweep at quadrant boundaries and
 builds a cubic for each part. Generated controls are rounded to 28.4 fixed
 point *before* cubic flattening. Intermediate quadrants use the same control
@@ -17,6 +17,9 @@ even when they span almost a whole quadrant. `Arc`, `BeginPath`/`Arc`/`StrokePat
 flattened path produced identical **cosmetic** pixels in the native probes. This is also
 consistent with [Wine's path construction](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/path.c),
 although Windows reference PNGs remain the compatibility oracle.
+Fractional [inside-frame probes](gdi-insideframe.md) distinguish logical radial
+normalization from normalization after integer device mapping; the latter loses
+angle precision. Drawing bounds are still constructed in device space.
 
 Endpoint coverage comes entirely from the [shared GIQ rasterizer](gdi-strokes.md#cosmetic-lines).
 The previous radial-coordinate-based endpoint adjustment was incorrect: moving

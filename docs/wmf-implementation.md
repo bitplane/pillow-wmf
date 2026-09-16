@@ -26,7 +26,8 @@ there are 68 callable operations. All 70 have structural round-trip tests.
 This does **not** mean 70 operations render correctly. The raster backend rejects
 unsupported operations explicitly. See the individual GDI design notes for
 measured coverage and limits, including [Arc](gdi-arcs.md), [Chord](gdi-chords.md)
-and [Pie](gdi-pies.md), plus [RoundRect](gdi-roundrects.md).
+and [Pie](gdi-pies.md), plus [RoundRect](gdi-roundrects.md) and
+[inside-frame pens](gdi-insideframe.md).
 
 The structural reader parses fields without realizing graphics objects. A valid
 envelope containing `BitmapData` is not certification that the bitmap itself is

@@ -8,13 +8,13 @@ Native paths captured before implementation in
 [run 35147100299](https://github.com/bitplane/pillow-wmf/actions/runs/35147100299)
 establish the construction used here:
 
-- Map the box and corner dimensions to device space; use the magnitudes of
-  the corner dimensions and clamp them to the original box dimensions.
+- Establish corner proportions from the magnitudes of the logical corner and
+  box dimensions, clamping each proportion to one. Map the box to device space.
 - If either corner dimension is zero, construct an ordinary Rectangle. This
   also uses Rectangle's null-pen bounds and reserved-outline painting behavior.
 - Otherwise use the shared adjusted ellipse bounds, including PS_NULL's
-  centre/radius adjustment. Multiply each adjusted half-extent by the corner
-  dimension divided by the original box dimension, then round to a sixteenth
+  centre/radius adjustment. Multiply each adjusted half-extent by the logical
+  corner proportion, then round to a sixteenth
   of a pixel, with half ties upward.
 - Place four canonical ellipse quarters at the four corner centres. Start on
   the right edge near the top and proceed counterclockwise, retaining the
@@ -26,6 +26,10 @@ half-extent is 888: `888 * 21 / 112 = 166.5`, which becomes 167, not 166.
 The corner diameter is therefore not simply copied into the exclusive drawing
 box. Native control points expose this distinction even when PNGs happen to
 match.
+
+The later [inside-frame probes](gdi-insideframe.md) establish that those ratios
+precede device-coordinate rounding: separately rounding mapped corner and box
+sizes is incorrect under fractional scaling.
 
 `ellipse._ellipse_quadrants` now supplies the same canonical cubic controls
 for both Ellipse and RoundRect. The latter only translates those quarters and
