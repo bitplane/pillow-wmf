@@ -33,12 +33,12 @@ jobs:
           python-version: "3.13"
       - name: Install project
         run: python -m pip install .
-      - name: Update stale reference images
+      - name: Render missing reference images
         run: python scripts/update-goldens.py
       - name: Commit reference images
         shell: bash
         run: |
-          git add -- 'test/compatibility/wmf/*.png' 'test/compatibility/wmf/*.json'
+          git add -- 'test/compatibility/wmf/*.png'
           if git diff --cached --quiet; then
             echo "Reference images are already current"
             exit 0

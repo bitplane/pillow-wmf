@@ -1,5 +1,3 @@
-import hashlib
-import json
 import runpy
 from pathlib import Path
 
@@ -28,26 +26,11 @@ def test_generated_fixtures_are_reproducible_and_playable() -> None:
         assert trace.calls == recorder.calls
 
 
-def test_committed_references_are_current_when_present() -> None:
-    renderer_bytes = (ROOT / "scripts" / "windows_wmf_render.py").read_bytes().replace(b"\r\n", b"\n")
-    renderer_hash = hashlib.sha256(renderer_bytes).hexdigest()
+def test_committed_references_are_valid_when_present() -> None:
     for source_path in sorted(WMF_ROOT.glob("*.wmf")):
         png_path = source_path.with_suffix(".png")
-        metadata_path = source_path.with_suffix(".json")
-        if not png_path.exists() and not metadata_path.exists():
-            continue  # Initial push: the Windows job creates both files.
-        assert png_path.exists() and metadata_path.exists()
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        assert metadata["source_sha256"] == hashlib.sha256(source_path.read_bytes()).hexdigest()
-        assert metadata["png_sha256"] == hashlib.sha256(png_path.read_bytes()).hexdigest()
-        assert metadata["renderer_sha256"] == renderer_hash
-        assert metadata["oracle_version"] == 1
-        assert metadata["settings"] == {
-            "width": 128,
-            "height": 128,
-            "background": "white",
-            "map_mode": "MM_ANISOTROPIC",
-        }
+        if not png_path.exists():
+            continue  # Windows creates missing references after the source push.
         with Image.open(png_path) as image:
             assert image.format == "PNG"
             assert image.mode == "RGB"

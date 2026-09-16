@@ -1,0 +1,3 @@
+*.py text eol=lf
+*.wmf binary
+*.png binary
