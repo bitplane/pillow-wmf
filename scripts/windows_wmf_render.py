@@ -51,7 +51,7 @@ def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
     delete_meta = api("DeleteMetaFile", wintypes.BOOL, ptr)
     create_dc = api("CreateCompatibleDC", ptr, ptr)
     delete_dc = api("DeleteDC", wintypes.BOOL, ptr)
-    create_dib = api("CreateDIBSection", ptr, ptr, wintypes.UINT, ctypes.POINTER(ptr), ptr, dword)
+    create_dib = api("CreateDIBSection", ptr, ptr, ptr, wintypes.UINT, ctypes.POINTER(ptr), ptr, dword)
     select = api("SelectObject", ptr, ptr, ptr)
     delete_object = api("DeleteObject", wintypes.BOOL, ptr)
     set_map_mode = api("SetMapMode", integer, ptr, integer)
