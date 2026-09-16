@@ -8,7 +8,7 @@ from fractions import Fraction
 from PIL import Image
 
 from .clip import ClipRegion
-from .ellipse import arc_figure, ellipse_cubics
+from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
 from .mapping import Mapping
@@ -118,6 +118,7 @@ class RasterContext(TraceContext):
             "arc",
             "chord",
             "pie",
+            "round_rect",
             "set_pixel",
             "save_dc",
             "restore_dc",
@@ -228,7 +229,7 @@ class RasterContext(TraceContext):
         elif name == "offset_clip_region":
             dx, dy = self.mapping.vector(a["x"], a["y"])
             self._clip = self._clip.offset(dx, dy)
-        elif name in {"rectangle", "ellipse", "arc", "chord", "pie"}:
+        elif name in {"rectangle", "ellipse", "arc", "chord", "pie", "round_rect"}:
             left, top = self._point(a["left"], a["top"])
             right, bottom = self._point(a["right"], a["bottom"])
             left, right = sorted((left, right))
@@ -238,6 +239,13 @@ class RasterContext(TraceContext):
                     self._rectangle(left, top, right, bottom)
                 elif name == "ellipse":
                     self._ellipse(left, top, right, bottom)
+                elif name == "round_rect":
+                    width, height = self.mapping.vector(a["ellipse_width"], a["ellipse_height"])
+                    if not width or not height:
+                        self._rectangle(left, top, right, bottom)
+                    else:
+                        path = round_rect_figure(left, top, right, bottom, width, height, null_pen=self._pen.style == 5)
+                        self._paint_polygons((path,))
                 else:
                     start = self._point(a["start_x"], a["start_y"])
                     end = self._point(a["end_x"], a["end_y"])

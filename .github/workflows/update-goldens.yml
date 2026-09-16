@@ -56,6 +56,7 @@ jobs:
       - name: Render missing reference images
         run: python scripts/update-goldens.py
       - name: Probe native RoundRect paths
+        if: github.event_name == 'workflow_dispatch'
         run: python scripts/probe-windows-roundrects.py
       - name: Probe native Pie paths
         if: github.event_name == 'workflow_dispatch'

@@ -4,7 +4,41 @@ import ctypes
 from ctypes import wintypes
 from itertools import product
 
-from windows_wmf_render import bind, check, reference_surface
+from windows_wmf_render import bind, check, reference_surface, render_wmf
+
+from pillow_wmf import Metafile, RasterContext, Recorder, play
+from pillow_wmf.ellipse import round_rect_figure
+
+
+def verify_pixels():
+    failures = 0
+    cases = product(
+        ((13, 17, 113, 110), (6, 9, 29, 32), (61, 8, 62, 120), (8, 8, 8, 64)),
+        ((0, 13), (1, 1), (3, 5), (17, 29), (200, 200), (-17, -29)),
+        ((0, 1), (0, 7), (4, 1), (5, 1)),
+        (0, 1, 2),
+    )
+    for index, (box, size, pen, brush) in enumerate(cases):
+        recorder = Recorder()
+        recorder.select_object(recorder.create_pen(*pen, 0x00402010))
+        recorder.select_object(recorder.create_brush(brush, 0x00CC8844, 5))
+        recorder.set_rop2(7 if index % 3 == 0 else 13)
+        recorder.set_background_mode(1 if index % 2 else 2)
+        if index % 5 == 0:
+            recorder.intersect_clip_rect(17, 23, 91, 103)
+        recorder.round_rect(*box, *size)
+        data = recorder.to_bytes()
+        native = render_wmf(data, 128, 128)
+        context = RasterContext(128, 128)
+        assert play(Metafile.from_bytes(data), context, strict=True) == ()
+        differing = sum(
+            a != b for a, b in zip(native.get_flattened_data(), context.image.get_flattened_data(), strict=True)
+        )
+        if differing:
+            failures += 1
+            print("roundrect-pixels-FAIL", index, box, size, pen, brush, differing)
+    print("roundrect-pixel-matrix", index + 1, failures)
+    assert not failures
 
 
 def main():
@@ -32,6 +66,14 @@ def main():
                     points = (wintypes.POINT * count)()
                     kinds = (ctypes.c_ubyte * count)()
                     assert gdi.GetPath(dc, points, kinds, count) == count
+                    path = round_rect_figure(*box, *size, null_pen=style == 5)
+                    expected = (path.commands[0][0], *(p for c in path.commands[:-1] for p in c[1:]))
+                    assert tuple((p.x, p.y) for p in points) == expected, (style, width, box, size)
+                    expected_kinds = [6]
+                    for command in path.commands[:-1]:
+                        expected_kinds.extend([4] * 3 if len(command) == 4 else [2])
+                    expected_kinds[-1] |= 1
+                    assert tuple(kinds) == tuple(expected_kinds)
                     print(
                         "RoundRect",
                         style,
@@ -49,3 +91,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    verify_pixels()

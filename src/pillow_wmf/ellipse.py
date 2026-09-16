@@ -30,30 +30,47 @@ def ellipse_cubics(
     left_fixed, top_fixed, right_fixed, bottom_fixed = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
     cx, cy = (left_fixed + right_fixed) // 2, (top_fixed + bottom_fixed) // 2
     rx, ry = (right_fixed - left_fixed) // 2, (bottom_fixed - top_fixed) // 2
+    return tuple(tuple((cx + x, cy + y) for x, y in curve) for curve in _ellipse_quadrants(rx, ry))
+
+
+def _ellipse_quadrants(rx: int, ry: int):
+    """Four canonical cubic quarters about the origin, in device sixteenths."""
     horizontal_control = ceil(_CUBIC_CIRCLE_CONTROL * rx)
     vertical_control = floor(_CUBIC_CIRCLE_CONTROL * ry)
-    arcs = (
-        (
-            (right_fixed, cy),
-            (right_fixed, cy - vertical_control),
-            (cx + horizontal_control, top_fixed),
-            (cx, top_fixed),
-        ),
-        ((cx, top_fixed), (cx - horizontal_control, top_fixed), (left_fixed, cy - vertical_control), (left_fixed, cy)),
-        (
-            (left_fixed, cy),
-            (left_fixed, cy + vertical_control),
-            (cx - horizontal_control, bottom_fixed),
-            (cx, bottom_fixed),
-        ),
-        (
-            (cx, bottom_fixed),
-            (cx + horizontal_control, bottom_fixed),
-            (right_fixed, cy + vertical_control),
-            (right_fixed, cy),
-        ),
+    return (
+        ((rx, 0), (rx, -vertical_control), (horizontal_control, -ry), (0, -ry)),
+        ((0, -ry), (-horizontal_control, -ry), (-rx, -vertical_control), (-rx, 0)),
+        ((-rx, 0), (-rx, vertical_control), (-horizontal_control, ry), (0, ry)),
+        ((0, ry), (horizontal_control, ry), (rx, vertical_control), (rx, 0)),
     )
-    return arcs
+
+
+def round_rect_figure(left, top, right, bottom, ellipse_width, ellipse_height, *, null_pen=False) -> DevicePath:
+    """Place canonical ellipse quarters at four centres and connect the edges."""
+    if not ellipse_width or not ellipse_height:
+        return DevicePath.polyline(
+            (
+                ((right - 1) * 16, top * 16),
+                (left * 16, top * 16),
+                (left * 16, (bottom - 1) * 16),
+                ((right - 1) * 16, (bottom - 1) * 16),
+            ),
+            closed=True,
+        )
+    x0, y0, x1, y1 = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
+    # Corner diameters are fractions of the original box. Apply those
+    # fractions to the adjusted drawing ellipse before quantizing the radii.
+    rx = floor((x1 - x0) * min(abs(ellipse_width), right - left) / (2 * (right - left)) + 0.5)
+    ry = floor((y1 - y0) * min(abs(ellipse_height), bottom - top) / (2 * (bottom - top)) + 0.5)
+    centres = ((x1 - rx, y0 + ry), (x0 + rx, y0 + ry), (x0 + rx, y1 - ry), (x1 - rx, y1 - ry))
+    curves = tuple(
+        tuple((cx + x, cy + y) for x, y in curve)
+        for (cx, cy), curve in zip(centres, _ellipse_quadrants(rx, ry), strict=True)
+    )
+    commands = tuple(
+        command for i, curve in enumerate(curves) for command in (curve, (curve[-1], curves[(i + 1) % 4][0]))
+    )
+    return DevicePath(commands, closed=True)
 
 
 def ellipse_path(left: int, top: int, right: int, bottom: int) -> Polygon:
