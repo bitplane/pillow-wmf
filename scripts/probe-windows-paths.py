@@ -29,6 +29,8 @@ def main():
         bind(gdi, "MoveToEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.POINT))
         bind(gdi, "LineTo", boolean, ptr, integer, integer)
         bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
+        bind(gdi, "CreateSolidBrush", ptr, wintypes.DWORD)
+        bind(gdi, "FillPath", boolean, ptr)
         bind(gdi, "SelectObject", ptr, ptr, ptr)
         bind(gdi, "DeleteObject", boolean, ptr)
         bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
@@ -108,6 +110,24 @@ def main():
                 else:
                     print(f"ellipse-{name}-widened: failed with {ctypes.get_last_error()}")
                 check(gdi.AbortPath(dc), "AbortPath")
+
+                brush = check(gdi.CreateSolidBrush(0), "CreateSolidBrush")
+                previous_brush = check(gdi.SelectObject(dc, brush), "SelectObject")
+                ctypes.memset(bits, 255, 128 * 128 * 4)
+                check(gdi.BeginPath(dc), "BeginPath")
+                check(gdi.Ellipse(dc, *box), "Ellipse")
+                check(gdi.EndPath(dc), "EndPath")
+                check(gdi.WidenPath(dc), "WidenPath")
+                check(gdi.FillPath(dc), "FillPath")
+                check(gdi.GdiFlush(), "GdiFlush")
+                filled = ctypes.string_at(bits, 128 * 128 * 4)
+                black_difference = sum(
+                    (direct[index : index + 3] == b"\0\0\0") != (filled[index : index + 3] == b"\0\0\0")
+                    for index in range(0, len(direct), 4)
+                )
+                print(f"ellipse-{name}-widened-fill-black-difference: {black_difference}")
+                gdi.SelectObject(dc, previous_brush)
+                gdi.DeleteObject(brush)
             gdi.SelectObject(dc, previous)
             gdi.DeleteObject(pen)
 
