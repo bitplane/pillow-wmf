@@ -47,9 +47,9 @@ def verify_pixels():
 
 def verify_composition():
     failures = 0
-    for operation, width, mode in product(("pie", "chord", "ellipse", "polygon"), (1, 7), range(1, 17)):
+    for operation, width, style, mode in product(("pie", "chord", "ellipse", "polygon"), (1, 7), (0, 4), range(1, 17)):
         recorder = Recorder()
-        recorder.select_object(recorder.create_pen(0, width, 0x00402010))
+        recorder.select_object(recorder.create_pen(style, width, 0x00402010))
         recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
         recorder.set_rop2(mode)
         if operation == "polygon":
@@ -68,8 +68,8 @@ def verify_composition():
         )
         if differing:
             failures += 1
-            print("composition-FAIL", operation, width, mode, differing)
-    print("composition-matrix", 128, failures)
+            print("composition-FAIL", operation, width, style, mode, differing)
+    print("composition-matrix", 256, failures)
     assert not failures
 
 

@@ -267,8 +267,13 @@ class RasterContext(TraceContext):
 
     def _stroke_path(self, path: DevicePath, *, miter=False) -> None:
         if self._realized_pen().cosmetic:
-            for (x, y), foreground in self._cosmetic_fragments((path,)):
-                self._pixel(x, y, self._pen.color if foreground else self._background_color)
+            fragments = tuple(self._cosmetic_fragments((path,)))
+            # Opaque style gaps are painted beneath foreground marks, even
+            # when the figure retraces itself. Keep multiplicity in each pass.
+            for foreground in (False, True):
+                for (x, y), mark in fragments:
+                    if mark == foreground:
+                        self._pixel(x, y, self._pen.color if foreground else self._background_color)
             return
         foreground, gaps = self._stroke_fragments((path,), miter=miter)
         for x, y in gaps:
@@ -357,8 +362,8 @@ class RasterContext(TraceContext):
     def _paint_polygons(self, paths: tuple[DevicePath, ...], *, miter=False, reserve_outline=False) -> None:
         paths = tuple(path for path in paths if path.segments)
         contours = tuple(path.vertices for path in paths)
-        # Native combined filling/stroking consumes the flattened contour.
-        # With a null brush it is stroke-only and retains cubic tangents.
+        # Native copy-mode combined fill/stroke consumes the flattened contour.
+        # Other ROP2 modes and stroke-only paths retain cubic tangents.
         if self._brush.style != 1 and self._rop2 == 13:
             paths = tuple(path.flattened() for path in paths)
         fill_pixels = set(self._contour_pixels(contours, fill_mode=self._polygon_fill_mode))
@@ -366,6 +371,8 @@ class RasterContext(TraceContext):
         stroke_pixels = self._stroke_pixels(paths, miter=miter) if reserve_outline else foreground | gaps
         pen = self._realized_pen()
         if pen.cosmetic and not reserve_outline:
+            # Cosmetic paths fill first, then emit the outline (including
+            # repeated pixels). Wide combined paths exclude stroke coverage.
             stroke_pixels = set()
         for x, y in fill_pixels - stroke_pixels:
             color = self._brush_color_at(x, y)
