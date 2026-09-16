@@ -20,7 +20,7 @@ def expected_metadata(source: bytes) -> dict:
     return {
         "oracle": "Windows GDI PlayMetaFile",
         "oracle_version": ORACLE_VERSION,
-        "renderer_sha256": hashlib.sha256(RENDERER.read_bytes()).hexdigest(),
+        "renderer_sha256": hashlib.sha256(RENDERER.read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
         "source_sha256": hashlib.sha256(source).hexdigest(),
         "settings": SETTINGS,
     }

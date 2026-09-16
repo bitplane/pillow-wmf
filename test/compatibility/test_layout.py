@@ -29,7 +29,8 @@ def test_generated_fixtures_are_reproducible_and_playable() -> None:
 
 
 def test_committed_references_are_current_when_present() -> None:
-    renderer_hash = hashlib.sha256((ROOT / "scripts" / "windows_wmf_render.py").read_bytes()).hexdigest()
+    renderer_bytes = (ROOT / "scripts" / "windows_wmf_render.py").read_bytes().replace(b"\r\n", b"\n")
+    renderer_hash = hashlib.sha256(renderer_bytes).hexdigest()
     for source_path in sorted(WMF_ROOT.glob("*.wmf")):
         png_path = source_path.with_suffix(".png")
         metadata_path = source_path.with_suffix(".json")
