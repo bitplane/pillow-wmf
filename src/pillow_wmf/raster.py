@@ -88,8 +88,8 @@ class RasterContext(TraceContext):
             if a["mode"] not in (1, 2):
                 raise UnsupportedOperation(f"Background mode {a['mode']}")
         elif name == "create_pen":
-            if a["style"] not in range(6) or a["width"] < 0:
-                raise UnsupportedOperation("Only solid, dashed, dotted and null pens are supported")
+            if a["style"] not in range(7) or a["width"] < 0:
+                raise UnsupportedOperation("Only solid, styled, null and inside-frame pens are supported")
         elif name == "create_brush":
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
@@ -235,17 +235,44 @@ class RasterContext(TraceContext):
             left, right = sorted((left, right))
             top, bottom = sorted((top, bottom))
             if right > left and bottom > top:
+                drawing_bounds = None
+                covered = False
+                pen = self._realized_pen()
+                if self._pen.style == 6 and not pen.cosmetic:
+                    dx = max(abs(x) for x, y in pen.vertices)
+                    dy = max(abs(y) for x, y in pen.vertices)
+                    covered = 2 * dx >= (right - left) * 16 or 2 * dy >= (bottom - top) * 16
+                    if covered:
+                        if name in {"arc", "chord", "pie"}:
+                            return result
+                        drawing_bounds = left * 16, top * 16, right * 16, bottom * 16
+                    else:
+                        drawing_bounds = left * 16 + dx, top * 16 + dy, right * 16 - dx, bottom * 16 - dy
+                rectangle = name == "rectangle"
                 if name == "rectangle":
-                    self._rectangle(left, top, right, bottom)
+                    path = DevicePath.rectangle(
+                        *(drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16))
+                    )
                 elif name == "ellipse":
-                    self._ellipse(left, top, right, bottom)
+                    path = DevicePath(
+                        ellipse_cubics(
+                            left, top, right, bottom, null_pen=self._pen.style == 5, drawing_bounds=drawing_bounds
+                        ),
+                        closed=True,
+                    )
                 elif name == "round_rect":
                     width, height = self.mapping.vector(a["ellipse_width"], a["ellipse_height"])
-                    if not width or not height:
-                        self._rectangle(left, top, right, bottom)
-                    else:
-                        path = round_rect_figure(left, top, right, bottom, width, height, null_pen=self._pen.style == 5)
-                        self._paint_polygons((path,))
+                    rectangle = not width or not height
+                    path = round_rect_figure(
+                        left,
+                        top,
+                        right,
+                        bottom,
+                        width,
+                        height,
+                        null_pen=self._pen.style == 5,
+                        drawing_bounds=drawing_bounds,
+                    )
                 else:
                     start = self._point(a["start_x"], a["start_y"])
                     end = self._point(a["end_x"], a["end_y"])
@@ -258,11 +285,15 @@ class RasterContext(TraceContext):
                         end,
                         closure="open" if name == "arc" else name,
                         null_pen=self._pen.style == 5,
+                        drawing_bounds=drawing_bounds,
                     )
-                    if name == "arc":
-                        self._stroke_path(path)
-                    else:
-                        self._paint_polygons((path,))
+                if covered:
+                    for x, y in self._contour_pixels((path.vertices,)):
+                        self._pixel(x, y, self._pen.color)
+                elif name == "arc":
+                    self._stroke_path(path)
+                else:
+                    self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle)
         return result
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int]) -> None:
@@ -277,7 +308,7 @@ class RasterContext(TraceContext):
         if self._realized_pen().cosmetic:
             # Opaque style gaps are painted beneath foreground marks, even
             # when the figure retraces itself. Keep multiplicity in each pass.
-            passes = (False, True) if self._pen.style != 0 and self._background_mode == 2 else (True,)
+            passes = (False, True) if self._pen.style in range(1, 5) and self._background_mode == 2 else (True,)
             for foreground in passes:
                 for (x, y), mark in self._cosmetic_fragments((path,)):
                     if mark == foreground:
@@ -312,7 +343,7 @@ class RasterContext(TraceContext):
                     continue
                 for pixel in cosmetic_line(start, end, self.image.width, self.image.height):
                     phase = position + span.step * (pixel[major] - span.start)
-                    if self._pen.style == 0 or dash_is_foreground(self._pen.style, phase):
+                    if self._pen.style in (0, 6) or dash_is_foreground(self._pen.style, phase):
                         yield pixel, True
                     elif self._background_mode == 2:
                         yield pixel, False
@@ -411,16 +442,3 @@ class RasterContext(TraceContext):
         if mark:
             return brush.color
         return self._background_color if self._background_mode == 2 else None
-
-    def _rectangle(self, left: int, top: int, right: int, bottom: int) -> None:
-        path = [
-            ((right - 1) * 16, top * 16),
-            (left * 16, top * 16),
-            (left * 16, (bottom - 1) * 16),
-            ((right - 1) * 16, (bottom - 1) * 16),
-        ]
-        self._paint_polygons((DevicePath.polyline(path, closed=True),), miter=True, reserve_outline=True)
-
-    def _ellipse(self, left: int, top: int, right: int, bottom: int) -> None:
-        path = DevicePath(ellipse_cubics(left, top, right, bottom, null_pen=self._pen.style == 5), closed=True)
-        self._paint_polygons((path,))

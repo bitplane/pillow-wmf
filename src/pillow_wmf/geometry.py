@@ -35,6 +35,11 @@ class DevicePath:
         points = tuple(points)
         return cls(tuple(zip(points, points[1:] + (points[:1] if closed else ()))), closed)
 
+    @classmethod
+    def rectangle(cls, left: int, top: int, right: int, bottom: int):
+        """A closed rectangle in fixed device coordinates, starting top-right."""
+        return cls.polyline(((right, top), (left, top), (left, bottom), (right, bottom)), closed=True)
+
     @cached_property
     def segments(self) -> tuple[StrokeSegment, ...]:
         segments = []

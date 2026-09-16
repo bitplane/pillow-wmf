@@ -24,10 +24,12 @@ def _ellipse_bounds(left, top, right, bottom, *, null_pen=False):
 
 
 def ellipse_cubics(
-    left: int, top: int, right: int, bottom: int, *, null_pen=False
+    left: int, top: int, right: int, bottom: int, *, null_pen=False, drawing_bounds=None
 ) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """The four counterclockwise GDI-style cubics of an exclusive-bound ellipse."""
-    left_fixed, top_fixed, right_fixed, bottom_fixed = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
+    left_fixed, top_fixed, right_fixed, bottom_fixed = drawing_bounds or _ellipse_bounds(
+        left, top, right, bottom, null_pen=null_pen
+    )
     cx, cy = (left_fixed + right_fixed) // 2, (top_fixed + bottom_fixed) // 2
     rx, ry = (right_fixed - left_fixed) // 2, (bottom_fixed - top_fixed) // 2
     return tuple(tuple((cx + x, cy + y) for x, y in curve) for curve in _ellipse_quadrants(rx, ry))
@@ -45,19 +47,13 @@ def _ellipse_quadrants(rx: int, ry: int):
     )
 
 
-def round_rect_figure(left, top, right, bottom, ellipse_width, ellipse_height, *, null_pen=False) -> DevicePath:
+def round_rect_figure(
+    left, top, right, bottom, ellipse_width, ellipse_height, *, null_pen=False, drawing_bounds=None
+) -> DevicePath:
     """Place canonical ellipse quarters at four centres and connect the edges."""
     if not ellipse_width or not ellipse_height:
-        return DevicePath.polyline(
-            (
-                ((right - 1) * 16, top * 16),
-                (left * 16, top * 16),
-                (left * 16, (bottom - 1) * 16),
-                ((right - 1) * 16, (bottom - 1) * 16),
-            ),
-            closed=True,
-        )
-    x0, y0, x1, y1 = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
+        return DevicePath.rectangle(*(drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)))
+    x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
     # Corner diameters are fractions of the original box. Apply those
     # fractions to the adjusted drawing ellipse before quantizing the radii.
     rx = floor((x1 - x0) * min(abs(ellipse_width), right - left) / (2 * (right - left)) + 0.5)
@@ -91,6 +87,7 @@ def arc_cubics(
     end: tuple[int, int],
     *,
     null_pen=False,
+    drawing_bounds=None,
 ) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """Cut an exclusive-bound ellipse at two radial directions.
 
@@ -98,7 +95,7 @@ def arc_cubics(
     the exclusive-bound drawing box. WMF stores points on the radials, not
     points required to lie on the ellipse.
     """
-    x0, y0, x1, y1 = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
+    x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
     cx, cy = (x0 + x1) / 32, (y0 + y1) / 32
     rx, ry = (x1 - x0) / 32, (y1 - y0) / 32
     radial_cx = (left + right) / 2
@@ -126,7 +123,7 @@ def arc_cubics(
         return (cx + rx * nx) * 16, (cy + ry * ny) * 16
 
     cubics = []
-    quadrants = ellipse_cubics(left, top, right, bottom, null_pen=null_pen)
+    quadrants = ellipse_cubics(left, top, right, bottom, null_pen=null_pen, drawing_bounds=drawing_bounds)
     for index, (a, b) in enumerate(pairwise(boundaries)):
         if 0 < index < len(boundaries) - 2:
             cubics.append(quadrants[round(a / 90) % 4])
@@ -165,15 +162,16 @@ def arc_figure(
     *,
     closure: Literal["open", "chord", "pie"] = "open",
     null_pen=False,
+    drawing_bounds=None,
 ) -> DevicePath:
     """Retain one arc figure, optionally closed directly or through its centre."""
-    curves = arc_cubics(left, top, right, bottom, start, end, null_pen=null_pen)
+    curves = arc_cubics(left, top, right, bottom, start, end, null_pen=null_pen, drawing_bounds=drawing_bounds)
     if closure == "open":
         return DevicePath(curves, closed=start == end)
     if closure == "chord":
         closing = ((curves[-1][-1], curves[0][0]),)
     elif closure == "pie":
-        x0, y0, x1, y1 = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
+        x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
         centre = ((x0 + x1) // 2, (y0 + y1) // 2)
         # Native Pie appends the centre after the cubics and closes there,
         # including full revolutions. Preserve that order for styled pens.
