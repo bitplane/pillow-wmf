@@ -271,15 +271,16 @@ class RasterContext(TraceContext):
         foreground: set[tuple[int, int]] = set()
         gaps: set[tuple[int, int]] = set()
         for path in paths:
+            # A figure starts at phase zero on its first emitted GIQ pixel,
+            # not at the floor of its fractional geometric starting point.
+            # Advance through unclipped spans so clipping never resets style.
             position = 0
             segments = zip(path.vertices, path.vertices[1:])
-            for segment_index, (start, end) in enumerate(segments):
+            for start, end in segments:
                 span = cosmetic_span(start, end)
                 major = 1 if abs(end[1] - start[1]) > abs(end[0] - start[0]) else 0
                 if not span:
                     continue
-                if segment_index == 0 and not path.closed:
-                    position += span.step * (span.start - start[major] // 16)
                 for pixel in cosmetic_line(start, end, self.image.width, self.image.height):
                     phase = position + span.step * (pixel[major] - span.start)
                     if dash_is_foreground(self._pen.style, phase):

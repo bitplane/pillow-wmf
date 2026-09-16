@@ -2,6 +2,7 @@
 
 import ctypes
 from ctypes import wintypes
+from itertools import product
 
 from windows_wmf_render import bind, check, reference_surface
 
@@ -23,7 +24,7 @@ def verify_dash_phase(gdi, dc, bits):
     old = check(gdi.SelectObject(dc, pen), "SelectObject")
     failures = tested = 0
     try:
-        for fx, fy in ((0, 0), (1, 7), (7, 1), (8, 8), (9, 15), (15, 9)):
+        for fx, fy in product(range(16), repeat=2):
             for reverse in (False, True):
                 for closed in (False, True):
                     points = ((512 + fx, 512 + fy), (1001, 287), (1389, 1271))
