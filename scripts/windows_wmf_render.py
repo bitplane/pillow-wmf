@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+from contextlib import contextmanager
 from ctypes import wintypes
 
 from PIL import Image
@@ -29,26 +30,35 @@ class BitmapInfo(ctypes.Structure):
     _fields_ = [("header", BitmapInfoHeader), ("colors", wintypes.DWORD * 1)]
 
 
-def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
-    """Render a standard (non-placeable) WMF at one logical unit per pixel."""
+def bind(gdi, name, result, *args):
+    function = getattr(gdi, name)
+    function.restype = result
+    function.argtypes = args
+    return function
+
+
+def check(handle, name):
+    if not handle:
+        raise OSError(ctypes.get_last_error(), f"{name} failed")
+    return handle
+
+
+@contextmanager
+def reference_surface(width: int, height: int):
+    """The shared native DC/DIB and initial mapping for images and probes."""
     if os.name != "nt":
         raise RuntimeError("Native WMF rendering requires Windows")
-    if not source or width < 1 or height < 1:
-        raise ValueError("Expected nonempty WMF bytes and positive dimensions")
+    if width < 1 or height < 1:
+        raise ValueError("Expected positive dimensions")
 
     gdi = ctypes.WinDLL("gdi32", use_last_error=True)
 
     def api(name, result, *args):
-        function = getattr(gdi, name)
-        function.restype = result
-        function.argtypes = args
-        return function
+        return bind(gdi, name, result, *args)
 
     ptr = ctypes.c_void_p
     dword = wintypes.DWORD
     integer = ctypes.c_int
-    set_bits = api("SetMetaFileBitsEx", ptr, dword, ptr)
-    delete_meta = api("DeleteMetaFile", wintypes.BOOL, ptr)
     create_dc = api("CreateCompatibleDC", ptr, ptr)
     delete_dc = api("DeleteDC", wintypes.BOOL, ptr)
     create_dib = api("CreateDIBSection", ptr, ptr, ptr, wintypes.UINT, ctypes.POINTER(ptr), ptr, dword)
@@ -57,16 +67,6 @@ def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
     set_map_mode = api("SetMapMode", integer, ptr, integer)
     set_window = api("SetWindowExtEx", wintypes.BOOL, ptr, integer, integer, ptr)
     set_viewport = api("SetViewportExtEx", wintypes.BOOL, ptr, integer, integer, ptr)
-    play = api("PlayMetaFile", wintypes.BOOL, ptr, ptr)
-    flush = api("GdiFlush", wintypes.BOOL)
-
-    def check(handle, name):
-        if not handle:
-            raise OSError(ctypes.get_last_error(), f"{name} failed")
-        return handle
-
-    source_buffer = ctypes.create_string_buffer(source)
-    metafile = check(set_bits(len(source), source_buffer), "SetMetaFileBitsEx")
     dc = None
     bitmap = None
     previous = None
@@ -81,10 +81,7 @@ def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
         check(set_map_mode(dc, 8), "SetMapMode")  # MM_ANISOTROPIC
         check(set_window(dc, width, height, None), "SetWindowExtEx")
         check(set_viewport(dc, width, height, None), "SetViewportExtEx")
-        check(play(dc, metafile), "PlayMetaFile")
-        check(flush(), "GdiFlush")
-        pixels = ctypes.string_at(bits, width * height * 4)
-        return Image.frombytes("RGB", (width, height), pixels, "raw", "BGRX")
+        yield gdi, dc, bits
     finally:
         if previous and dc:
             select(dc, previous)
@@ -92,4 +89,24 @@ def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
             delete_object(bitmap)
         if dc:
             delete_dc(dc)
-        delete_meta(metafile)
+
+
+def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
+    """Render standard WMF bytes; records may change the initial 1:1 mapping."""
+    if not source:
+        raise ValueError("Expected nonempty WMF bytes")
+    with reference_surface(width, height) as (gdi, dc, bits):
+        ptr = ctypes.c_void_p
+        set_bits = bind(gdi, "SetMetaFileBitsEx", ptr, wintypes.UINT, ptr)
+        delete_meta = bind(gdi, "DeleteMetaFile", wintypes.BOOL, ptr)
+        play = bind(gdi, "PlayMetaFile", wintypes.BOOL, ptr, ptr)
+        flush = bind(gdi, "GdiFlush", wintypes.BOOL)
+        source_buffer = ctypes.create_string_buffer(source)
+        metafile = check(set_bits(len(source), source_buffer), "SetMetaFileBitsEx")
+        try:
+            check(play(dc, metafile), "PlayMetaFile")
+            check(flush(), "GdiFlush")
+            pixels = ctypes.string_at(bits, width * height * 4)
+            return Image.frombytes("RGB", (width, height), pixels, "raw", "BGRX")
+        finally:
+            delete_meta(metafile)
