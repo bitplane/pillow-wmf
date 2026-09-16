@@ -8,9 +8,9 @@ from fractions import Fraction
 from PIL import Image
 
 from .clip import ClipRegion
-from .ellipse import arc_path, ellipse_path
+from .ellipse import arc_cubics, ellipse_cubics
 from .gdi import Call, Handle, UnsupportedOperation
-from .geometry import Polygon, contains
+from .geometry import DevicePath, Polygon, contains
 from .mapping import Mapping
 from .paint import rop2
 from .stroke import cosmetic_line, dash_is_foreground, join_outline, realize_pen, widen_segment
@@ -181,11 +181,11 @@ class RasterContext(TraceContext):
             self._line(self._point(*self._position), self._point(a["x"], a["y"]))
             self._position = a["x"], a["y"]
         elif name == "polyline":
-            self._stroke_path(self._mapped_path(a["points"]))
+            self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
         elif name in {"polygon", "poly_polygon"}:
             polygons = (a["points"],) if name == "polygon" else a["polygons"]
             paths = tuple(self._mapped_path(points) for points in polygons)
-            self._paint_polygons(paths)
+            self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))
         elif name == "set_pixel":
             self._pixel(*self._point(a["x"], a["y"]), rgb(a["color"]))
         elif name == "save_dc":
@@ -248,16 +248,16 @@ class RasterContext(TraceContext):
             self.image.putpixel((x, y), rop2(self._rop2, color, destination))
 
     def _line(self, start: tuple[int, int], end: tuple[int, int]) -> None:
-        self._stroke_path([(start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16)])
+        self._stroke_path(DevicePath.polyline([(start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16)]))
 
-    def _stroke_path(self, path, *, closed=False, miter=False) -> None:
-        foreground, gaps = self._stroke_fragments((path,), closed=closed, miter=miter)
+    def _stroke_path(self, path: DevicePath, *, miter=False) -> None:
+        foreground, gaps = self._stroke_fragments((path,), miter=miter)
         for x, y in gaps:
             self._pixel(x, y, self._background_color)
         for x, y in foreground:
             self._pixel(x, y, self._pen.color)
 
-    def _stroke_fragments(self, paths: tuple[Polygon, ...], *, closed=False, miter=False):
+    def _stroke_fragments(self, paths: tuple[DevicePath, ...], *, miter=False):
         if self._pen.style == 5:
             return set(), set()
         pen = realize_pen(
@@ -266,12 +266,12 @@ class RasterContext(TraceContext):
             Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
         )
         if self._pen.style == 0 or not pen.cosmetic:
-            return self._stroke_pixels(paths, closed=closed, miter=miter), set()
+            return self._stroke_pixels(paths, miter=miter), set()
         foreground: set[tuple[int, int]] = set()
         gaps: set[tuple[int, int]] = set()
         for path in paths:
             position = 0
-            segments = zip(path, path[1:] + (path[:1] if closed else []))
+            segments = zip(path.vertices, path.vertices[1:])
             for segment_index, (start, end) in enumerate(segments):
                 pixels = list(cosmetic_line(start, end, self.image.width, self.image.height))
                 major = 1 if abs(end[1] - start[1]) > abs(end[0] - start[0]) else 0
@@ -295,7 +295,7 @@ class RasterContext(TraceContext):
                     position += abs(end[major] // 16 - pixels[-1][major]) - 1
         return foreground, gaps - foreground
 
-    def _stroke_pixels(self, paths: tuple[Polygon, ...], *, closed=False, miter=False) -> set[tuple[int, int]]:
+    def _stroke_pixels(self, paths: tuple[DevicePath, ...], *, miter=False) -> set[tuple[int, int]]:
         if self._pen.style == 5:
             return set()
         pen = realize_pen(
@@ -305,17 +305,23 @@ class RasterContext(TraceContext):
         )
         pixels: set[tuple[int, int]] = set()
         for path in paths:
-            for start, end in zip(path, path[1:] + (path[:1] if closed else [])):
+            for index, segment in enumerate(path.segments):
+                start, end = segment.start, segment.end
                 if pen.cosmetic:
                     pixels.update(cosmetic_line(start, end, self.image.width, self.image.height))
                 else:
-                    pixels.update(self._contour_pixels((widen_segment(start, end, pen),)))
+                    outline = widen_segment(
+                        segment,
+                        pen,
+                        cap_start=not path.closed and index == 0,
+                        cap_end=not path.closed and index == len(path.segments) - 1,
+                    )
+                    pixels.update(self._contour_pixels((outline,)))
             if not pen.cosmetic:
-                triples = (
-                    zip(path[-1:] + path[:-1], path, path[1:] + path[:1]) if closed else zip(path, path[1:], path[2:])
-                )
-                for before, vertex, after in triples:
-                    join = join_outline(before, vertex, after, pen, miter=miter)
+                segments = path.segments
+                pairs = zip(segments, segments[1:] + (segments[:1] if path.closed else ()))
+                for first, second in pairs:
+                    join = join_outline(first, second, pen, miter=miter)
                     if join:
                         pixels.update(self._contour_pixels((join,)))
         return pixels
@@ -332,13 +338,16 @@ class RasterContext(TraceContext):
                 if contains(contours, x, y, fill_mode=fill_mode):
                     yield x, y
 
-    def _paint_polygons(self, paths: tuple[Polygon, ...], *, miter=False, reserve_outline=False) -> None:
-        contours = tuple(path for path in paths if len(path) >= 2)
+    def _paint_polygons(self, paths: tuple[DevicePath, ...], *, miter=False, reserve_outline=False) -> None:
+        paths = tuple(path for path in paths if path.segments)
+        contours = tuple(path.vertices for path in paths)
+        # Native combined filling/stroking consumes the flattened contour.
+        # With a null brush it is stroke-only and retains cubic tangents.
+        if self._brush.style != 1:
+            paths = tuple(path.flattened() for path in paths)
         fill_pixels = set(self._contour_pixels(contours, fill_mode=self._polygon_fill_mode))
-        foreground, gaps = self._stroke_fragments(contours, closed=True, miter=miter)
-        stroke_pixels = (
-            self._stroke_pixels(contours, closed=True, miter=miter) if reserve_outline else foreground | gaps
-        )
+        foreground, gaps = self._stroke_fragments(paths, miter=miter)
+        stroke_pixels = self._stroke_pixels(paths, miter=miter) if reserve_outline else foreground | gaps
         for x, y in fill_pixels - stroke_pixels:
             color = self._brush_color_at(x, y)
             if color is not None:
@@ -372,10 +381,10 @@ class RasterContext(TraceContext):
             (left * 16, (bottom - 1) * 16),
             ((right - 1) * 16, (bottom - 1) * 16),
         ]
-        self._paint_polygons((path,), miter=True, reserve_outline=True)
+        self._paint_polygons((DevicePath.polyline(path, closed=True),), miter=True, reserve_outline=True)
 
     def _ellipse(self, left: int, top: int, right: int, bottom: int) -> None:
-        path = ellipse_path(left, top, right, bottom)
+        path = DevicePath(ellipse_cubics(left, top, right, bottom), closed=True)
         self._paint_polygons((path,))
 
     def _arc(
@@ -387,5 +396,5 @@ class RasterContext(TraceContext):
         start: tuple[int, int],
         end: tuple[int, int],
     ) -> None:
-        path = arc_path(left, top, right, bottom, start, end)
-        self._stroke_path(path, closed=start == end)
+        path = DevicePath(arc_cubics(left, top, right, bottom, start, end), closed=start == end)
+        self._stroke_path(path)

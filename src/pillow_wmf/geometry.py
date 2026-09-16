@@ -2,10 +2,68 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from functools import cached_property
+from itertools import pairwise
 from math import floor
 
 type Point = tuple[int, int]
 type Polygon = list[Point]
+type Cubic = tuple[Point, Point, Point, Point]
+
+
+@dataclass(frozen=True)
+class StrokeSegment:
+    start: Point
+    end: Point
+    direction: Point
+
+    @classmethod
+    def line(cls, start: Point, end: Point):
+        return cls(start, end, (end[0] - start[0], end[1] - start[1]))
+
+
+@dataclass(frozen=True)
+class DevicePath:
+    """Connected line/cubic commands, retained until the stroke is realized."""
+
+    commands: tuple[tuple[Point, Point] | Cubic, ...]
+    closed: bool = False
+
+    @classmethod
+    def polyline(cls, points, *, closed=False):
+        points = tuple(points)
+        return cls(tuple(zip(points, points[1:] + (points[:1] if closed else ()))), closed)
+
+    @cached_property
+    def segments(self) -> tuple[StrokeSegment, ...]:
+        segments = []
+        for command in self.commands:
+            points = [command[0]] + (flatten_cubic(command) if len(command) == 4 else [command[1]])
+            for start, end in pairwise(points):
+                segments.append(StrokeSegment.line(start, end))
+            if len(command) == 4 and len(points) > 2:
+                # A subdivided cubic retains its endpoint tangents for pen
+                # support; a cubic reduced to one chord has no tangent joins.
+                start = command[0]
+                after = next((point for point in command[1:] if point != start), start)
+                first = len(segments) - len(points) + 1
+                segments[first] = StrokeSegment(start, segments[first].end, (after[0] - start[0], after[1] - start[1]))
+                end = command[-1]
+                before = next((point for point in reversed(command[:-1]) if point != end), end)
+                segments[-1] = StrokeSegment(segments[-1].start, end, (end[0] - before[0], end[1] - before[1]))
+        # Repeated vertices do not interrupt a join or choose an end-cap
+        # direction. Retain one segment for a wholly zero-length stroke.
+        nonzero = tuple(segment for segment in segments if segment.start != segment.end)
+        return nonzero or tuple(segments[:1])
+
+    @cached_property
+    def vertices(self) -> Polygon:
+        return [self.segments[0].start, *(segment.end for segment in self.segments)] if self.segments else []
+
+    def flattened(self) -> DevicePath:
+        points = self.vertices[:-1] if self.closed else self.vertices
+        return DevicePath.polyline(points, closed=self.closed)
 
 
 def flatten_cubic(control: tuple[Point, Point, Point, Point]) -> Polygon:

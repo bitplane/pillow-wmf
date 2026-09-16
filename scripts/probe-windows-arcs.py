@@ -5,7 +5,64 @@ from ctypes import wintypes
 
 from windows_wmf_render import bind, check, reference_surface
 
+from pillow_wmf import RasterContext
+from pillow_wmf.ellipse import arc_cubics
+from pillow_wmf.geometry import DevicePath
 from pillow_wmf.stroke import cosmetic_line
+
+
+def verify_fractional_wide_lines(gdi, dc, bits):
+    """Exercise shared widening beyond the integer-only line matrix."""
+    tested = failures = 0
+    check(gdi.SetGraphicsMode(dc, 2), "SetGraphicsMode")
+    try:
+        for width in (2, 3, 6, 7):
+            pen = check(gdi.CreatePen(0, width, 0), "CreatePen")
+            previous = check(gdi.SelectObject(dc, pen), "SelectObject")
+            try:
+                for fx, fy in ((0, 0), (0, 1), (1, 0), (7, 9), (8, 8), (15, 15)):
+                    for dx, dy in ((128, 32), (32, 128), (-128, 32), (128, -128)):
+                        start = (512 + fx, 512 + fy)
+                        end = (start[0] + dx, start[1] + dy)
+                        check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                        check(gdi.BeginPath(dc), "BeginPath")
+                        check(gdi.MoveToEx(dc, *start, None), "MoveToEx")
+                        check(gdi.LineTo(dc, *end), "LineTo")
+                        check(gdi.EndPath(dc), "EndPath")
+                        check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+                        ctypes.memset(bits, 255, 128 * 128 * 4)
+                        check(gdi.StrokePath(dc), "StrokePath")
+                        check(gdi.GdiFlush(), "GdiFlush")
+                        raw = ctypes.string_at(bits, 128 * 128 * 4)
+                        native = {(i % 128, i // 128) for i, pixel in enumerate(raw[::4]) if pixel == 0}
+                        context = RasterContext(128, 128)
+                        context.select_object(context.create_pen(0, width, 0))
+                        context._stroke_path(DevicePath.polyline((start, end)))
+                        actual = {
+                            (i % 128, i // 128)
+                            for i, pixel in enumerate(context.image.convert("L").tobytes())
+                            if pixel == 0
+                        }
+                        tested += 1
+                        if native != actual:
+                            failures += 1
+                            print(
+                                "fractional-wide-FAIL",
+                                width,
+                                start,
+                                end,
+                                "extra",
+                                actual - native,
+                                "missing",
+                                native - actual,
+                            )
+            finally:
+                gdi.SelectObject(dc, previous)
+                gdi.DeleteObject(pen)
+    finally:
+        check(gdi.SetGraphicsMode(dc, 1), "SetGraphicsMode")
+    print("fractional-wide-matrix", tested, "cases", failures, "failures")
+    assert not failures
 
 
 def path_points(gdi, dc):
@@ -101,6 +158,7 @@ def main():
                                     native - actual,
                                 )
         print("fractional-line-matrix", tested, "cases", failures, "failures")
+        assert not failures
         check(gdi.SetGraphicsMode(dc, 1), "SetGraphicsMode")
         cases = (
             (8, 8, 47, 47, 47, 27, 27, 8),
@@ -123,6 +181,10 @@ def main():
             check(gdi.EndPath(dc), "EndPath")
             print("arc-raw", case, path_points(gdi, dc))
             print("arc-fixed-controls", case, fixed_path_points(gdi, dc))
+            cubics = arc_cubics(*case[:4], case[4:6], case[6:8])
+            expected = (cubics[0][0], *(point for cubic in cubics for point in cubic[1:]))
+            actual = tuple((x, y) for x, y, _ in fixed_path_points(gdi, dc))
+            assert actual == expected, (case, actual, expected)
             check(gdi.FlattenPath(dc), "FlattenPath")
             print("arc-flat", case, path_points(gdi, dc))
             print("arc-fixed-flat", case, fixed_path_points(gdi, dc))
@@ -174,6 +236,7 @@ def main():
         bind(gdi, "SelectObject", ptr, ptr, ptr)
         bind(gdi, "DeleteObject", boolean, ptr)
         bind(gdi, "GetStockObject", ptr, integer)
+        verify_fractional_wide_lines(gdi, dc, bits)
         brush = check(gdi.SelectObject(dc, check(gdi.GetStockObject(4), "BLACK_BRUSH")), "SelectObject")
         pen = check(gdi.CreatePen(0, 3, 0), "CreatePen")
         previous = check(gdi.SelectObject(dc, pen), "SelectObject")

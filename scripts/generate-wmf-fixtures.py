@@ -382,6 +382,12 @@ def foundation_cases():
 
 def stroke_cases():
     """Probe the algorithms beyond the original three-segment pen fixtures."""
+    for width in (3, 6):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(0, width, 0))
+        recorder.select_object(recorder.create_brush(1, 0, 0))
+        recorder.ellipse(24, 24, 96, 80)
+        yield f"stroke-ellipse-null-width-{width}", recorder
     transforms = (
         ("identity", (128, 128), (128, 128)),
         ("scale-x", (128, 128), (256, 128)),

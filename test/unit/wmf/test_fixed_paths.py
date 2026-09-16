@@ -2,7 +2,45 @@
 
 import pytest
 
-from pillow_wmf.stroke import cosmetic_line, line_outline
+from pillow_wmf.geometry import DevicePath, StrokeSegment
+from pillow_wmf.stroke import cosmetic_line, line_outline, realize_pen, widen_segment
+
+
+def test_subdivided_cubic_retains_endpoint_tangents() -> None:
+    # Native widened-path measurements in run 35098165992 distinguish both
+    # endpoint tangents from their chords, not just a cardinal Arc endpoint.
+    cubic = ((256, 256), (768, 768), (768, 256), (1024, 256))
+    path = DevicePath((cubic,))
+    assert path.segments[0].direction == (512, 512)
+    assert path.segments[-1].direction == (256, 0)
+    flattened = path.flattened()
+    assert path.vertices == flattened.vertices
+    assert path.segments[0].direction != flattened.segments[0].direction
+    assert path.segments[-1].direction != flattened.segments[-1].direction
+
+
+def test_single_chord_cubic_uses_its_chord_direction() -> None:
+    path = DevicePath((((512, 512), (516, 512), (512, 516), (516, 516)),))
+    assert path.segments == (StrokeSegment((512, 512), (516, 516), (4, 4)),)
+
+
+def test_flattening_closed_path_does_not_add_a_zero_length_segment() -> None:
+    path = DevicePath.polyline(((0, 0), (16, 0), (16, 16)), closed=True)
+    assert path.flattened() == path
+
+
+@pytest.mark.parametrize("fx", range(16))
+@pytest.mark.parametrize("fy", range(16))
+def test_cap_origin_quantization_matches_native_matrix(fx, fy) -> None:
+    # Run 35098165992: all 256 phases, same line and same realized pen.
+    start = (512 + fx, 512 + fy)
+    segment = StrokeSegment.line(start, (start[0] + 128, start[1] + 32))
+    outline = widen_segment(segment, realize_pen(3))
+    relative_cap = [(x - start[0], y - start[1]) for x, y in outline[:5]]
+    expected = [(8, -24), (-8, -24), (-24, -8), (-24, 8), (-8, 24)]
+    if fx == fy == 0:
+        expected = [(8, -24), (-7, -23), (-23, -7), (-23, 7), (-8, 24)]
+    assert relative_cap == expected
 
 
 @pytest.mark.parametrize(

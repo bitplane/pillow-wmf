@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil, floor, sqrt
 
-from .geometry import Point, Polygon, flatten_cubic
+from .geometry import Point, Polygon, StrokeSegment, flatten_cubic
 
 _CIRCLE_CONTROL = 4 * (sqrt(2) - 1) / 3
 
@@ -93,30 +93,34 @@ def _body(value):
     return (1 if value >= 0 else -1) * ((abs(value) + 4) // 8) * 8
 
 
-def _cap(value):
-    return value - (1 if value > 0 else -1 if value < 0 else 0)
+def _cap(value, origin: Point):
+    # Native cap contours inset by one fixed unit only at integer centers.
+    # All 255 fractional phases retain the realized pen vertices unchanged.
+    inset = origin[0] % 16 == origin[1] % 16 == 0
+    return value - (1 if value > 0 else -1 if value < 0 else 0) * inset
 
 
-def widen_segment(start: Point, end: Point, pen: PenGeometry) -> Polygon:
-    """Sweep a round-ended pen along one segment, all in 28.4 coordinates."""
+def widen_segment(segment: StrokeSegment, pen: PenGeometry, *, cap_start=True, cap_end=True) -> Polygon:
+    """Construct a stroke body and requested endpoint caps in 28.4 units."""
     vertices = pen.vertices
     half = len(vertices) // 2
-    index = _support_index(pen, end[0] - start[0], end[1] - start[1])
+    index = _support_index(pen, *segment.direction)
 
     outline = []
-    for origin in (start, end):
-        for offset in range(half + 1):
+    for origin, cap in ((segment.start, cap_start), (segment.end, cap_end)):
+        for offset in range(half + 1) if cap else (0, half):
             x, y = vertices[(index + offset) % len(vertices)]
-            quantize = _body if offset in (0, half) else _cap
-            outline.append((origin[0] + quantize(x), origin[1] + quantize(y)))
+            x, y = (_body(x), _body(y)) if offset in (0, half) else (_cap(x, origin), _cap(y, origin))
+            outline.append((origin[0] + x, origin[1] + y))
         index = (index + half) % len(vertices)
     return outline
 
 
-def join_outline(before: Point, vertex: Point, after: Point, pen: PenGeometry, *, miter=False) -> Polygon:
+def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, *, miter=False) -> Polygon:
     """Cover the exterior turn between two incident stroke bodies."""
-    dx1, dy1 = vertex[0] - before[0], vertex[1] - before[1]
-    dx2, dy2 = after[0] - vertex[0], after[1] - vertex[1]
+    vertex = first.end
+    dx1, dy1 = first.direction
+    dx2, dy2 = second.direction
     turn = dx1 * dy2 - dy1 * dx2
     if not turn:
         return []
@@ -135,7 +139,7 @@ def join_outline(before: Point, vertex: Point, after: Point, pen: PenGeometry, *
         while i != j:
             i = (i + step) % count
             if i != j:
-                outline.append((vertex[0] + _cap(vertices[i][0]), vertex[1] + _cap(vertices[i][1])))
+                outline.append((vertex[0] + _cap(vertices[i][0], vertex), vertex[1] + _cap(vertices[i][1], vertex)))
     outline.append(end)
     return outline
 
@@ -143,7 +147,8 @@ def join_outline(before: Point, vertex: Point, after: Point, pen: PenGeometry, *
 def line_outline(start: Point, end: Point, width: int, scale_x, scale_y) -> Polygon:
     """Device-integer convenience entry point for diagnostic path probes."""
     return widen_segment(
-        (start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16), realize_pen(width, scale_x, scale_y)
+        StrokeSegment.line((start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16)),
+        realize_pen(width, scale_x, scale_y),
     )
 
 

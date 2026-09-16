@@ -41,13 +41,16 @@ or exhaustive coverage of every width and coordinate.
 
 ## Pipeline
 
-1. Mapping resolves device coordinates. The path retains sixteenths of a pixel
-   through cubic flattening and stroke construction.
+1. Mapping resolves device coordinates. `DevicePath` retains line/cubic commands
+   and sixteenths of a pixel through stroke construction. Subdivided cubics
+   retain endpoint tangent directions for pen support.
 2. Pen realization selects a cosmetic hairline or constructs one polygonal pen
    from the logical width and mapping.
 3. Cosmetic segments use GIQ. Wide segments sweep the realized pen along the
    segment, with support vertices selected by a cross-product maximum.
-4. Connected segments add their exterior joins. Filled paths and wide stroke
+4. Connected segments add their exterior joins; only open endpoints get caps.
+   Repeated vertices do not introduce spurious joins or cap directions.
+   Filled paths and wide stroke
    polygons use the same fixed-point coverage test.
 5. Stroke coverage is unioned per drawing call; pixel writes apply the
    application clip and the selected [ROP2 mix](gdi-rop2.md).
@@ -106,8 +109,9 @@ only emitted vertices are rounded. This replaces the unexplained constant 10.
 
 For segment vector `(dx, dy)`, maximize `px * dy - py * dx` over the pen's
 vertices. The opposite vertex gives the other side. The two body offsets round
-to half pixels; intermediate cap vertices inset by one fixed-point unit toward
-zero. Traverse each half of the same pen contour to construct the two caps.
+to half pixels. At integer centers, intermediate cap vertices inset by one
+fixed-point unit toward zero; fractional centers retain their offsets.
+Traverse the relevant half of the same pen contour at each open endpoint.
 No slope, width, or transform chooses a different line-body algorithm.
 
 Equal-support vertices require a tie convention because their subsequent

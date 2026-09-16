@@ -2,11 +2,16 @@
 
 from itertools import pairwise
 from math import atan2, ceil, cos, floor, pi, sin, sqrt
+from struct import pack, unpack
 
 from .geometry import Point, Polygon, flatten_cubic
 
 _SCALE = 16
 _CUBIC_CIRCLE_CONTROL = 4 * (sqrt(2) - 1) / 3
+# FLOAT pi in the degree conversion reproduces native quadrant ownership at
+# cardinal radials. Do not snap the resulting angles to multiples of 90.
+# This precision model is inferred from GetPath; see docs/gdi-arcs.md.
+_FLOAT_PI = unpack("<f", pack("<f", pi))[0]
 
 
 def ellipse_cubics(left: int, top: int, right: int, bottom: int) -> tuple[tuple[Point, Point, Point, Point], ...]:
@@ -50,14 +55,14 @@ def ellipse_path(left: int, top: int, right: int, bottom: int) -> Polygon:
     return vertices[:-1]
 
 
-def arc_path(
+def arc_cubics(
     left: int,
     top: int,
     right: int,
     bottom: int,
     start: tuple[int, int],
     end: tuple[int, int],
-) -> Polygon:
+) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """Cut an exclusive-bound ellipse at two radial directions.
 
     Normalize radials in the inclusive device box, then construct cubics in
@@ -65,7 +70,7 @@ def arc_path(
     points required to lie on the ellipse.
     """
     if start == end:
-        return ellipse_path(left, top, right, bottom)
+        return ellipse_cubics(left, top, right, bottom)
     cx = (left + right - 1) / 2
     cy = (top + bottom - 1) / 2
     rx = (right - left - 1) / 2
@@ -76,15 +81,15 @@ def arc_path(
     radial_ry = (bottom - top) / 2
 
     def angle(point: tuple[int, int]) -> float:
-        value = atan2((radial_cy - point[1]) / radial_ry, (point[0] - radial_cx) / radial_rx)
-        return value if value >= 0 else value + 2 * pi
+        value = atan2((radial_cy - point[1]) / radial_ry, (point[0] - radial_cx) / radial_rx) * 180 / _FLOAT_PI
+        return value if value >= 0 else value + 360
 
     first, last = angle(start), angle(end)
     if last <= first:
-        last += 2 * pi
+        last += 360
     boundaries = [first]
     for quadrant in range(1, 8):
-        boundary = quadrant * pi / 2
+        boundary = quadrant * 90
         if first < boundary < last:
             boundaries.append(boundary)
     boundaries.append(last)
@@ -92,24 +97,32 @@ def arc_path(
     def device_point(nx: float, ny: float) -> tuple[float, float]:
         return (cx + rx * nx) * 16, (cy + ry * ny) * 16
 
-    path = []
-    whole_quadrants = ellipse_cubics(left, top, right, bottom)
-    for a, b in pairwise(boundaries):
-        if abs(a / (pi / 2) - round(a / (pi / 2))) < 1e-12 and abs(b - a - pi / 2) < 1e-12:
-            cubic = whole_quadrants[round(a / (pi / 2)) % 4]
-        else:
-            half = (b - a) / 2
-            factor = 4 / 3 * (1 - cos(half)) / sin(half)
-            cubic = (
-                device_point(cos(a), -sin(a)),
-                device_point(cos(a) - factor * sin(a), -sin(a) - factor * cos(a)),
-                device_point(cos(b) + factor * sin(b), -sin(b) + factor * cos(b)),
-                device_point(cos(b), -sin(b)),
-            )
-            # GDI keeps the generated controls in 28.4 fixed point before
-            # flattening. Rounding only the emitted vertices shifts the curve.
-            cubic = tuple(tuple(round(value) for value in point) for point in cubic)
-        if not path:
-            path.append(tuple(round(value) for value in cubic[0]))
+    cubics = []
+    quadrants = ellipse_cubics(left, top, right, bottom)
+    for index, (a, b) in enumerate(pairwise(boundaries)):
+        if 0 < index < len(boundaries) - 2:
+            cubics.append(quadrants[round(a / 90) % 4])
+            continue
+        a, b = a * pi / 180, b * pi / 180
+        half = (b - a) / 2
+        factor = 4 / 3 * (1 - cos(half)) / sin(half)
+        cubic = (
+            device_point(cos(a), -sin(a)),
+            device_point(cos(a) - factor * sin(a), -sin(a) - factor * cos(a)),
+            device_point(cos(b) + factor * sin(b), -sin(b) + factor * cos(b)),
+            device_point(cos(b), -sin(b)),
+        )
+        # Quantize terminal-piece controls before flattening. Intermediate
+        # quadrants use the ellipse construction, not this trigonometric cut.
+        cubic = tuple(tuple(round(value) for value in point) for point in cubic)
+        cubics.append(cubic)
+    return tuple(cubics)
+
+
+def arc_path(left: int, top: int, right: int, bottom: int, start: Point, end: Point) -> Polygon:
+    """Flatten Arc geometry for cosmetic coverage or path diagnostics."""
+    cubics = arc_cubics(left, top, right, bottom, start, end)
+    path = [cubics[0][0]]
+    for cubic in cubics:
         path.extend(flatten_cubic(cubic))
-    return path
+    return path[:-1] if start == end else path
