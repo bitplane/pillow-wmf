@@ -12,7 +12,7 @@ device rectangle, then excludes the right and bottom edges from the drawn
 ellipse. It divides the counterclockwise sweep at quadrant boundaries and
 builds a cubic for each part. Generated controls are rounded to 28.4 fixed
 point *before* cubic flattening. Intermediate quadrants use the same control
-geometry as `Ellipse`; the first and last pieces use the trigonometric cut,
+geometry as `Ellipse`; the first and last pieces use the tangent-intersection construction below,
 even when they span almost a whole quadrant. `Arc`, `BeginPath`/`Arc`/`StrokePath`, and the explicitly
 flattened path produced identical **cosmetic** pixels in the native probes. This is also
 consistent with [Wine's path construction](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/path.c),
@@ -44,34 +44,63 @@ with both direct Ellipse and StrokeAndFillPath in
 [run 35098803927](https://github.com/bitplane/pillow-wmf/actions/runs/35098803927),
 and is handled at the shared painting operation, not by an Ellipse rasterizer.
 
-## Precision model and limits
+## Angular arithmetic and handle construction
 
-[Run 35099322489](https://github.com/bitplane/pillow-wmf/actions/runs/35099322489)
-records original 28.4 controls in all quadrants and under reflections. It
-distinguishes terminal pieces from intermediate quadrants, including tiny
-pieces that quantize to a repeated point at cardinal boundaries. Converting
-the radial angle to degrees using single-precision pi reproduces this
-ownership. That floating-point model is a behavioral inference, **not** a
-claim to know Microsoft's internal constant or implementation. We do not use
-an angle tolerance to reclassify pieces or patch their resulting pixels.
+Large path-only probes expose arithmetic that a small bitmap conceals. They
+allocate no large images: `GetPath` reads the already-constructed device path
+through an inverse mapping that reports its original sixteenths of a pixel.
 
-Very short terminal pieces can have different native control handles despite
-identical flattened geometry. The diagnostic logs those control differences
-and asserts exact equality of the consumed vertices (ignoring repeated
-zero-length edges); the PNG tests independently require exact pixels. Native
-control equality is asserted for the specific quadrant regressions measured
-in the unit tests, not claimed for every Arc parameterization.
+[Run 35105051057](https://github.com/bitplane/pillow-wmf/actions/runs/35105051057)
+exposes sine/cosine interpolation at 128 intervals per revolution and arctangent
+interpolation at 32 intervals of the reduced ratio `[0, 1]`. The former
+`atan2`/`sin`/`cos` construction was mathematically smoother, but not compatible.
+`gdi_math.py` generates these mathematical tables; there are no fixture-specific
+values or pixel corrections.
+
+The reconstruction reduces the radial slope for arctangent lookup, stores that
+result at FLOAT precision, and restores quadrants. Degree conversion retains
+the previously measured FLOAT-pi convention. Nearly equal radial directions
+can become equal at this precision and request a full revolution. Cardinal
+boundary pieces remain in the path, including a zero-length terminal piece
+when the sweep ends exactly on a boundary.
+
+For unequal endpoint angles separated by less than **three degrees**, endpoints
+use high-precision trigonometry followed by FLOAT storage. This selection is
+made before unwrapping the counterclockwise sweep. The switch is measured,
+not an epsilon added to make pixels pass:
+[run 35106971946](https://github.com/bitplane/pillow-wmf/actions/runs/35106971946)
+records different native ten-degree endpoints at sweeps 2.9999 and 3.0, and
+the same table mode at 3.0001. Half-angle weights still use the lookup table.
+
+For terminal-piece endpoint normals `n0 = (cos(a), sin(a))` and
+`n3 = (cos(b), sin(b))`, intersect the two lines `n0.T = 1` and `n3.T = 1`.
+Both handles move from their endpoint toward `T` by the fraction
+`4*cos((b-a)/2) / (3*(1+cos((b-a)/2)))`. With exact trigonometry this agrees
+with the familiar tangent-length formula. With interpolated trigonometry it
+does not: endpoint normals need not have exactly unit length. This explains
+both the ordinary one-unit control differences and the native tiny loops near
+cardinal boundaries. No Arc-specific endpoint or raster-pixel adjustment is
+needed. A zero determinant retains a degenerate cubic.
+
+## Verification and limits
 
 The regression suite includes six native atlases (96 arcs): all octants,
 short and wrapping sweeps, circular and elliptical bounds, widths 1/3/6, and
 near/far points on identical rays. The old PNG expectations remain unchanged.
 This is measured compatibility coverage, not a claim of exhaustive GDI parity.
 
-Expanded edge probes in [run 35103332031](https://github.com/bitplane/pillow-wmf/actions/runs/35103332031)
-found **85 pixel failures in 360 Arc cases**. Native fixed-point path capture
-also disproves the current control-point model for short sweeps and wrapping
-cardinal endpoints. Very distant, nearly identical radials can produce a full
-native revolution where our model produces a tiny sweep. These are unresolved
-algorithm defects, not acceptable pixel tolerances. The `arc-edge-*` WMFs
-retain representative cases at the original size because small atlas cells
-can conceal control-point differences after rasterization.
+Expanded edge probes initially found **85 pixel failures in 360 Arc cases**.
+The reconstruction passes all 360, plus **64 independent holdout cases** across
+the precision boundary, reversed sweeps, all quadrants, circular/elliptical
+bounds and widths 1/7, in
+[run 35107084015](https://github.com/bitplane/pillow-wmf/actions/runs/35107084015).
+The `arc-edge-*` WMFs preserve full-size Windows PNG regressions because small
+atlas cells can conceal control differences. No old expectations changed.
+
+This remains a behavioral reconstruction, not Microsoft's source algorithm.
+All tested pixels match, but arbitrary control-point bit equality is not
+claimed. In the 120 captured edge paths, one tiny elliptical terminal loop
+still differs by a fixed-point unit in a handle and an emitted vertex without
+changing its tested pixels. The trigonometric/floating-point operation ordering
+is not exhaustively recovered. Diagnostics retain raw native geometry, and
+unit tests assert exact controls for the measured regressions they name.

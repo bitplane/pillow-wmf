@@ -17,6 +17,8 @@ _ATAN = tuple(atan(index / 32) for index in range(33))
 _SIN = tuple(sin(index * pi / 64) for index in range(33))
 _COS = tuple(cos(index * pi / 64) for index in range(33))
 ANGLE_STEP = 90 / 32
+# Native endpoint evaluation switches at three degrees, not one table cell.
+# Run 35106971946 distinguishes 2.9999, 3.0 and 3.0001 degree sweeps.
 SHORT_ANGLE = 3.0
 
 

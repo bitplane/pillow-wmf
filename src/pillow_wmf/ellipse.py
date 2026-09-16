@@ -80,6 +80,8 @@ def arc_cubics(
         return atan2_degrees((radial_cy - point[1]) / radial_ry, (point[0] - radial_cx) / radial_rx)
 
     first, last = angle(start), angle(end)
+    # Choose endpoint precision before unwrapping. Nearly coincident angles
+    # that compare equal request a full sweep, not the short-angle mode.
     accurate = 0 < abs(last - first) < SHORT_ANGLE
     if last <= first:
         last += 360

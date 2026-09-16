@@ -1,7 +1,41 @@
 import pytest
 
 from pillow_wmf.ellipse import arc_cubics
+from pillow_wmf.gdi_math import sincos_degrees
 from pillow_wmf.raster import RasterContext
+
+
+@pytest.mark.parametrize("accurate,expected", ((False, (2777553, 15752235)), (True, (2778371, 15756924))))
+def test_native_arc_endpoint_precision_modes(accurate, expected):
+    # Run 35106971946, AngleArc at ten degrees with radius 1,000,000:
+    # sweep 2.9999 uses accurate endpoints, while sweep 3 uses the table.
+    assert tuple(round(value * 16000000) for value in sincos_degrees(10, accurate=accurate)) == expected
+
+
+def test_native_short_arc_tangent_intersection_controls():
+    # Original device controls captured in run 35104558437. Analytically
+    # equivalent tan(sweep/4) handles are NOT equivalent with table arithmetic.
+    assert arc_cubics(8, 8, 120, 120, (61, 65), (61, 66)) == (((174, 1297), (198, 1371), (233, 1442), (277, 1509)),)
+
+
+def test_native_wrapping_arc_keeps_degenerate_terminal_piece():
+    assert arc_cubics(8, 8, 120, 120, (67, 63), (67, 64)) == (
+        ((1858, 735), (1738, 373), (1398, 128), (1016, 128)),
+        ((1016, 128), (525, 128), (128, 526), (128, 1016)),
+        ((128, 1016), (128, 1506), (525, 1904), (1016, 1904)),
+        ((1016, 1904), (1507, 1904), (1904, 1506), (1904, 1016)),
+        ((1904, 1016),) * 4,
+    )
+
+
+def test_native_nearly_equal_radials_produce_full_sweep_and_terminal_loop():
+    assert arc_cubics(8, 8, 120, 120, (62, -16236), (62, -16235)) == (
+        ((1016, 128), (526, 128), (128, 526), (128, 1016)),
+        ((128, 1016), (128, 1506), (525, 1904), (1016, 1904)),
+        ((1016, 1904), (1507, 1904), (1904, 1506), (1904, 1016)),
+        ((1904, 1016), (1904, 526), (1507, 128), (1016, 128)),
+        ((1016, 128), (1002, 128), (1002, 128), (1016, 128)),
+    )
 
 
 def test_arc_native_controls_distinguish_terminal_and_intermediate_quadrants():
