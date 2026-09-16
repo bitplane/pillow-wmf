@@ -60,6 +60,47 @@ def test_invalid_polygon_fill_mode_does_not_change_context() -> None:
     assert context.calls == []
 
 
+def test_invalid_background_mode_does_not_change_context() -> None:
+    context = RasterContext(8, 8)
+    with pytest.raises(UnsupportedOperation, match="Background mode"):
+        context.set_background_mode(3)
+    assert context.calls == []
+
+
+def test_invalid_hatch_does_not_create_an_object() -> None:
+    context = RasterContext(8, 8)
+    with pytest.raises(UnsupportedOperation, match="hatch brushes"):
+        context.create_brush(2, 0, 6)
+    assert context.calls == []
+
+
+def test_hatch_background_mode_and_color_are_saved_and_restored() -> None:
+    context = RasterContext(24, 8, background=(9, 9, 9))
+    context.select_object(context.create_pen(5, 0, 0))
+    context.select_object(context.create_brush(2, 0x000000FF, 0))
+    context.set_background_mode(1)
+    context.save_dc()
+    context.set_background_mode(2)
+    context.set_background_color(0x0000FF00)
+    context.rectangle(0, 0, 8, 8)
+    context.restore_dc(-1)
+    context.rectangle(8, 0, 16, 8)
+    assert context.image.getpixel((1, 1)) == (0, 255, 0)
+    assert context.image.getpixel((9, 1)) == (9, 9, 9)
+    assert context.image.getpixel((1, 3)) == (255, 0, 0)
+    assert context.image.getpixel((9, 3)) == (255, 0, 0)
+
+
+def test_null_brush_leaves_fill_untouched_even_when_background_is_opaque() -> None:
+    context = RasterContext(8, 8, background=(9, 9, 9))
+    context.select_object(context.create_pen(5, 0, 0))
+    context.select_object(context.create_brush(1, 0x000000FF, 0))
+    context.set_background_mode(2)
+    context.set_background_color(0x0000FF00)
+    context.rectangle(0, 0, 8, 8)
+    assert context.image.getpixel((3, 3)) == (9, 9, 9)
+
+
 def test_polyline_does_not_change_current_position() -> None:
     context = RasterContext(10, 6)
     context.move_to(1, 1)

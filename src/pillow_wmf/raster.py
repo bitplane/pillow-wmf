@@ -1,4 +1,4 @@
-"""First WMF raster slice: solid pens/brushes and basic mapped geometry."""
+"""WMF rasterization into a Pillow RGB image."""
 
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ class Pen:
 @dataclass(frozen=True)
 class Brush:
     color: tuple[int, int, int]
+    style: int = 0
+    hatch: int = 0
 
 
 class RasterContext(TraceContext):
@@ -51,9 +53,13 @@ class RasterContext(TraceContext):
         self._position = (0, 0)
         self._polygon_fill_mode = 1
         self._rop2 = 13
+        self._background_mode = 2
+        self._background_color = (255, 255, 255)
         self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height))
         self._clip = ClipRegion()
-        self._saved: list[tuple[Mapping, Pen, Brush, tuple[int, int], ClipRegion, int, int]] = []
+        self._saved: list[
+            tuple[Mapping, Pen, Brush, tuple[int, int], ClipRegion, int, int, int, tuple[int, int, int]]
+        ] = []
 
     def _point(self, x: int, y: int) -> tuple[int, int]:
         return self.mapping.point(x, y)
@@ -78,12 +84,15 @@ class RasterContext(TraceContext):
         elif name == "set_rop2":
             if a["mode"] not in range(1, 17):
                 raise UnsupportedOperation(f"ROP2 mode {a['mode']}")
+        elif name == "set_background_mode":
+            if a["mode"] not in (1, 2):
+                raise UnsupportedOperation(f"Background mode {a['mode']}")
         elif name == "create_pen":
             if a["style"] not in (0, 5) or a["width"] < 0:
                 raise UnsupportedOperation("Only solid and null pens are supported")
         elif name == "create_brush":
-            if a["style"] != 0:
-                raise UnsupportedOperation("Only solid brushes are supported")
+            if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
+                raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
         elif name == "select_object":
             if a["handle"].kind not in {"pen", "brush"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
@@ -103,6 +112,7 @@ class RasterContext(TraceContext):
             "poly_polygon",
             "set_polygon_fill_mode",
             "set_rop2",
+            "set_background_color",
             "rectangle",
             "ellipse",
             "set_pixel",
@@ -126,6 +136,10 @@ class RasterContext(TraceContext):
             self._polygon_fill_mode = a["mode"]
         elif name == "set_rop2":
             self._rop2 = a["mode"]
+        elif name == "set_background_mode":
+            self._background_mode = a["mode"]
+        elif name == "set_background_color":
+            self._background_color = rgb(a["color"])
         elif name == "set_window_origin":
             self.mapping.window_origin = a["x"], a["y"]
         elif name == "set_viewport_origin":
@@ -151,7 +165,7 @@ class RasterContext(TraceContext):
         elif name == "create_pen":
             self._objects[result] = Pen(rgb(a["color"]), a["width"], a["style"])
         elif name == "create_brush":
-            self._objects[result] = Brush(rgb(a["color"]))
+            self._objects[result] = Brush(rgb(a["color"]), a["style"], a["hatch"])
         elif name == "select_object":
             obj = self._objects[a["handle"]]
             if isinstance(obj, Pen):
@@ -183,12 +197,22 @@ class RasterContext(TraceContext):
                     self._clip,
                     self._polygon_fill_mode,
                     self._rop2,
+                    self._background_mode,
+                    self._background_color,
                 )
             )
         elif name == "restore_dc":
-            self.mapping, self._pen, self._brush, self._position, self._clip, self._polygon_fill_mode, self._rop2 = (
-                snapshot
-            )
+            (
+                self.mapping,
+                self._pen,
+                self._brush,
+                self._position,
+                self._clip,
+                self._polygon_fill_mode,
+                self._rop2,
+                self._background_mode,
+                self._background_color,
+            ) = snapshot
             del self._saved[target - 1 :]
         elif name in ("intersect_clip_rect", "exclude_clip_rect"):
             left, top = self._point(a["left"], a["top"])
@@ -267,9 +291,28 @@ class RasterContext(TraceContext):
         fill_pixels = set(self._contour_pixels(contours, fill_mode=self._polygon_fill_mode))
         stroke_pixels = self._stroke_pixels(contours, closed=True, miter=miter)
         for x, y in fill_pixels - stroke_pixels:
-            self._pixel(x, y, self._brush.color)
+            color = self._brush_color_at(x, y)
+            if color is not None:
+                self._pixel(x, y, color)
         for x, y in stroke_pixels:
             self._pixel(x, y, self._pen.color)
+
+    def _brush_color_at(self, x: int, y: int) -> tuple[int, int, int] | None:
+        brush = self._brush
+        if brush.style == 0:
+            return brush.color
+        if brush.style == 1:
+            return None
+        # The six GDI hatches tile in device space. These phase offsets are
+        # shared by all shapes, mapping modes and brush selections.
+        horizontal = y % 8 == 3
+        vertical = x % 8 == 4
+        forward = (x - y) % 8 == 0
+        backward = (x + y) % 8 == 7
+        mark = (horizontal, vertical, forward, backward, horizontal or vertical, forward or backward)[brush.hatch]
+        if mark:
+            return brush.color
+        return self._background_color if self._background_mode == 2 else None
 
     def _rectangle(self, left: int, top: int, right: int, bottom: int) -> None:
         path = [
