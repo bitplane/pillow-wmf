@@ -386,6 +386,22 @@ def polygon_cases():
     recorder.polygon(concave)
     yield "polygon-concave-fill", recorder
 
+    triangle = ((13, 17), (105, 29), (37, 111))
+    for reverse, direction in ((False, "forward"), (True, "reversed")):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(5, 0, 0))
+        recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+        recorder.polygon(triangle[::-1] if reverse else triangle)
+        yield f"polygon-slanted-{direction}", recorder
+
+    recorder = mapped()
+    recorder.set_window_extent(256, 256)
+    recorder.set_viewport_extent(128, 128)
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+    recorder.polygon(((25, 33), (211, 41), (75, 223)))
+    yield "polygon-slanted-half-scale", recorder
+
     recorder = mapped()
     recorder.select_object(recorder.create_pen(0, 7, 0))
     recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
