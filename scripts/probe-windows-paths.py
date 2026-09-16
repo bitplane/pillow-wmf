@@ -2,7 +2,9 @@
 
 import ctypes
 from ctypes import wintypes
+from pathlib import Path
 
+from PIL import Image
 from windows_wmf_render import bind, check, reference_surface
 
 
@@ -40,6 +42,8 @@ def main():
             ("two-wide", (24, 24, 26, 49)),
             ("overlap", (48, 40, 116, 108)),
         ):
+            pen = check(gdi.CreatePen(0, 0 if name == "overlap" else 1, 0), "CreatePen")
+            previous = check(gdi.SelectObject(dc, pen), "SelectObject")
             check(gdi.BeginPath(dc), "BeginPath")
             check(gdi.Ellipse(dc, *box), "Ellipse")
             check(gdi.EndPath(dc), "EndPath")
@@ -67,6 +71,23 @@ def main():
                 return ctypes.string_at(bits, 128 * 128 * 4)
 
             direct = raster()
+            if name != "overlap":
+                reference_path = (
+                    Path(__file__).resolve().parents[1]
+                    / "test"
+                    / "compatibility"
+                    / "wmf"
+                    / f"drawing-ellipse-{name}.png"
+                )
+                with Image.open(reference_path) as reference:
+                    direct_rgb = Image.frombytes("RGB", (128, 128), direct, "raw", "BGRX")
+                    black_difference = sum(
+                        (left == (0, 0, 0)) != (right == (0, 0, 0))
+                        for left, right in zip(
+                            direct_rgb.get_flattened_data(), reference.get_flattened_data(), strict=True
+                        )
+                    )
+                print(f"ellipse-{name}-reference-black-difference: {black_difference}")
             for variant, image in (
                 ("path", raster(path=True)),
                 ("flat", raster(path=True, flatten=True)),
@@ -87,6 +108,8 @@ def main():
                 else:
                     print(f"ellipse-{name}-widened: failed with {ctypes.get_last_error()}")
                 check(gdi.AbortPath(dc), "AbortPath")
+            gdi.SelectObject(dc, previous)
+            gdi.DeleteObject(pen)
 
         for width, scale_x, scale_y in ((1, 2, 1), (3, 1, 1), (3, 2, 1), (3, 1, 2)):
             check(gdi.SetViewportExtEx(dc, 128 * scale_x, 128 * scale_y, None), "SetViewportExtEx")
