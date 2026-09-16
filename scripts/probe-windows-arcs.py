@@ -134,17 +134,35 @@ def main():
         pen = check(gdi.CreatePen(0, 3, 0), "CreatePen")
         previous = check(gdi.SelectObject(dc, pen), "SelectObject")
         try:
-            check(gdi.BeginPath(dc), "BeginPath")
+            bind(gdi, "FillPath", boolean, ptr)
+            ctypes.memset(bits, 255, 128 * 128 * 4)
             check(gdi.Arc(dc, 68, 8, 116, 56, 136, 32, 68, 8), "Arc")
-            check(gdi.EndPath(dc), "EndPath")
-            print("arc-wide-raw", path_points(gdi, dc))
-            print("arc-wide-fixed-controls", fixed_path_points(gdi, dc))
-            check(gdi.FlattenPath(dc), "FlattenPath")
-            print("arc-wide-fixed-flat", fixed_path_points(gdi, dc))
-            check(gdi.WidenPath(dc), "WidenPath")
-            print("arc-wide-widened", path_points(gdi, dc))
-            print("arc-wide-fixed-widened", fixed_path_points(gdi, dc))
-            check(gdi.AbortPath(dc), "AbortPath")
+            check(gdi.GdiFlush(), "GdiFlush")
+            direct = ctypes.string_at(bits, 128 * 128 * 4)
+            for flatten in (False, True):
+                for widen in (False, True):
+                    check(gdi.BeginPath(dc), "BeginPath")
+                    check(gdi.Arc(dc, 68, 8, 116, 56, 136, 32, 68, 8), "Arc")
+                    check(gdi.EndPath(dc), "EndPath")
+                    if flatten:
+                        check(gdi.FlattenPath(dc), "FlattenPath")
+                    if widen:
+                        check(gdi.WidenPath(dc), "WidenPath")
+                        print("arc-wide-fixed-widened", flatten, fixed_path_points(gdi, dc))
+                    ctypes.memset(bits, 255, 128 * 128 * 4)
+                    check(gdi.FillPath(dc) if widen else gdi.StrokePath(dc), "FillPath/StrokePath")
+                    check(gdi.GdiFlush(), "GdiFlush")
+                    raw = ctypes.string_at(bits, 128 * 128 * 4)
+                    print(
+                        "arc-wide-difference",
+                        flatten,
+                        widen,
+                        [
+                            (i // 4 % 128, i // 4 // 128, direct[i], raw[i])
+                            for i in range(0, len(raw), 4)
+                            if direct[i : i + 3] != raw[i : i + 3]
+                        ],
+                    )
         finally:
             gdi.SelectObject(dc, previous)
             gdi.DeleteObject(pen)
