@@ -31,6 +31,7 @@ def main():
         bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
         bind(gdi, "CreateSolidBrush", ptr, wintypes.DWORD)
         bind(gdi, "FillPath", boolean, ptr)
+        bind(gdi, "PathToRegion", ptr, ptr)
         bind(gdi, "SelectObject", ptr, ptr, ptr)
         bind(gdi, "DeleteObject", boolean, ptr)
         bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
@@ -136,6 +137,22 @@ def main():
                 else:
                     print(f"ellipse-{name}-widened: failed with {ctypes.get_last_error()}")
                 check(gdi.AbortPath(dc), "AbortPath")
+
+                check(gdi.BeginPath(dc), "BeginPath")
+                check(gdi.Ellipse(dc, *box), "Ellipse")
+                check(gdi.EndPath(dc), "EndPath")
+                check(gdi.WidenPath(dc), "WidenPath")
+                region = check(gdi.PathToRegion(dc), "PathToRegion")
+                try:
+                    difference = sum(
+                        (direct[(y * 128 + x) * 4 : (y * 128 + x) * 4 + 3] == b"\0\0\0")
+                        != bool(gdi.PtInRegion(region, x, y))
+                        for y in range(128)
+                        for x in range(128)
+                    )
+                    print(f"ellipse-{name}-path-region-black-difference: {difference}")
+                finally:
+                    gdi.DeleteObject(region)
 
                 brush = check(gdi.CreateSolidBrush(0), "CreateSolidBrush")
                 previous_brush = check(gdi.SelectObject(dc, brush), "SelectObject")
