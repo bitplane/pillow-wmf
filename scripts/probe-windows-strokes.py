@@ -120,5 +120,47 @@ def main():
             gdi.DeleteObject(brush)
 
 
+def probe_shapes():
+    with reference_surface(128, 128) as (gdi, dc, bits):
+        ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
+        for name in ("BeginPath", "EndPath", "WidenPath", "AbortPath"):
+            bind(gdi, name, boolean, ptr)
+        for name in ("Ellipse", "Rectangle"):
+            bind(gdi, name, boolean, ptr, integer, integer, integer, integer)
+        bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
+        bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+
+        def capture():
+            check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+            count = gdi.GetPath(dc, None, None, 0)
+            if count < 0:
+                raise OSError("GetPath failed")
+            points = (wintypes.POINT * count)()
+            kinds = (ctypes.c_ubyte * count)()
+            if gdi.GetPath(dc, points, kinds, count) != count:
+                raise OSError("GetPath changed size")
+            result = [(point.x, point.y, kind) for point, kind in zip(points, kinds, strict=True)]
+            check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+            return result
+
+        for width in (2, 3, 6, 12):
+            pen = check(gdi.CreatePen(0, width, 0), "CreatePen")
+            previous = check(gdi.SelectObject(dc, pen), "SelectObject")
+            try:
+                for name in ("Ellipse", "Rectangle"):
+                    check(gdi.BeginPath(dc), "BeginPath")
+                    check(getattr(gdi, name)(dc, 24, 24, 96, 80), name)
+                    check(gdi.EndPath(dc), "EndPath")
+                    raw = capture()
+                    check(gdi.WidenPath(dc), "WidenPath")
+                    wide = capture()
+                    print("SHAPE " + json.dumps([name, width, raw, wide]))
+                    check(gdi.AbortPath(dc), "AbortPath")
+            finally:
+                gdi.SelectObject(dc, previous)
+                gdi.DeleteObject(pen)
+
+
 if __name__ == "__main__":
     main()
+    probe_shapes()
