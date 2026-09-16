@@ -1,14 +1,65 @@
 import pytest
 
 from pillow_wmf import RasterContext, UnsupportedOperation
+from pillow_wmf.ellipse import ellipse_path
+from pillow_wmf.stroke import dash_is_foreground, diamond_touch_phase
 
 
 def test_raster_rejects_unimplemented_pen_style_before_changing_context() -> None:
     context = RasterContext(8, 8)
-    with pytest.raises(UnsupportedOperation, match="solid"):
-        context.create_pen(style=1, width=1, color=0)
+    with pytest.raises(UnsupportedOperation, match="dashed"):
+        context.create_pen(style=7, width=1, color=0)
     assert context.calls == []
     assert context.image.getpixel((0, 0)) == (255, 255, 255)
+
+
+@pytest.mark.parametrize(
+    ("style", "pattern"),
+    (
+        (1, (18, 6)),
+        (2, (3, 3)),
+        (3, (9, 6, 3, 6)),
+        (4, (9, 3, 3, 3, 3, 3)),
+    ),
+)
+def test_cosmetic_pen_pattern_cycle(style: int, pattern: tuple[int, ...]) -> None:
+    expected = tuple(on for index, length in enumerate(pattern) for on in (index % 2 == 0,) * length)
+    actual = tuple(dash_is_foreground(style, position) for position in range(2 * len(expected)))
+    assert actual == expected * 2
+
+
+def test_styled_pen_gaps_use_background_mode_and_color() -> None:
+    context = RasterContext(16, 8, background=(9, 9, 9))
+    context.select_object(context.create_pen(2, 1, 0x000000FF))
+    context.set_background_mode(1)
+    context.move_to(0, 2)
+    context.line_to(12, 2)
+    context.set_background_mode(2)
+    context.set_background_color(0x0000FF00)
+    context.move_to(0, 4)
+    context.line_to(12, 4)
+    assert [context.image.getpixel((x, 2)) for x in range(6)] == [(255, 0, 0)] * 3 + [(9, 9, 9)] * 3
+    assert [context.image.getpixel((x, 4)) for x in range(6)] == [(255, 0, 0)] * 3 + [(0, 255, 0)] * 3
+
+
+def test_pixel_diamond_touch_phase_depends_on_both_adjacent_segments() -> None:
+    for bounds, index, expected in (
+        ((66, 16, 121, 69), 3, 1),  # Both segments lie inside the touched diamond.
+        ((64, 12, 102, 61), 8, -1),  # Both segments lie outside.
+        ((12, 12, 40, 43), 2, 0),  # Crossing the edge has no correction.
+        ((8, 8, 57, 43), 3, 0),  # Not on a diamond edge.
+    ):
+        path = ellipse_path(*bounds)
+        assert diamond_touch_phase(path[index - 1], path[index], path[index + 1]) == expected
+
+
+def test_fully_offscreen_segment_still_advances_connected_dash_phase() -> None:
+    context = RasterContext(32, 8)
+    context.set_background_mode(1)
+    context.select_object(context.create_pen(1, 1, 0x000000FF))
+    context.polyline(((-80, 3), (-32, 3), (24, 3)))
+    assert context.image.getpixel((0, 3)) == (255, 0, 0)  # Phase 80 of 24.
+    assert context.image.getpixel((10, 3)) == (255, 255, 255)  # Phase 90 is a gap.
 
 
 def test_raster_requires_positive_image_size() -> None:

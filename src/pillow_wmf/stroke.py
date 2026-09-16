@@ -27,6 +27,43 @@ _SMALL_PENS = {
     6: ((6, -1), (5, -3), (3, -5), (1, -6), (-1, -6), (-3, -5), (-5, -3), (-6, -1)),
 }
 
+# Cosmetic CreatePen styles, in device pixels: alternating foreground and gap.
+_DASHES = {
+    1: (18, 6),
+    2: (3, 3),
+    3: (9, 6, 3, 6),
+    4: (9, 3, 3, 3, 3, 3),
+}
+
+
+def dash_is_foreground(style: int, position: int) -> bool:
+    pattern = _DASHES[style]
+    phase = position % sum(pattern)
+    for index, length in enumerate(pattern):
+        if phase < length:
+            return index % 2 == 0
+        phase -= length
+    raise AssertionError("Dash phase outside pattern")
+
+
+def diamond_touch_phase(before: Point, vertex: Point, after: Point) -> int:
+    """Style-step correction where two GIQ segments meet on a diamond edge."""
+    center = tuple(((coordinate + 8) // 16) * 16 for coordinate in vertex)
+    offsets = tuple(coordinate - middle for coordinate, middle in zip(vertex, center, strict=True))
+    if sum(abs(offset) for offset in offsets) != 8:
+        return 0
+
+    def side(neighbor: Point) -> int:
+        change = tuple(coordinate - middle for coordinate, middle in zip(neighbor, vertex, strict=True))
+        derivative = sum(
+            (1 if offset > 0 else -1 if offset < 0 else 0) * delta if offset else abs(delta)
+            for offset, delta in zip(offsets, change, strict=True)
+        )
+        return (derivative > 0) - (derivative < 0)
+
+    first, second = side(before), side(after)
+    return -first if first == second else 0
+
 
 @dataclass(frozen=True)
 class PenGeometry:

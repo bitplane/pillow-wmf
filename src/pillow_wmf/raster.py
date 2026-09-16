@@ -13,7 +13,7 @@ from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import Polygon, contains
 from .mapping import Mapping
 from .paint import rop2
-from .stroke import cosmetic_line, join_outline, realize_pen, widen_segment
+from .stroke import cosmetic_line, dash_is_foreground, diamond_touch_phase, join_outline, realize_pen, widen_segment
 from .trace import TraceContext
 
 
@@ -88,8 +88,8 @@ class RasterContext(TraceContext):
             if a["mode"] not in (1, 2):
                 raise UnsupportedOperation(f"Background mode {a['mode']}")
         elif name == "create_pen":
-            if a["style"] not in (0, 5) or a["width"] < 0:
-                raise UnsupportedOperation("Only solid and null pens are supported")
+            if a["style"] not in range(6) or a["width"] < 0:
+                raise UnsupportedOperation("Only solid, dashed, dotted and null pens are supported")
         elif name == "create_brush":
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
@@ -246,8 +246,63 @@ class RasterContext(TraceContext):
         self._stroke_path([(start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16)])
 
     def _stroke_path(self, path, *, closed=False, miter=False) -> None:
-        for x, y in self._stroke_pixels((path,), closed=closed, miter=miter):
+        foreground, gaps = self._stroke_fragments((path,), closed=closed, miter=miter)
+        for x, y in gaps:
+            self._pixel(x, y, self._background_color)
+        for x, y in foreground:
             self._pixel(x, y, self._pen.color)
+
+    def _stroke_fragments(self, paths: tuple[Polygon, ...], *, closed=False, miter=False):
+        if self._pen.style == 5:
+            return set(), set()
+        pen = realize_pen(
+            self._pen.width,
+            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
+            Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
+        )
+        if self._pen.style == 0 or not pen.cosmetic:
+            return self._stroke_pixels(paths, closed=closed, miter=miter), set()
+        foreground: set[tuple[int, int]] = set()
+        gaps: set[tuple[int, int]] = set()
+        for path in paths:
+            position = 0
+            previous_major = None
+            previous_start = None
+            segments = zip(path, path[1:] + (path[:1] if closed else []))
+            for segment_index, (start, end) in enumerate(segments):
+                pixels = list(cosmetic_line(start, end, self.image.width, self.image.height))
+                major = 1 if abs(end[1] - start[1]) > abs(end[0] - start[0]) else 0
+                suppressed = None
+                if previous_major is not None and major != previous_major:
+                    adjustment = diamond_touch_phase(previous_start, start, end)
+                    position += adjustment
+                    if adjustment < 0:
+                        # A path that just grazes a diamond does not paint it,
+                        # though its style position is still consumed.
+                        suppressed = ((start[0] + 8) // 16, (start[1] + 8) // 16)
+                previous_major = major
+                previous_start = start
+                if not pixels:
+                    position += abs(end[major] // 16 - start[major] // 16)
+                    continue
+                if end[major] < start[major]:
+                    pixels.reverse()
+                if pixels and segment_index == 0:
+                    direction = 1 if end[major] >= start[major] else -1
+                    position += direction * (pixels[0][major] - start[major] // 16)
+                elif pixels and not (0 <= start[major] // 16 < (self.image.height if major else self.image.width)):
+                    position += abs(pixels[0][major] - start[major] // 16)
+                for pixel in pixels:
+                    if pixel == suppressed:
+                        pass
+                    elif dash_is_foreground(self._pen.style, position):
+                        foreground.add(pixel)
+                    elif self._background_mode == 2:
+                        gaps.add(pixel)
+                    position += 1
+                if pixels and not (0 <= end[major] // 16 < (self.image.height if major else self.image.width)):
+                    position += abs(end[major] // 16 - pixels[-1][major]) - 1
+        return foreground, gaps - foreground
 
     def _stroke_pixels(self, paths: tuple[Polygon, ...], *, closed=False, miter=False) -> set[tuple[int, int]]:
         if self._pen.style == 5:
@@ -286,15 +341,20 @@ class RasterContext(TraceContext):
                 if contains(contours, x, y, fill_mode=fill_mode):
                     yield x, y
 
-    def _paint_polygons(self, paths: tuple[Polygon, ...], *, miter=False) -> None:
+    def _paint_polygons(self, paths: tuple[Polygon, ...], *, miter=False, reserve_outline=False) -> None:
         contours = tuple(path for path in paths if len(path) >= 2)
         fill_pixels = set(self._contour_pixels(contours, fill_mode=self._polygon_fill_mode))
-        stroke_pixels = self._stroke_pixels(contours, closed=True, miter=miter)
+        foreground, gaps = self._stroke_fragments(contours, closed=True, miter=miter)
+        stroke_pixels = (
+            self._stroke_pixels(contours, closed=True, miter=miter) if reserve_outline else foreground | gaps
+        )
         for x, y in fill_pixels - stroke_pixels:
             color = self._brush_color_at(x, y)
             if color is not None:
                 self._pixel(x, y, color)
-        for x, y in stroke_pixels:
+        for x, y in gaps:
+            self._pixel(x, y, self._background_color)
+        for x, y in foreground:
             self._pixel(x, y, self._pen.color)
 
     def _brush_color_at(self, x: int, y: int) -> tuple[int, int, int] | None:
@@ -316,12 +376,12 @@ class RasterContext(TraceContext):
 
     def _rectangle(self, left: int, top: int, right: int, bottom: int) -> None:
         path = [
-            (left * 16, top * 16),
             ((right - 1) * 16, top * 16),
-            ((right - 1) * 16, (bottom - 1) * 16),
+            (left * 16, top * 16),
             (left * 16, (bottom - 1) * 16),
+            ((right - 1) * 16, (bottom - 1) * 16),
         ]
-        self._paint_polygons((path,), miter=True)
+        self._paint_polygons((path,), miter=True, reserve_outline=True)
 
     def _ellipse(self, left: int, top: int, right: int, bottom: int) -> None:
         path = ellipse_path(left, top, right, bottom)
