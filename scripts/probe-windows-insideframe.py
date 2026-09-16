@@ -17,7 +17,7 @@ def verify_pixels():
             (0, 1, 2, 3, 6, 7, 20, 21, 22, 36, 37, 38, 40),
             (0, 1, 2),
             ((5, 6, 26, 43), (5, 6, 42, 27), (5, 6, 26, 27)),
-            ((128, 128), (192, 96), (-128, 256)),
+            ((128, 128), (192, 96), (192, 192), (-128, 256)),
         )
     ):
         recorder = Recorder()
@@ -57,12 +57,12 @@ def main():
             bind(gdi, name, boolean, ptr, *([integer] * count))
         bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
         bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
-        for width, scale in product((0, 1, 2, 3, 4, 7, 20, 21, 22, 37, 40), ((1, 1), (2, 1))):
+        for width, scale in product((0, 1, 2, 3, 4, 7, 20, 21, 22, 37, 40), ((1, 1), (2, 1), (1.5, 0.75), (1.5, 1.5))):
             pen = check(gdi.CreatePen(6, width, 0), "CreatePen")
             old = check(gdi.SelectObject(dc, pen), "SelectObject")
             try:
                 for operation in ("Rectangle", "Ellipse", "RoundRect", "Arc", "Chord", "Pie"):
-                    check(gdi.SetViewportExtEx(dc, 128 * scale[0], 128 * scale[1], None), "SetViewportExtEx")
+                    check(gdi.SetViewportExtEx(dc, int(128 * scale[0]), int(128 * scale[1]), None), "SetViewportExtEx")
                     args = (5, 6, 26, 43)
                     if operation == "RoundRect":
                         args += (13, 19)

@@ -368,6 +368,9 @@ class RasterContext(TraceContext):
         pen = self._realized_pen()
         pixels: set[tuple[int, int]] = set()
         for path in paths:
+            # A wholly collapsed figure still has a pen footprint. There is
+            # no nonzero tangent with which to form a closed-path join.
+            collapsed = len(path.segments) == 1 and path.segments[0].start == path.segments[0].end
             for index, segment in enumerate(path.segments):
                 start, end = segment.start, segment.end
                 if pen.cosmetic:
@@ -376,8 +379,8 @@ class RasterContext(TraceContext):
                     outline = widen_segment(
                         segment,
                         pen,
-                        cap_start=not path.closed and index == 0,
-                        cap_end=not path.closed and index == len(path.segments) - 1,
+                        cap_start=collapsed or not path.closed and index == 0,
+                        cap_end=collapsed or not path.closed and index == len(path.segments) - 1,
                     )
                     pixels.update(self._contour_pixels((outline,)))
             if not pen.cosmetic:
