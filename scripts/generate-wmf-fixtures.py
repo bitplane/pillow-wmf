@@ -53,7 +53,57 @@ def cases():
     yield from chord_cases()
     yield from chord_cases("pie")
     yield from pie_regression_cases()
+    yield from round_rect_cases()
     yield from edge_cases()
+
+
+def round_rect_cases():
+    for name, style, width, brush, mode in (
+        ("solid", 0, 1, 0, 13),
+        ("wide", 0, 7, 0, 13),
+        ("outline", 0, 7, 1, 13),
+        ("fill-only", 5, 1, 0, 13),
+        ("styled", 4, 1, 0, 13),
+        ("hatch", 0, 1, 2, 13),
+        ("xor", 0, 1, 0, 7),
+        ("xor-wide", 0, 7, 0, 7),
+    ):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(style, width, 0x00402010))
+        recorder.select_object(recorder.create_brush(brush, 0x00CC8844, 5))
+        recorder.set_rop2(mode)
+        for i, size in enumerate(
+            (
+                (0, 0),
+                (0, 12),
+                (12, 0),
+                (1, 1),
+                (2, 2),
+                (3, 5),
+                (8, 14),
+                (15, 9),
+                (20, 20),
+                (21, 21),
+                (22, 22),
+                (23, 23),
+                (60, 60),
+                (-8, 14),
+                (8, -14),
+                (-8, -14),
+            )
+        ):
+            x, y = 6 + i % 4 * 32, 6 + i // 4 * 32
+            recorder.round_rect(x, y, x + 21, y + 22, *size)
+        yield f"roundrect-corners-{name}", recorder
+    for sx, sy in ((-1, 1), (1, -1), (-1, -1), (2, 1)):
+        recorder = mapped()
+        recorder.set_viewport_origin(128 if sx < 0 else 0, 128 if sy < 0 else 0)
+        recorder.set_viewport_extent(128 * sx, 128 * sy)
+        recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+        recorder.move_to(4, 4)
+        recorder.round_rect(8, 8, 56, 104, 17, 29)
+        recorder.line_to(30, 12)
+        yield f"roundrect-mapping-{sx}-{sy}", recorder
 
 
 def pie_regression_cases():
