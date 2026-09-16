@@ -17,6 +17,7 @@ _ATAN = tuple(atan(index / 32) for index in range(33))
 _SIN = tuple(sin(index * pi / 64) for index in range(33))
 _COS = tuple(cos(index * pi / 64) for index in range(33))
 ANGLE_STEP = 90 / 32
+_ANGLE_TO_TABLE = float32(1 / ANGLE_STEP)
 # Native endpoint evaluation switches at three degrees, not one table cell.
 # Run 35106971946 distinguishes 2.9999, 3.0 and 3.0001 degree sweeps.
 SHORT_ANGLE = 3.0
@@ -52,16 +53,25 @@ def sincos_degrees(angle: float, *, accurate=False) -> tuple[float, float]:
     """Return (sine, cosine), with quadrant signs and FLOAT results."""
     angle %= 360
     sine_sign = cosine_sign = 1
-    if angle > 180:
-        angle = 360 - angle
-        sine_sign = -1
-    if angle > 90:
-        angle = 180 - angle
-        cosine_sign = -1
     if accurate:
+        if angle > 180:
+            angle = 360 - angle
+            sine_sign = -1
+        if angle > 90:
+            angle = 180 - angle
+            cosine_sign = -1
         radians = angle * pi / 180
         sine, cosine = sin(radians), cos(radians)
     else:
-        position = angle / ANGLE_STEP
+        # GDI quantizes the angle and full-circle lookup position as FLOATs
+        # before quadrant reduction. Folding in double precision first loses
+        # the native spacing near cardinal angles and changes tangent handles.
+        position = float32(float32(angle) * _ANGLE_TO_TABLE)
+        if position > 64:
+            position = 128 - position
+            sine_sign = -1
+        if position > 32:
+            position = 64 - position
+            cosine_sign = -1
         sine, cosine = _interpolate(_SIN, position), _interpolate(_COS, position)
     return sine_sign * float32(sine), cosine_sign * float32(cosine)

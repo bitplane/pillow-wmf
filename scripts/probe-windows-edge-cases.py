@@ -8,6 +8,7 @@ from windows_wmf_render import bind, check, reference_surface
 
 from pillow_wmf import RasterContext
 from pillow_wmf.ellipse import arc_cubics
+from pillow_wmf.gdi_math import sincos_degrees
 from pillow_wmf.geometry import DevicePath, StrokeSegment
 from pillow_wmf.stroke import realize_pen, widen_segment
 
@@ -146,6 +147,11 @@ def main():
             check(gdi.AngleArc(dc, 0, 0, 1000000, angle, sweep), "AngleArc")
             check(gdi.EndPath(dc), "EndPath")
             print("large-angle-arc", angle, sweep, fixed_path(gdi, dc))
+            if sweep == 360:
+                sine, cosine = sincos_degrees(angle)
+                expected = tuple(fixed_path(gdi, dc)[1][:2])
+                actual = (round(cosine * 16000000), round(-sine * 16000000))
+                assert actual == expected, ("FLOAT lookup", angle, actual, expected)
             check(gdi.AbortPath(dc), "AbortPath")
 
         def compare(label, context):
@@ -230,6 +236,9 @@ def main():
                         print("arc-controls", box, start, end, "local", arc_cubics(*box, start, end))
                         check(gdi.FlattenPath(dc), "FlattenPath")
                         print("arc-flat", start, end, "native", fixed_path(gdi, dc))
+                        native = DevicePath.polyline(tuple((x, y) for x, y, _ in fixed_path(gdi, dc)))
+                        actual = DevicePath(arc_cubics(*box, start, end))
+                        assert actual.vertices == native.vertices, ("Arc flattened geometry", box, start, end)
                         check(gdi.AbortPath(dc), "AbortPath")
                     ctypes.memset(bits, 255, 128 * 128 * 4)
                     check(gdi.Arc(dc, *box, *start, *end), "Arc")

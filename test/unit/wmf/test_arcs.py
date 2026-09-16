@@ -2,7 +2,36 @@ import pytest
 
 from pillow_wmf.ellipse import arc_cubics
 from pillow_wmf.gdi_math import sincos_degrees
+from pillow_wmf.geometry import flatten_cubic
 from pillow_wmf.raster import RasterContext
+
+
+@pytest.mark.parametrize(
+    "angle,expected",
+    (
+        (89.99397277832031, (1682, -15999959)),
+        (90.00601959228516, (-1680, -15999959)),
+        (90.00602722167969, (-1683, -15999959)),
+        (269.9939880371094, (-1677, 15999959)),
+        (270.0060119628906, (1677, 15999959)),
+    ),
+)
+def test_native_float_lookup_before_quadrant_reduction(angle, expected):
+    # Run 35111628013: first AngleArc point at radius 1,000,000, captured
+    # as 28.4 device coordinates. Explicit FLOAT angles bypass atan2.
+    sine, cosine = sincos_degrees(angle)
+    assert (round(cosine * 16000000), round(-sine * 16000000)) == expected
+
+
+@pytest.mark.parametrize("offset", ((0, 0), (17, -13)))
+def test_native_tiny_elliptical_loop_controls_and_flattening(offset):
+    # Native controls: run 35111160259. Native FlattenPath emits a vertex
+    # at X=1005, not 1006; the former lookup precision lost that distinction.
+    ox, oy = offset
+    curve = arc_cubics(8 + ox, 16 + oy, 120 + ox, 112 + oy, (62 + ox, 16364 + oy), (62 + ox, 16365 + oy))[0]
+    expected = ((1016, 1776), (1001, 1776), (1002, 1776), (1016, 1776))
+    assert curve == tuple((x + 16 * ox, y + 16 * oy) for x, y in expected)
+    assert flatten_cubic(curve) == [(1005 + 16 * ox, 1776 + 16 * oy), (1016 + 16 * ox, 1776 + 16 * oy)]
 
 
 @pytest.mark.parametrize("accurate,expected", ((False, (2777553, 15752235)), (True, (2778371, 15756924))))
