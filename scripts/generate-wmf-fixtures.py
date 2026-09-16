@@ -52,7 +52,24 @@ def cases():
     yield from arc_cases()
     yield from chord_cases()
     yield from chord_cases("pie")
+    yield from pie_regression_cases()
     yield from edge_cases()
+
+
+def pie_regression_cases():
+    # Holdout failures retained as local, independently rendered regressions.
+    for name, box, start, end, width, brush, rop in (
+        ("xor-fill-stroke", (9, 17, 117, 108), (90, 27), (23, 103), 1, 0, 7),
+        ("xor-wide", (24, 8, 103, 121), (90, 27), (23, 103), 7, 0, 7),
+        ("wide-full", (9, 17, 117, 108), (97, 63), (97, 63), 7, 1, 13),
+        ("wide-collapsed", (61, 8, 62, 120), (123, 63), (64, 2), 7, 1, 13),
+    ):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(0, width, 0x00402010))
+        recorder.select_object(recorder.create_brush(brush, 0x00CC8844, 5))
+        recorder.set_rop2(rop)
+        recorder.pie(*box, *start, *end)
+        yield f"pie-{name}", recorder
 
 
 def chord_cases(operation="chord"):
