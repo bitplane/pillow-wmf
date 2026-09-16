@@ -7,8 +7,22 @@ from itertools import product
 from windows_wmf_render import bind, check, reference_surface
 
 from pillow_wmf import RasterContext
-from pillow_wmf.geometry import DevicePath
-from pillow_wmf.stroke import realize_pen
+from pillow_wmf.ellipse import arc_cubics
+from pillow_wmf.geometry import DevicePath, StrokeSegment
+from pillow_wmf.stroke import realize_pen, widen_segment
+
+
+def fixed_path(gdi, dc):
+    """Read existing device geometry in sixteenths without changing its construction."""
+    check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+    try:
+        count = gdi.GetPath(dc, None, None, 0)
+        check(count >= 0, "GetPath count")
+        points, kinds = (wintypes.POINT * count)(), (ctypes.c_ubyte * count)()
+        check(gdi.GetPath(dc, points, kinds, count) == count, "GetPath")
+        return tuple((point.x, point.y, kind) for point, kind in zip(points, kinds, strict=True))
+    finally:
+        check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
 
 
 def verify_native_clipped_dash_pairs():
@@ -75,8 +89,9 @@ def main():
     failures = tested = 0
     with reference_surface(128, 128) as (gdi, dc, bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
-        for name in ("BeginPath", "EndPath", "StrokePath"):
+        for name in ("BeginPath", "EndPath", "StrokePath", "WidenPath", "AbortPath", "FlattenPath"):
             bind(gdi, name, boolean, ptr)
+        bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
         bind(gdi, "SetGraphicsMode", integer, ptr, integer)
         bind(gdi, "MoveToEx", boolean, ptr, integer, integer, ptr)
         bind(gdi, "LineTo", boolean, ptr, integer, integer)
@@ -117,6 +132,23 @@ def main():
                     check(gdi.LineTo(dc, *end), "LineTo")
                     check(gdi.EndPath(dc), "EndPath")
                     check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+                    if width in (7, 8) and epsilon == 0 and phase == (0, 0) and dx * dy < 0:
+                        check(gdi.WidenPath(dc), "WidenPath")
+                        print("tie-outline", width, delta, "native", fixed_path(gdi, dc))
+                        print(
+                            "tie-outline",
+                            width,
+                            delta,
+                            "local",
+                            widen_segment(StrokeSegment.line(start, end), realize_pen(width)),
+                        )
+                        check(gdi.AbortPath(dc), "AbortPath")
+                        check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                        check(gdi.BeginPath(dc), "BeginPath")
+                        check(gdi.MoveToEx(dc, *start, None), "MoveToEx")
+                        check(gdi.LineTo(dc, *end), "LineTo")
+                        check(gdi.EndPath(dc), "EndPath")
+                        check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
                     ctypes.memset(bits, 255, 128 * 128 * 4)
                     check(gdi.StrokePath(dc), "StrokePath")
                     context = RasterContext(128, 128)
@@ -141,6 +173,25 @@ def main():
                         radial = (-radial[1], radial[0])
                     start = (64 + radial[0], 64 + radial[1])
                     end = (64 + radial[0], 64 + radial[1] + 1)
+                    if (
+                        width == 1
+                        and box == (8, 8, 120, 120)
+                        and (start, end)
+                        in (
+                            ((67, 63), (67, 64)),
+                            ((61, 65), (61, 66)),
+                            ((61, 64), (61, 65)),
+                            ((62, -16236), (62, -16235)),
+                        )
+                    ):
+                        check(gdi.BeginPath(dc), "BeginPath")
+                        check(gdi.Arc(dc, *box, *start, *end), "Arc")
+                        check(gdi.EndPath(dc), "EndPath")
+                        print("arc-controls", start, end, "native", fixed_path(gdi, dc))
+                        print("arc-controls", start, end, "local", arc_cubics(*box, start, end))
+                        check(gdi.FlattenPath(dc), "FlattenPath")
+                        print("arc-flat", start, end, "native", fixed_path(gdi, dc))
+                        check(gdi.AbortPath(dc), "AbortPath")
                     ctypes.memset(bits, 255, 128 * 128 * 4)
                     check(gdi.Arc(dc, *box, *start, *end), "Arc")
                     context = RasterContext(128, 128)
