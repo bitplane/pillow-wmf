@@ -113,6 +113,8 @@ def main():
             (0, sweep)
             for sweep in (0.01, 1, 2, 2.8125, 5.625, 10, 11.25, 15, 18.4349488, 20, 22.5, 30, 33.75, 45, 60, 67.5, 90)
         )
+        angle_cases += tuple((0, sweep) for sweep in (3, 4, 5, 6, 7, 8))
+        angle_cases += tuple((angle, sweep) for angle in (10, 18.4349488, 90) for sweep in (0.1, 1, 3, 10))
         for angle, sweep in angle_cases:
             check(gdi.BeginPath(dc), "BeginPath")
             check(gdi.MoveToEx(dc, 0, 0, None), "MoveToEx")
