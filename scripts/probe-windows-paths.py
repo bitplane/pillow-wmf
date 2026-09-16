@@ -35,6 +35,7 @@ def main():
         bind(gdi, "SelectObject", ptr, ptr, ptr)
         bind(gdi, "DeleteObject", boolean, ptr)
         bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
+        bind(gdi, "SetWindowExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
         bind(gdi, "GdiFlush", boolean)
         bind(gdi, "Polyline", boolean, ptr, ctypes.POINTER(wintypes.POINT), integer)
         bind(gdi, "CreatePolygonRgn", ptr, ctypes.POINTER(wintypes.POINT), integer, integer)
@@ -119,6 +120,10 @@ def main():
                 if gdi.WidenPath(dc):
                     widened = path_points(gdi, dc)
                     print(f"ellipse-{name}-widened: {len(widened)} vertices {widened}")
+                    check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                    expanded = path_points(gdi, dc)
+                    print(f"ellipse-{name}-widened-expanded: {len(expanded)} vertices {expanded}")
+                    check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
                     starts = [index for index, (_, _, kind) in enumerate(widened) if kind == 6]
                     counts = [end - start for start, end in zip(starts, starts[1:] + [len(widened)])]
                     vertices = (wintypes.POINT * len(widened))(*(wintypes.POINT(x, y) for x, y, _ in widened))
