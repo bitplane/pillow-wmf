@@ -77,6 +77,17 @@ def main():
                 )
                 print(f"ellipse-{name}-{variant}-raster-difference: {different}")
 
+            if name in ("even", "wide"):
+                check(gdi.BeginPath(dc), "BeginPath")
+                check(gdi.Ellipse(dc, *box), "Ellipse")
+                check(gdi.EndPath(dc), "EndPath")
+                if gdi.WidenPath(dc):
+                    widened = path_points(gdi, dc)
+                    print(f"ellipse-{name}-widened: {len(widened)} vertices {widened}")
+                else:
+                    print(f"ellipse-{name}-widened: failed with {ctypes.get_last_error()}")
+                check(gdi.AbortPath(dc), "AbortPath")
+
         for width, scale_x, scale_y in ((1, 2, 1), (3, 1, 1), (3, 2, 1), (3, 1, 2)):
             check(gdi.SetViewportExtEx(dc, 128 * scale_x, 128 * scale_y, None), "SetViewportExtEx")
             pen = check(gdi.CreatePen(0, width, 0), "CreatePen")
