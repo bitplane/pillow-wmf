@@ -25,8 +25,9 @@ assert trace.calls == recorder.calls
 ```
 
 `make test` runs unit tests; `make compatibility` runs the compatibility suite;
-`make test-all` runs both. Compatibility tests are currently scaffolding, with no
-Windows-rendered reference images yet.
+`make test-all` runs both. Four small WMFs are committed as compatibility inputs;
+the Windows workflow renders and commits their reference PNGs on the next push.
+Pixel comparisons will follow the first raster backend slice.
 
 - [Implementation contracts and coverage](docs/wmf-implementation.md)
 - [Format research and scope](docs/wmf-format-research.md)

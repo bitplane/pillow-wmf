@@ -2,6 +2,13 @@ name: Update Windows reference images
 
 on:
   workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "test/compatibility/wmf/*.wmf"
+      - "scripts/windows_wmf_render.py"
+      - "scripts/update-goldens.py"
+      - ".github/workflows/update-goldens.yml"
 
 permissions:
   contents: write
@@ -31,13 +38,13 @@ jobs:
       - name: Commit reference images
         shell: bash
         run: |
-          if git diff --quiet; then
+          git add -- 'test/compatibility/wmf/*.png' 'test/compatibility/wmf/*.json'
+          if git diff --cached --quiet; then
             echo "Reference images are already current"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add test/compatibility
           git commit -m "Update Windows reference images [skip ci]"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
