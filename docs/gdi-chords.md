@@ -53,5 +53,5 @@ scaling, with a following LineTo checking current-position preservation.
 
 All expectations come from Windows-rendered WMFs. Unit tests also retain exact
 native control points. This is measured coverage, not exhaustive compatibility
-for every possible Chord input or DC state. Pie and RoundRect remain separate
-future slices.
+for every possible Chord input or DC state. [Pie](gdi-pies.md) now shares the
+Arc figure construction; RoundRect remains a future slice.

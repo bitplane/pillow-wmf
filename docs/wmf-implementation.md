@@ -17,7 +17,7 @@ device metrics, rounding boundaries, and the next native compatibility probes.
 | Objects | Pen/brush record fields, font, palette, region/scan structures | Native object realization and selected/saved-object quirks |
 | Bitmap payloads | Explicit `BitmapData` values; Bitmap16/DIB/legacy-pattern distinction | Header/pixel decoding, compression, palette resolution, validation of nested bitmap contents |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular clipping, pens/brushes, ROP2, lines, polygons, Rectangle, Ellipse, Arc and Chord | Pie, RoundRect, regions, bitmap transfers, palette behavior and text |
+| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular clipping, pens/brushes, ROP2, lines, polygons, Rectangle, Ellipse, Arc, Chord and Pie | RoundRect, regions, bitmap transfers, palette behavior and text |
 | Playback | File-slot mapping, lowest-free allocation, references, unsupported-operation diagnostics | Native behavioral validation and device-state emulation |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
@@ -25,7 +25,8 @@ The 70 opcode total includes EOF and the required-ignore SETRELABS record, so
 there are 68 callable operations. All 70 have structural round-trip tests.
 This does **not** mean 70 operations render correctly. The raster backend rejects
 unsupported operations explicitly. See the individual GDI design notes for
-measured coverage and limits, including [Arc](gdi-arcs.md) and [Chord](gdi-chords.md).
+measured coverage and limits, including [Arc](gdi-arcs.md), [Chord](gdi-chords.md)
+and [Pie](gdi-pies.md).
 
 The structural reader parses fields without realizing graphics objects. A valid
 envelope containing `BitmapData` is not certification that the bitmap itself is
