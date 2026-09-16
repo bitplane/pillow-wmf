@@ -67,6 +67,25 @@ def main():
             flattened = ctypes.string_at(bits, 128 * 128 * 4)
             difference = sum(direct[i : i + 3] != flattened[i : i + 3] for i in range(0, len(direct), 4))
             print("arc-direct-flattened-difference", case, difference)
+        bind(gdi, "SetViewportOrgEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.POINT))
+        for label, extent, origin in (
+            ("reflect-x", (-128, 128), (64, 8)),
+            ("reflect-y", (128, -128), (8, 64)),
+            ("reflect-both", (-128, -128), (64, 64)),
+        ):
+            check(gdi.SetViewportExtEx(dc, *extent, None), "SetViewportExtEx")
+            check(gdi.SetViewportOrgEx(dc, *origin, None), "SetViewportOrgEx")
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.Arc(dc, 8, 8, 56, 56, 56, 32, 32, 8), "Arc")
+            check(gdi.EndPath(dc), "EndPath")
+            check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
+            check(gdi.SetViewportOrgEx(dc, 0, 0, None), "SetViewportOrgEx")
+            print("arc-reflected-raw", label, path_points(gdi, dc))
+            check(gdi.FlattenPath(dc), "FlattenPath")
+            print("arc-reflected-flat", label, path_points(gdi, dc))
+            check(gdi.AbortPath(dc), "AbortPath")
+        check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
+        check(gdi.SetViewportOrgEx(dc, 0, 0, None), "SetViewportOrgEx")
 
 
 if __name__ == "__main__":
