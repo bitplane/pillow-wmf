@@ -100,6 +100,23 @@ def main():
         bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
         bind(gdi, "GdiFlush", boolean)
 
+        # Preserve the target's 7:6 aspect ratio while increasing path-only
+        # coordinate precision. Translation and radial signs expose whether
+        # the remaining error arises before or after the device transform.
+        for box, radial_x, radial_y in product(
+            ((-56, -48, 56, 48), (-700000, -600000, 700000, 600000)), (-2, 2), (-16300, 16300)
+        ):
+            for ox, oy in ((0, 0), (17, -13)):
+                bounds = tuple(value + (ox if i % 2 == 0 else oy) for i, value in enumerate(box))
+                start = (radial_x + ox, radial_y + oy)
+                end = (radial_x + ox, radial_y + oy + 1)
+                check(gdi.BeginPath(dc), "BeginPath")
+                check(gdi.Arc(dc, *bounds, *start, *end), "Arc")
+                check(gdi.EndPath(dc), "EndPath")
+                print("precision-arc", bounds, start, end, "native", fixed_path(gdi, dc))
+                print("precision-arc", bounds, start, end, "local", arc_cubics(*bounds, start, end))
+                check(gdi.AbortPath(dc), "AbortPath")
+
         # Large path-only geometry exposes the arithmetic before 28.4
         # quantization hides it. No large bitmap or pixel enumeration is used.
         for start, end in (((3, -1), (3, 0)), ((-3, 1), (-3, 2)), ((-3, 0), (-3, 1)), ((-2, -16300), (-2, -16299))):
