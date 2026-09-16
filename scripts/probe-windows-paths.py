@@ -63,9 +63,15 @@ def main():
             check(gdi.Ellipse(dc, *box), "Ellipse")
             check(gdi.EndPath(dc), "EndPath")
             print(f"ellipse-{name}-raw: {path_points(gdi, dc)}")
+            check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+            print(f"ellipse-{name}-raw-expanded: {path_points(gdi, dc)}")
+            check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
             check(gdi.FlattenPath(dc), "FlattenPath")
             points = path_points(gdi, dc)
             print(f"ellipse-{name}: {len(points)} vertices {points}")
+            check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+            print(f"ellipse-{name}-flat-expanded: {path_points(gdi, dc)}")
+            check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
             check(gdi.AbortPath(dc), "AbortPath")
 
             def raster(*, path=False, flatten=False, polyline=False, box=box, points=points):
@@ -113,7 +119,7 @@ def main():
                 )
                 print(f"ellipse-{name}-{variant}-raster-difference: {different}")
 
-            if name in ("even", "wide"):
+            if name in ("even", "odd", "wide", "tall", "two-wide"):
                 check(gdi.BeginPath(dc), "BeginPath")
                 check(gdi.Ellipse(dc, *box), "Ellipse")
                 check(gdi.EndPath(dc), "EndPath")
