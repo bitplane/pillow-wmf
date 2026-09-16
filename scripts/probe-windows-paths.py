@@ -22,7 +22,15 @@ def path_points(gdi, dc):
 def main():
     with reference_surface(128, 128) as (gdi, dc, bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
-        for name in ("BeginPath", "EndPath", "FlattenPath", "WidenPath", "AbortPath", "StrokeAndFillPath"):
+        for name in (
+            "BeginPath",
+            "EndPath",
+            "FlattenPath",
+            "WidenPath",
+            "AbortPath",
+            "StrokeAndFillPath",
+            "StrokePath",
+        ):
             bind(gdi, name, boolean, ptr)
         bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
         bind(gdi, "Ellipse", boolean, ptr, integer, integer, integer, integer)
@@ -49,6 +57,36 @@ def main():
             integer,
         )
         bind(gdi, "PtInRegion", boolean, ptr, integer, integer)
+        for box in ((68, 12, 116, 52), (8, 8, 57, 43), (66, 16, 121, 69), (17, 76, 103, 111)):
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.Ellipse(dc, *box), "Ellipse")
+            check(gdi.EndPath(dc), "EndPath")
+            check(gdi.FlattenPath(dc), "FlattenPath")
+            print(f"styled-ellipse-{box}-path: {path_points(gdi, dc)}")
+            check(gdi.AbortPath(dc), "AbortPath")
+            for style in range(1, 5):
+                pen = check(gdi.CreatePen(style, 1, 0), "CreatePen")
+                old_pen = check(gdi.SelectObject(dc, pen), "SelectObject")
+                outputs = []
+                for variant in ("direct", "path", "flattened"):
+                    ctypes.memset(bits, 255, 128 * 128 * 4)
+                    if variant == "direct":
+                        check(gdi.Ellipse(dc, *box), "Ellipse")
+                    else:
+                        check(gdi.BeginPath(dc), "BeginPath")
+                        check(gdi.Ellipse(dc, *box), "Ellipse")
+                        check(gdi.EndPath(dc), "EndPath")
+                        if variant == "flattened":
+                            check(gdi.FlattenPath(dc), "FlattenPath")
+                        check(gdi.StrokePath(dc), "StrokePath")
+                    check(gdi.GdiFlush(), "GdiFlush")
+                    outputs.append(ctypes.string_at(bits, 128 * 128 * 4))
+                print(
+                    f"styled-ellipse-{box}-style-{style}-path-diffs: "
+                    f"{tuple(sum(a[i : i + 3] != b[i : i + 3] for i in range(0, len(a), 4)) for a, b in zip((outputs[0], outputs[0]), outputs[1:]))}"
+                )
+                gdi.SelectObject(dc, old_pen)
+                gdi.DeleteObject(pen)
         for name, box in (
             ("even", (24, 24, 56, 56)),
             ("odd", (24, 24, 57, 57)),
