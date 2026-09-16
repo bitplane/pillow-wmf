@@ -88,6 +88,7 @@ def arc_cubics(
     *,
     null_pen=False,
     drawing_bounds=None,
+    radial_bounds=None,
 ) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """Cut an exclusive-bound ellipse at two radial directions.
 
@@ -98,10 +99,11 @@ def arc_cubics(
     x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
     cx, cy = (x0 + x1) / 32, (y0 + y1) / 32
     rx, ry = (x1 - x0) / 32, (y1 - y0) / 32
-    radial_cx = (left + right) / 2
-    radial_cy = (top + bottom) / 2
-    radial_rx = (right - left) / 2
-    radial_ry = (bottom - top) / 2
+    radial_left, radial_top, radial_right, radial_bottom = radial_bounds or (left, top, right, bottom)
+    radial_cx = (radial_left + radial_right) / 2
+    radial_cy = (radial_top + radial_bottom) / 2
+    radial_rx = (radial_right - radial_left) / 2
+    radial_ry = (radial_bottom - radial_top) / 2
 
     def angle(point: tuple[int, int]) -> float:
         return atan2_degrees((radial_cy - point[1]) / radial_ry, (point[0] - radial_cx) / radial_rx)
@@ -163,9 +165,20 @@ def arc_figure(
     closure: Literal["open", "chord", "pie"] = "open",
     null_pen=False,
     drawing_bounds=None,
+    radial_bounds=None,
 ) -> DevicePath:
     """Retain one arc figure, optionally closed directly or through its centre."""
-    curves = arc_cubics(left, top, right, bottom, start, end, null_pen=null_pen, drawing_bounds=drawing_bounds)
+    curves = arc_cubics(
+        left,
+        top,
+        right,
+        bottom,
+        start,
+        end,
+        null_pen=null_pen,
+        drawing_bounds=drawing_bounds,
+        radial_bounds=radial_bounds,
+    )
     if closure == "open":
         return DevicePath(curves, closed=start == end)
     if closure == "chord":

@@ -44,8 +44,31 @@ def verify_pixels():
         if differing:
             failures += 1
             print("insideframe-pixels-FAIL", operation, width, brush, box, viewport, differing)
+            if operation == "rectangle" and width == 1 and brush == 1 and box == (5, 6, 26, 43):
+                for label, image in (("native", native), ("local", context.image)):
+                    print(
+                        label,
+                        "rows",
+                        tuple(
+                            (y, tuple(x for x in range(48) if image.getpixel((x, y)) != (255, 255, 255)))
+                            for y in (4, 5, 6, 7, 16, 30, 31, 32)
+                        ),
+                    )
     print("insideframe-pixel-matrix", index + 1, failures)
     assert not failures
+
+
+def verify_collapsed_polygons():
+    for style, width, count in product((0, 6), (2, 3, 7, 21), (2, 3, 4)):
+        recorder = Recorder()
+        recorder.select_object(recorder.create_pen(style, width, 0))
+        recorder.polygon(((32, 32),) * count)
+        data = recorder.to_bytes()
+        native = render_wmf(data, 128, 128)
+        context = RasterContext(128, 128)
+        assert play(Metafile.from_bytes(data), context, strict=True) == ()
+        assert native.tobytes() == context.image.tobytes(), (style, width, count)
+    print("collapsed-polygons", 24, "passed")
 
 
 def main():
@@ -94,4 +117,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    verify_collapsed_polygons()
     verify_pixels()

@@ -35,3 +35,17 @@ def test_insideframe_arc_normalizes_radials_against_original_box():
         ((248, 152), (186, 152), (136, 260), (136, 392)),
         ((136, 392), (136, 413), (137, 433), (140, 453)),
     )
+
+
+@pytest.mark.parametrize("operation", ("rectangle", "ellipse", "round_rect", "chord", "pie"))
+def test_collapsed_closed_figure_retains_pen_footprint(operation):
+    context = RasterContext(128, 128)
+    context.select_object(context.create_pen(6, 21, 0))
+    args = (5, 6, 26, 27)
+    if operation == "round_rect":
+        args += (13, 19)
+    elif operation in ("chord", "pie"):
+        args += (35, 16, -5, 34)
+    getattr(context, operation)(*args)
+    # Windows draws the same realized pen at the collapsed centre.
+    assert sum(pixel == (0, 0, 0) for pixel in context.image.get_flattened_data()) == 332

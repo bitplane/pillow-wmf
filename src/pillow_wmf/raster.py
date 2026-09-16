@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from fractions import Fraction
+from math import ceil
 
 from PIL import Image
 
@@ -239,12 +240,14 @@ class RasterContext(TraceContext):
                 covered = False
                 pen = self._realized_pen()
                 if self._pen.style == 6 and not pen.cosmetic:
-                    dx = max(abs(x) for x, y in pen.vertices)
-                    dy = max(abs(y) for x, y in pen.vertices)
+                    dx, dy = (
+                        ceil(self._pen.width * abs(Fraction(v, w)) * 8)
+                        for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent)
+                    )
                     # Equality retains a degenerate centreline and widens it
                     # normally. Only a negative interior triggers GDI's
                     # pen-colour fill (or rejection for arc-family calls).
-                    covered = 2 * dx > (right - left) * 16 or 2 * dy > (bottom - top) * 16
+                    covered = self._pen.width > min(abs(a["right"] - a["left"]), abs(a["bottom"] - a["top"]))
                     if covered:
                         if name in {"arc", "chord", "pie"}:
                             return result
@@ -264,7 +267,10 @@ class RasterContext(TraceContext):
                         closed=True,
                     )
                 elif name == "round_rect":
-                    width, height = self.mapping.vector(a["ellipse_width"], a["ellipse_height"])
+                    # Corner proportions are established before integer device
+                    # mapping, just like arc radial directions.
+                    width = Fraction(abs(a["ellipse_width"]) * (right - left), abs(a["right"] - a["left"]))
+                    height = Fraction(abs(a["ellipse_height"]) * (bottom - top), abs(a["bottom"] - a["top"]))
                     rectangle = not width or not height
                     path = round_rect_figure(
                         left,
@@ -277,8 +283,14 @@ class RasterContext(TraceContext):
                         drawing_bounds=drawing_bounds,
                     )
                 else:
-                    start = self._point(a["start_x"], a["start_y"])
-                    end = self._point(a["end_x"], a["end_y"])
+                    sx, sy = (
+                        1 if v * w >= 0 else -1
+                        for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent)
+                    )
+                    start = sx * a["start_x"], sy * a["start_y"]
+                    end = sx * a["end_x"], sy * a["end_y"]
+                    x0, x1 = sorted((sx * a["left"], sx * a["right"]))
+                    y0, y1 = sorted((sy * a["top"], sy * a["bottom"]))
                     path = arc_figure(
                         left,
                         top,
@@ -289,6 +301,7 @@ class RasterContext(TraceContext):
                         closure="open" if name == "arc" else name,
                         null_pen=self._pen.style == 5,
                         drawing_bounds=drawing_bounds,
+                        radial_bounds=(x0, y0, x1, y1),
                     )
                 if covered:
                     for x, y in self._contour_pixels((path.vertices,)):
