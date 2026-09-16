@@ -37,6 +37,15 @@ def main():
         bind(gdi, "GdiFlush", boolean)
         bind(gdi, "Polyline", boolean, ptr, ctypes.POINTER(wintypes.POINT), integer)
         bind(gdi, "CreatePolygonRgn", ptr, ctypes.POINTER(wintypes.POINT), integer, integer)
+        bind(
+            gdi,
+            "CreatePolyPolygonRgn",
+            ptr,
+            ctypes.POINTER(wintypes.POINT),
+            ctypes.POINTER(integer),
+            integer,
+            integer,
+        )
         bind(gdi, "PtInRegion", boolean, ptr, integer, integer)
         for name, box in (
             ("even", (24, 24, 56, 56)),
@@ -109,6 +118,21 @@ def main():
                 if gdi.WidenPath(dc):
                     widened = path_points(gdi, dc)
                     print(f"ellipse-{name}-widened: {len(widened)} vertices {widened}")
+                    starts = [index for index, (_, _, kind) in enumerate(widened) if kind == 6]
+                    counts = [end - start for start, end in zip(starts, starts[1:] + [len(widened)])]
+                    vertices = (wintypes.POINT * len(widened))(*(wintypes.POINT(x, y) for x, y, _ in widened))
+                    lengths = (integer * len(counts))(*counts)
+                    region = check(gdi.CreatePolyPolygonRgn(vertices, lengths, len(counts), 1), "CreatePolyPolygonRgn")
+                    try:
+                        difference = sum(
+                            (direct[(y * 128 + x) * 4 : (y * 128 + x) * 4 + 3] == b"\0\0\0")
+                            != bool(gdi.PtInRegion(region, x, y))
+                            for y in range(128)
+                            for x in range(128)
+                        )
+                        print(f"ellipse-{name}-widened-region-black-difference: {difference}")
+                    finally:
+                        gdi.DeleteObject(region)
                 else:
                     print(f"ellipse-{name}-widened: failed with {ctypes.get_last_error()}")
                 check(gdi.AbortPath(dc), "AbortPath")
