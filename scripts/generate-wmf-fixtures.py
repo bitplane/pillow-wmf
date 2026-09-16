@@ -61,6 +61,32 @@ def mapped():
 
 
 def arc_cases():
+    # Identical radial rays at two distances: axis tips, diagonals, all octants,
+    # short/wrapping sweeps, and circular/elliptical bounds. Each pair must
+    # produce identical native pixels regardless of distance from the center.
+    directions = ((1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1))
+    for width in (1, 3, 6):
+        for distance in (1, 11):
+            recorder = mapped()
+            recorder.select_object(recorder.create_pen(0, width, 0))
+            for index in range(16):
+                left, top = 6 + index % 4 * 32, 6 + index // 4 * 32
+                right, bottom = left + 20, top + (20 if index < 8 else 22)
+                cx, cy = (left + right) // 2, (top + bottom) // 2
+                start = directions[index % 8]
+                end = directions[(index + (1 if index < 8 else 5)) % 8]
+                recorder.arc(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    cx + distance * start[0],
+                    cy + distance * start[1],
+                    cx + distance * end[0],
+                    cy + distance * end[1],
+                )
+            yield f"arc-boundaries-width-{width}-distance-{distance}", recorder
+
     recorder = mapped()
     recorder.select_object(recorder.create_pen(0, 1, 0x000000CC))
     recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
