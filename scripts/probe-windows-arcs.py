@@ -32,6 +32,36 @@ def main():
         bind(gdi, "Arc", boolean, ptr, *(integer for _ in range(8)))
         bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
         bind(gdi, "SetWindowExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
+        bind(gdi, "SetGraphicsMode", integer, ptr, integer)
+        bind(gdi, "MoveToEx", boolean, ptr, integer, integer, ptr)
+        bind(gdi, "LineTo", boolean, ptr, integer, integer)
+        check(gdi.SetGraphicsMode(dc, 2), "SetGraphicsMode")
+        for start, end in (
+            ((736, 424), (710, 308)),
+            ((432, 128), (424, 128)),
+            ((427, 472), (395, 499)),
+            ((395, 499), (384, 528)),
+            ((1611, 158), (1464, 128)),
+            ((1320, 157), (1198, 238)),
+        ):
+            check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.MoveToEx(dc, *start, None), "MoveToEx")
+            check(gdi.LineTo(dc, *end), "LineTo")
+            check(gdi.EndPath(dc), "EndPath")
+            print("fractional-segment-path", start, end, path_points(gdi, dc))
+            check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+            ctypes.memset(bits, 255, 128 * 128 * 4)
+            check(gdi.StrokePath(dc), "StrokePath")
+            check(gdi.GdiFlush(), "GdiFlush")
+            raw = ctypes.string_at(bits, 128 * 128 * 4)
+            print(
+                "fractional-segment-pixels",
+                start,
+                end,
+                [(i // 4 % 128, i // 4 // 128) for i in range(0, len(raw), 4) if raw[i] == 0],
+            )
+        check(gdi.SetGraphicsMode(dc, 1), "SetGraphicsMode")
         cases = (
             (8, 8, 47, 47, 47, 27, 27, 8),
             (68, 8, 107, 47, 87, 8, 68, 27),
@@ -113,6 +143,7 @@ def main():
             print("arc-wide-fixed-flat", fixed_path_points(gdi, dc))
             check(gdi.WidenPath(dc), "WidenPath")
             print("arc-wide-widened", path_points(gdi, dc))
+            print("arc-wide-fixed-widened", fixed_path_points(gdi, dc))
             check(gdi.AbortPath(dc), "AbortPath")
         finally:
             gdi.SelectObject(dc, previous)
