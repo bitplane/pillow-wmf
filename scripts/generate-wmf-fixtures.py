@@ -44,6 +44,7 @@ def cases():
     yield "overlap", overlap
 
     yield from foundation_cases()
+    yield from stroke_cases()
 
 
 def mapped():
@@ -281,6 +282,74 @@ def foundation_cases():
     recorder.offset_clip_region(8, 4)
     filled_box(recorder, (-16, -16, 48, 48))
     yield "state-clip-offset-vector", recorder
+
+
+def stroke_cases():
+    """Probe the algorithms beyond the original three-segment pen fixtures."""
+    transforms = (
+        ("identity", (128, 128), (128, 128)),
+        ("scale-x", (128, 128), (256, 128)),
+        ("scale-y", (128, 128), (128, 256)),
+        ("half", (256, 256), (128, 128)),
+        ("reflect-x", (128, 128), (-128, 128)),
+        ("fractional", (256, 384), (384, 256)),
+    )
+    directions = ((24, 0), (24, 6), (24, 12), (24, 24), (12, 24), (6, 24), (0, 24))
+    for width in (1, 2, 3, 4, 5, 6, 7, 12):
+        for name, window, viewport in transforms:
+            recorder = mapped()
+            recorder.set_window_extent(*window)
+            recorder.set_viewport_extent(*viewport)
+            recorder.set_viewport_origin(64, 64)
+            recorder.select_object(recorder.create_pen(0, width, 0))
+            for sx, sy in ((1, 1), (-1, 1), (-1, -1), (1, -1)):
+                for index, (dx, dy) in enumerate(directions):
+                    start, end = (sx * (dx // 3), sy * (dy // 3)), (sx * dx, sy * dy)
+                    if index % 2:
+                        start, end = end, start
+                    recorder.move_to(*start)
+                    recorder.line_to(*end)
+            yield f"stroke-octants-{width}-{name}", recorder
+
+    for numerator in (5, 6, 7):
+        recorder = mapped()
+        recorder.set_window_extent(128 * 4, 128)
+        recorder.set_viewport_extent(128 * numerator, 128)
+        recorder.select_object(recorder.create_pen(0, 1, 0))
+        for y in (16, 48, 80):
+            recorder.move_to(8, y)
+            recorder.line_to(56, y + 16)
+        yield f"stroke-hairline-threshold-{numerator}-quarters", recorder
+
+    for primitive in ("rectangle", "ellipse"):
+        for width in (2, 3, 6, 12):
+            recorder = mapped()
+            recorder.select_object(recorder.create_pen(0, width, 0))
+            recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+            getattr(recorder, primitive)(24, 24, 96, 80)
+            yield f"stroke-{primitive}-width-{width}", recorder
+
+    for primitive in ("rectangle", "ellipse"):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(0, 1, 0))
+        recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+        for index, (width, height) in enumerate(((1, 1), (1, 2), (2, 1), (2, 2), (3, 3), (4, 4), (2, 5), (5, 2))):
+            x, y = 16 + index % 4 * 24, 24 + index // 4 * 40
+            getattr(recorder, primitive)(x, y, x + width, y + height)
+        yield f"stroke-{primitive}-degenerate", recorder
+
+    recorder = mapped()
+    recorder.intersect_clip_rect(160, 160, 200, 200)
+    recorder.offset_clip_region(-144, -144)
+    filled_box(recorder, (0, 0, 100, 100))
+    yield "state-clip-offset-from-outside", recorder
+
+    recorder = mapped()
+    recorder.intersect_clip_rect(24, 24, 64, 64)
+    recorder.ellipse(24, 16, 25, 80)
+    recorder.select_object(recorder.create_pen(0, 6, 0))
+    recorder.ellipse(40, 8, 96, 80)
+    yield "state-clip-ellipse-strokes", recorder
 
 
 def main():
