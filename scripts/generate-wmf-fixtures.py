@@ -641,6 +641,15 @@ def styled_pen_cases():
         recorder.ellipse(17, 76, 103, 111)
         yield f"pen-style-{style}-ellipses", recorder
 
+        recorder = mapped()
+        recorder.set_background_mode(1)
+        recorder.select_object(recorder.create_pen(style, 1, 0x00CA5BE1))
+        recorder.select_object(recorder.create_brush(1, 0, 0))
+        recorder.ellipse(12, 12, 40, 43)
+        recorder.ellipse(64, 12, 102, 61)
+        recorder.ellipse(20, 72, 76, 119)
+        yield f"pen-style-{style}-ellipse-phase", recorder
+
     recorder = mapped()
     recorder.select_object(recorder.create_pen(1, 1, 0x00CA5BE1))
     recorder.set_window_extent(64, 64)
