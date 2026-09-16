@@ -266,24 +266,26 @@ class RasterContext(TraceContext):
         self._stroke_path(DevicePath.polyline([(start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16)]))
 
     def _stroke_path(self, path: DevicePath, *, miter=False) -> None:
+        if self._realized_pen().cosmetic:
+            for (x, y), foreground in self._cosmetic_fragments((path,)):
+                self._pixel(x, y, self._pen.color if foreground else self._background_color)
+            return
         foreground, gaps = self._stroke_fragments((path,), miter=miter)
         for x, y in gaps:
             self._pixel(x, y, self._background_color)
         for x, y in foreground:
             self._pixel(x, y, self._pen.color)
 
-    def _stroke_fragments(self, paths: tuple[DevicePath, ...], *, miter=False):
-        if self._pen.style == 5:
-            return set(), set()
-        pen = realize_pen(
+    def _realized_pen(self):
+        return realize_pen(
             self._pen.width,
             Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
             Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
         )
-        if self._pen.style == 0 or not pen.cosmetic:
-            return self._stroke_pixels(paths, miter=miter), set()
-        foreground: set[tuple[int, int]] = set()
-        gaps: set[tuple[int, int]] = set()
+
+    def _cosmetic_fragments(self, paths):
+        if self._pen.style == 5:
+            return
         for path in paths:
             # A figure starts at phase zero on its first emitted GIQ pixel,
             # not at the floor of its fractional geometric starting point.
@@ -297,21 +299,26 @@ class RasterContext(TraceContext):
                     continue
                 for pixel in cosmetic_line(start, end, self.image.width, self.image.height):
                     phase = position + span.step * (pixel[major] - span.start)
-                    if dash_is_foreground(self._pen.style, phase):
-                        foreground.add(pixel)
+                    if self._pen.style == 0 or dash_is_foreground(self._pen.style, phase):
+                        yield pixel, True
                     elif self._background_mode == 2:
-                        gaps.add(pixel)
+                        yield pixel, False
                 position += len(span)
+
+    def _stroke_fragments(self, paths: tuple[DevicePath, ...], *, miter=False):
+        if self._pen.style == 5:
+            return set(), set()
+        if not self._realized_pen().cosmetic:
+            return self._stroke_pixels(paths, miter=miter), set()
+        foreground, gaps = set(), set()
+        for pixel, mark in self._cosmetic_fragments(paths):
+            (foreground if mark else gaps).add(pixel)
         return foreground, gaps - foreground
 
     def _stroke_pixels(self, paths: tuple[DevicePath, ...], *, miter=False) -> set[tuple[int, int]]:
         if self._pen.style == 5:
             return set()
-        pen = realize_pen(
-            self._pen.width,
-            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
-            Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
-        )
+        pen = self._realized_pen()
         pixels: set[tuple[int, int]] = set()
         for path in paths:
             for index, segment in enumerate(path.segments):
@@ -357,17 +364,17 @@ class RasterContext(TraceContext):
         fill_pixels = set(self._contour_pixels(contours, fill_mode=self._polygon_fill_mode))
         foreground, gaps = self._stroke_fragments(paths, miter=miter)
         stroke_pixels = self._stroke_pixels(paths, miter=miter) if reserve_outline else foreground | gaps
-        pen = realize_pen(
-            self._pen.width,
-            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
-            Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
-        )
+        pen = self._realized_pen()
         if pen.cosmetic and not reserve_outline:
             stroke_pixels = set()
         for x, y in fill_pixels - stroke_pixels:
             color = self._brush_color_at(x, y)
             if color is not None:
                 self._pixel(x, y, color)
+        if pen.cosmetic:
+            for path in paths:
+                self._stroke_path(path)
+            return
         for x, y in gaps:
             self._pixel(x, y, self._background_color)
         for x, y in foreground:

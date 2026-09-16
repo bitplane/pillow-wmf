@@ -7,8 +7,18 @@ All 32 crop pairs were rendered independently by Windows GDI in workflow run
 import pytest
 
 from pillow_wmf import RasterContext
-from pillow_wmf.geometry import StrokeSegment
-from pillow_wmf.stroke import realize_pen, widen_segment
+from pillow_wmf.geometry import StrokeSegment, contains
+from pillow_wmf.stroke import join_outline, realize_pen, widen_segment
+
+
+@pytest.mark.parametrize("direction", (-1, 1))
+def test_round_join_distinguishes_reversal_from_straight_continuation(direction):
+    first = StrokeSegment.line((1024 - 256 * direction, 1024), (1024, 1024))
+    reverse = StrokeSegment.line(first.end, first.start)
+    straight = StrokeSegment.line(first.end, (1024 + 256 * direction, 1024))
+    pen = realize_pen(7)
+    assert join_outline(first, straight, pen) == []
+    assert contains((join_outline(first, reverse, pen),), 64 + 2 * direction, 64)
 
 
 @pytest.mark.parametrize(
