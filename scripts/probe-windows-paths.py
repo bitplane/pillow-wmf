@@ -36,6 +36,8 @@ def main():
         bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
         bind(gdi, "GdiFlush", boolean)
         bind(gdi, "Polyline", boolean, ptr, ctypes.POINTER(wintypes.POINT), integer)
+        bind(gdi, "CreatePolygonRgn", ptr, ctypes.POINTER(wintypes.POINT), integer, integer)
+        bind(gdi, "PtInRegion", boolean, ptr, integer, integer)
         for name, box in (
             ("even", (24, 24, 56, 56)),
             ("odd", (24, 24, 57, 57)),
@@ -152,6 +154,22 @@ def main():
             finally:
                 gdi.SelectObject(dc, previous)
                 gdi.DeleteObject(pen)
+
+        for name, points in (
+            ("rectangle", ((16, 16), (24, 16), (24, 24), (16, 24))),
+            ("diamond", ((20, 16), (24, 20), (20, 24), (16, 20))),
+            ("shallow", ((16, 16), (30, 18), (30, 24), (16, 24))),
+            ("vertex", ((16, 17), (23, 16), (30, 17), (30, 24), (16, 24))),
+        ):
+            vertices = (wintypes.POINT * len(points))(*(wintypes.POINT(x, y) for x, y in points))
+            region = check(gdi.CreatePolygonRgn(vertices, len(vertices), 1), "CreatePolygonRgn")
+            try:
+                for y in range(14, 26):
+                    xs = [x for x in range(14, 32) if gdi.PtInRegion(region, x, y)]
+                    if xs:
+                        print(f"region-{name}-row-{y}: {xs}")
+            finally:
+                gdi.DeleteObject(region)
 
 
 if __name__ == "__main__":
