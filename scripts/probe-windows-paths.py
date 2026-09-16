@@ -41,6 +41,7 @@ def main():
             check(gdi.BeginPath(dc), "BeginPath")
             check(gdi.Ellipse(dc, *box), "Ellipse")
             check(gdi.EndPath(dc), "EndPath")
+            print(f"ellipse-{name}-raw: {path_points(gdi, dc)}")
             check(gdi.FlattenPath(dc), "FlattenPath")
             points = path_points(gdi, dc)
             print(f"ellipse-{name}: {len(points)} vertices {points}")
