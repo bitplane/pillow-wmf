@@ -11,7 +11,7 @@ mkdir -p htmlcov
 pytest --cov="src/$package_name"    \
        --cov-report=html            \
        --cov-report=term-missing    \
-       --cov-context=test . 2>&1    | tee htmlcov/coverage_report.txt
+       --cov-context=test test/unit 2>&1 | tee htmlcov/coverage_report.txt
 coverage_status=$?
 
 # Extract just the missing coverage summary

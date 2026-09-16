@@ -1,5 +1,5 @@
 # the things that don't have output files or run every time
-.PHONY: help all install test dev coverage clean \
+.PHONY: help all install test test-all compatibility dev coverage clean \
 		pre-commit update-pre-commit docs dist update-template
 
 
@@ -13,7 +13,13 @@ install: .venv/.installed  ## installs the venv and the project packages
 dev: .venv/.installed-dev pre-commit  ## prepare local repo and venv for dev
 
 test: .venv/.installed-dev  ## run the project's tests
-	scripts/test.sh $(PROJECT_NAME)
+	scripts/test.sh unit
+
+compatibility: .venv/.installed-dev  ## run compatibility tests against committed reference images
+	scripts/test.sh compatibility
+
+test-all: .venv/.installed-dev  ## run unit and compatibility tests
+	scripts/test.sh all
 
 coverage: .venv/.installed-dev scripts/coverage.sh  ## build the html coverage report
 	scripts/coverage.sh $(PROJECT_NAME)
