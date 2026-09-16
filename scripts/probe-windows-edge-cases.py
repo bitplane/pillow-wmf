@@ -51,6 +51,20 @@ def verify_native_clipped_dash_pairs():
                 finally:
                     gdi.SelectObject(dc, previous)
                     gdi.DeleteObject(pen)
+            context = RasterContext(size, size)
+            context.select_object(context.create_pen(style, 1, 0))
+            context.set_background_mode(background)
+            context.set_background_color(0x0000FF)
+            context.polyline(tuple((x + offset, y + offset) for x, y in points))
+            actual = context.image.crop((offset, offset, offset + 32, offset + 32)).tobytes("raw", "BGR")
+            assert actual == results[-1], (
+                "native styled clipping mismatch",
+                style,
+                background,
+                transpose,
+                reverse,
+                size,
+            )
         assert results[0] == results[1], ("native crop hypothesis disproved", style, background, transpose, reverse)
         tested += 1
     print("native-clipped-dash-pairs", tested, "exact matches")

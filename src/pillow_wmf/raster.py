@@ -13,7 +13,7 @@ from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
 from .mapping import Mapping
 from .paint import rop2
-from .stroke import cosmetic_line, dash_is_foreground, join_outline, realize_pen, widen_segment
+from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outline, realize_pen, widen_segment
 from .trace import TraceContext
 
 
@@ -273,26 +273,19 @@ class RasterContext(TraceContext):
             position = 0
             segments = zip(path.vertices, path.vertices[1:])
             for segment_index, (start, end) in enumerate(segments):
-                pixels = list(cosmetic_line(start, end, self.image.width, self.image.height))
+                span = cosmetic_span(start, end)
                 major = 1 if abs(end[1] - start[1]) > abs(end[0] - start[0]) else 0
-                if not pixels:
-                    position += abs(end[major] // 16 - start[major] // 16)
+                if not span:
                     continue
-                if end[major] < start[major]:
-                    pixels.reverse()
-                if pixels and segment_index == 0:
-                    direction = 1 if end[major] >= start[major] else -1
-                    position += direction * (pixels[0][major] - start[major] // 16)
-                elif pixels and not (0 <= start[major] // 16 < (self.image.height if major else self.image.width)):
-                    position += abs(pixels[0][major] - start[major] // 16)
-                for pixel in pixels:
-                    if dash_is_foreground(self._pen.style, position):
+                if segment_index == 0:
+                    position += span.step * (span.start - start[major] // 16)
+                for pixel in cosmetic_line(start, end, self.image.width, self.image.height):
+                    phase = position + span.step * (pixel[major] - span.start)
+                    if dash_is_foreground(self._pen.style, phase):
                         foreground.add(pixel)
                     elif self._background_mode == 2:
                         gaps.add(pixel)
-                    position += 1
-                if pixels and not (0 <= end[major] // 16 < (self.image.height if major else self.image.width)):
-                    position += abs(end[major] // 16 - pixels[-1][major]) - 1
+                position += len(span)
         return foreground, gaps - foreground
 
     def _stroke_pixels(self, paths: tuple[DevicePath, ...], *, miter=False) -> set[tuple[int, int]]:

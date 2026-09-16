@@ -1,4 +1,8 @@
-"""Clipping must not change the phase of a connected styled path."""
+"""Native-confirmed clipping behaviour for connected styled paths.
+
+All 32 crop pairs were rendered independently by Windows GDI in workflow run
+35102667643. See scripts/probe-windows-edge-cases.py for that oracle check.
+"""
 
 import pytest
 

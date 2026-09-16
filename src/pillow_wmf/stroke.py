@@ -165,6 +165,53 @@ def _inside_diamond(x, y, dx: int, dy: int) -> bool:
     )
 
 
+def _cosmetic_pixel(start: Point, end: Point, value: int):
+    """Return the GIQ pixel at one major coordinate, without surface clipping."""
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    if dx == dy == 0:
+        return None
+    transpose = abs(dy) > abs(dx)
+    major, minor = (1, 0) if transpose else (0, 1)
+    delta = end[major] - start[major]
+    numerator = start[minor] * delta + (value * 16 - start[major]) * (end[minor] - start[minor])
+    other = ceil(Fraction(numerator, delta * 16) - Fraction(1, 2))
+    x, y = (other, value) if transpose else (value, other)
+    enter, leave = None, None
+    # Transform the diamond into an axis-aligned square with u=x+y, v=x-y.
+    for origin, change, center in (
+        (start[0] + start[1], dx + dy, (x + y) * 16),
+        (start[0] - start[1], dx - dy, (x - y) * 16),
+    ):
+        if not change:
+            if not center - 8 <= origin <= center + 8:
+                return None
+            continue
+        lower, upper = sorted((Fraction(center - 8 - origin, change), Fraction(center + 8 - origin, change)))
+        enter = lower if enter is None else max(enter, lower)
+        leave = upper if leave is None else min(leave, upper)
+    if enter <= leave and 0 <= leave <= 1 and not _inside_diamond(end[0] - x * 16, end[1] - y * 16, dx, dy):
+        middle = (max(enter, 0) + leave) / 2
+        if _inside_diamond(start[0] + middle * dx - x * 16, start[1] + middle * dy - y * 16, dx, dy):
+            return x, y
+    return None
+
+
+def cosmetic_span(start: Point, end: Point) -> range:
+    """Unclipped, directed major-axis pixel span, in constant time.
+
+    Only endpoint diamonds can shorten the span; interior grid intersections
+    each own a pixel. This counts style steps even when the whole line is off
+    screen, without enumerating arbitrarily distant coordinates.
+    """
+    major = int(abs(end[1] - start[1]) > abs(end[0] - start[0]))
+    lower, upper = sorted((start[major] // 16, end[major] // 16))
+    first = next((v for v in range(lower - 1, lower + 3) if _cosmetic_pixel(start, end, v) is not None), None)
+    last = next((v for v in range(upper + 1, upper - 3, -1) if _cosmetic_pixel(start, end, v) is not None), None)
+    if first is None or last is None:
+        return range(0)
+    return range(first, last + 1) if end[major] >= start[major] else range(last, first - 1, -1)
+
+
 def cosmetic_line(start: Point, end: Point, width: int, height: int):
     """GIQ coverage for a 28.4 segment, including fractional curve vertices.
 
@@ -179,32 +226,10 @@ def cosmetic_line(start: Point, end: Point, width: int, height: int):
     if dx == dy == 0:
         return
     transpose = abs(dy) > abs(dx)
-    major, minor = (1, 0) if transpose else (0, 1)
+    major = 1 if transpose else 0
     a, b = start[major], end[major]
-    delta = b - a
     extent = height if transpose else width
     for value in range(max(0, min(a, b) // 16 - 1), min(extent, max(a, b) // 16 + 2)):
-        numerator = start[minor] * delta + (value * 16 - a) * (end[minor] - start[minor])
-        other = ceil(Fraction(numerator, delta * 16) - Fraction(1, 2))
-        x, y = (other, value) if transpose else (value, other)
-        if not (0 <= x < width and 0 <= y < height):
-            continue
-        enter, leave = None, None
-
-        # Transform the diamond into an axis-aligned square with u=x+y, v=x-y.
-        for origin, change, center in (
-            (start[0] + start[1], dx + dy, (x + y) * 16),
-            (start[0] - start[1], dx - dy, (x - y) * 16),
-        ):
-            if not change:
-                if not center - 8 <= origin <= center + 8:
-                    break
-                continue
-            lower, upper = sorted((Fraction(center - 8 - origin, change), Fraction(center + 8 - origin, change)))
-            enter = lower if enter is None else max(enter, lower)
-            leave = upper if leave is None else min(leave, upper)
-        else:
-            if enter <= leave and 0 <= leave <= 1 and not _inside_diamond(end[0] - x * 16, end[1] - y * 16, dx, dy):
-                middle = (max(enter, 0) + leave) / 2
-                if _inside_diamond(start[0] + middle * dx - x * 16, start[1] + middle * dy - y * 16, dx, dy):
-                    yield x, y
+        pixel = _cosmetic_pixel(start, end, value)
+        if pixel is not None and 0 <= pixel[0] < width and 0 <= pixel[1] < height:
+            yield pixel
