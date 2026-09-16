@@ -47,6 +47,7 @@ def cases():
     yield from stroke_cases()
     yield from polygon_cases()
     yield from rop2_cases()
+    yield from brush_cases()
 
 
 def mapped():
@@ -523,6 +524,47 @@ def rop2_cases():
     recorder.rectangle(16, 16, 72, 72)
     recorder.polygon(((88, 24), (120, 72), (80, 72)))
     yield "rop2-distinct-pen-brush", recorder
+
+
+def brush_cases():
+    recorder = mapped()
+    recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.select_object(recorder.create_pen(0, 3, 0x0000AA00))
+    recorder.select_object(recorder.create_brush(1, 0x000000FF, 0))
+    recorder.rectangle(12, 12, 64, 64)
+    recorder.polygon(((72, 16), (116, 56), (64, 72)))
+    yield "brush-null", recorder
+
+    for mode, label in ((1, "transparent"), (2, "opaque")):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(5, 0, 0))
+        recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+        recorder.rectangle(0, 0, 128, 128)
+        recorder.set_background_mode(mode)
+        recorder.set_background_color(0x0033CC77)
+        for hatch in range(6):
+            x, y = (hatch % 3) * 40 + 5, (hatch // 3) * 55 + 7
+            recorder.select_object(recorder.create_brush(2, 0x00CA5BE1, hatch))
+            recorder.rectangle(x, y, x + 31, y + 37)
+        yield f"brush-hatches-{label}", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.select_object(recorder.create_brush(2, 0x00CA5BE1, 4))
+    recorder.set_background_mode(1)
+    recorder.set_background_color(0x0033CC77)
+    recorder.rectangle(8, 8, 40, 40)
+    recorder.save_dc()
+    recorder.set_background_mode(2)
+    recorder.set_background_color(0x0000AAFF)
+    recorder.rectangle(48, 8, 80, 40)
+    recorder.restore_dc(-1)
+    recorder.rectangle(88, 8, 120, 40)
+    yield "brush-background-state", recorder
 
 
 def main():
