@@ -18,9 +18,9 @@ def path_points(gdi, dc):
 
 
 def main():
-    with reference_surface(128, 128) as (gdi, dc, _):
+    with reference_surface(128, 128) as (gdi, dc, bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
-        for name in ("BeginPath", "EndPath", "FlattenPath", "WidenPath", "AbortPath"):
+        for name in ("BeginPath", "EndPath", "FlattenPath", "WidenPath", "AbortPath", "StrokeAndFillPath"):
             bind(gdi, name, boolean, ptr)
         bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
         bind(gdi, "Ellipse", boolean, ptr, integer, integer, integer, integer)
@@ -30,6 +30,7 @@ def main():
         bind(gdi, "SelectObject", ptr, ptr, ptr)
         bind(gdi, "DeleteObject", boolean, ptr)
         bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
+        bind(gdi, "GdiFlush", boolean)
         for name, box in (
             ("even", (24, 24, 56, 56)),
             ("odd", (24, 24, 57, 57)),
@@ -46,6 +47,27 @@ def main():
             points = path_points(gdi, dc)
             print(f"ellipse-{name}: {len(points)} vertices {points}")
             check(gdi.AbortPath(dc), "AbortPath")
+
+            def raster(*, path=False, flatten=False, box=box):
+                ctypes.memset(bits, 255, 128 * 128 * 4)
+                if path:
+                    check(gdi.BeginPath(dc), "BeginPath")
+                    check(gdi.Ellipse(dc, *box), "Ellipse")
+                    check(gdi.EndPath(dc), "EndPath")
+                    if flatten:
+                        check(gdi.FlattenPath(dc), "FlattenPath")
+                    check(gdi.StrokeAndFillPath(dc), "StrokeAndFillPath")
+                else:
+                    check(gdi.Ellipse(dc, *box), "Ellipse")
+                check(gdi.GdiFlush(), "GdiFlush")
+                return ctypes.string_at(bits, 128 * 128 * 4)
+
+            direct = raster()
+            for variant, image in (("path", raster(path=True)), ("flat", raster(path=True, flatten=True))):
+                different = sum(
+                    direct[index : index + 4] != image[index : index + 4] for index in range(0, len(direct), 4)
+                )
+                print(f"ellipse-{name}-{variant}-raster-difference: {different}")
 
         for width, scale_x, scale_y in ((1, 2, 1), (3, 1, 1), (3, 2, 1), (3, 1, 2)):
             check(gdi.SetViewportExtEx(dc, 128 * scale_x, 128 * scale_y, None), "SetViewportExtEx")
