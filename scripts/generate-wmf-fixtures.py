@@ -489,6 +489,30 @@ def rop2_cases():
     recorder.line_to(88, 64)
     yield "rop2-state-setpixel", recorder
 
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, destination, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.select_object(recorder.create_pen(0, 7, source))
+    recorder.set_rop2(7)  # XOR: segment and join overlap must not cancel.
+    recorder.polyline(((16, 16), (72, 16), (72, 72), (112, 72)))
+    recorder.move_to(16, 104)
+    recorder.line_to(112, 104)
+    recorder.move_to(16, 104)
+    recorder.line_to(112, 104)
+    yield "rop2-joined-strokes", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, destination, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.select_object(recorder.create_pen(0, 7, source))
+    recorder.select_object(recorder.create_brush(0, source, 0))
+    recorder.set_rop2(7)
+    recorder.rectangle(16, 16, 72, 72)
+    recorder.polygon(((88, 24), (120, 72), (80, 72)))
+    yield "rop2-fill-and-outline", recorder
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
