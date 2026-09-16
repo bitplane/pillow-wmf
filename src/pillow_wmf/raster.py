@@ -352,11 +352,18 @@ class RasterContext(TraceContext):
         contours = tuple(path.vertices for path in paths)
         # Native combined filling/stroking consumes the flattened contour.
         # With a null brush it is stroke-only and retains cubic tangents.
-        if self._brush.style != 1:
+        if self._brush.style != 1 and self._rop2 == 13:
             paths = tuple(path.flattened() for path in paths)
         fill_pixels = set(self._contour_pixels(contours, fill_mode=self._polygon_fill_mode))
         foreground, gaps = self._stroke_fragments(paths, miter=miter)
         stroke_pixels = self._stroke_pixels(paths, miter=miter) if reserve_outline else foreground | gaps
+        pen = realize_pen(
+            self._pen.width,
+            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
+            Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
+        )
+        if pen.cosmetic and not reserve_outline:
+            stroke_pixels = set()
         for x, y in fill_pixels - stroke_pixels:
             color = self._brush_color_at(x, y)
             if color is not None:

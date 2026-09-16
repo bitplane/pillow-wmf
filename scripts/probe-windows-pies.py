@@ -45,6 +45,34 @@ def verify_pixels():
     assert not failures
 
 
+def verify_composition():
+    failures = 0
+    for operation, width, mode in product(("pie", "chord", "ellipse", "polygon"), (1, 7), range(1, 17)):
+        recorder = Recorder()
+        recorder.select_object(recorder.create_pen(0, width, 0x00402010))
+        recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+        recorder.set_rop2(mode)
+        if operation == "polygon":
+            recorder.polygon(((24, 8), (103, 31), (23, 103), (65, 64)))
+        else:
+            args = (24, 8, 103, 121)
+            if operation != "ellipse":
+                args += (90, 27, 23, 103)
+            getattr(recorder, operation)(*args)
+        data = recorder.to_bytes()
+        native = render_wmf(data, 128, 128)
+        context = RasterContext(128, 128)
+        assert play(Metafile.from_bytes(data), context, strict=True) == ()
+        differing = sum(
+            a != b for a, b in zip(native.get_flattened_data(), context.image.get_flattened_data(), strict=True)
+        )
+        if differing:
+            failures += 1
+            print("composition-FAIL", operation, width, mode, differing)
+    print("composition-matrix", 128, failures)
+    assert not failures
+
+
 def main():
     with reference_surface(128, 128) as (gdi, dc, _bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
@@ -88,4 +116,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    verify_composition()
     verify_pixels()

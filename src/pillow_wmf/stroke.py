@@ -119,7 +119,7 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
     dx1, dy1 = first.direction
     dx2, dy2 = second.direction
     turn = dx1 * dy2 - dy1 * dx2
-    if not turn:
+    if not turn and (dx1 * dx2 + dy1 * dy2 >= 0 or miter):
         return []
     vertices = pen.vertices
     count = len(vertices)
