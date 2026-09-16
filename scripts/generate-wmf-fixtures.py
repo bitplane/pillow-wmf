@@ -660,6 +660,29 @@ def styled_pen_cases():
     recorder.line_to(120, 24)
     yield "pen-style-clipped-phase", recorder
 
+    for style in range(1, 5):
+        recorder = mapped()
+        recorder.set_background_mode(1)
+        recorder.select_object(recorder.create_pen(style, 1, 0x00CA5BE1))
+        recorder.polyline(
+            (
+                (120, 42),
+                (119, 37),
+                (118, 32),
+                (112, 24),
+                (104, 18),
+                (98, 17),
+                (93, 16),
+                (88, 17),
+                (83, 18),
+                (74, 24),
+                (68, 32),
+                (67, 37),
+                (66, 42),
+            )
+        )
+        yield f"pen-style-{style}-axis-switch", recorder
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
