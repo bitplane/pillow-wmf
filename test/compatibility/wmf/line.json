@@ -1,0 +1,13 @@
+{
+  "oracle": "Windows GDI PlayMetaFile",
+  "oracle_version": 1,
+  "png_sha256": "c1d6bd227a2e1eeb0bb4e9a0a3c39c884d02b6a99d33e25042dc82142d3c6e6e",
+  "renderer_sha256": "2b7fcdc3ef8f55397d012b946bd54c46f0ddcdd9eb7e344d7a028ad443458bc5",
+  "settings": {
+    "background": "white",
+    "height": 128,
+    "map_mode": "MM_ANISOTROPIC",
+    "width": 128
+  },
+  "source_sha256": "472fcd6ac402cec41347dc8f5f828426fe225d7224994d895e2f7b09d8238c90"
+}
