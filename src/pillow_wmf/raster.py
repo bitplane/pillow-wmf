@@ -10,7 +10,7 @@ from PIL import Image
 from .clip import ClipRegion
 from .ellipse import ellipse_path
 from .gdi import Call, Handle, UnsupportedOperation
-from .geometry import contains
+from .geometry import Polygon, contains
 from .mapping import Mapping
 from .stroke import cosmetic_line, join_outline, realize_pen, widen_segment
 from .trace import TraceContext
@@ -56,6 +56,13 @@ class RasterContext(TraceContext):
     def _point(self, x: int, y: int) -> tuple[int, int]:
         return self.mapping.point(x, y)
 
+    def _mapped_path(self, points) -> Polygon:
+        path = []
+        for logical_x, logical_y in points:
+            x, y = self._point(logical_x, logical_y)
+            path.append((x * 16, y * 16))
+        return path
+
     def invoke(self, call: Call) -> Handle | int | None:
         call = self._prepare(call)
         name = call.name
@@ -87,6 +94,7 @@ class RasterContext(TraceContext):
             "move_to",
             "line_to",
             "polygon",
+            "poly_polygon",
             "set_polygon_fill_mode",
             "rectangle",
             "ellipse",
@@ -148,11 +156,10 @@ class RasterContext(TraceContext):
         elif name == "line_to":
             self._line(self._point(*self._position), self._point(a["x"], a["y"]))
             self._position = a["x"], a["y"]
-        elif name == "polygon":
-            path = [(x * 16, y * 16) for x, y in (self._point(*point) for point in a["points"])]
-            if len(path) >= 2:
-                self._fill_path(path, self._brush.color, fill_mode=self._polygon_fill_mode)
-                self._stroke_path(path, closed=True)
+        elif name in {"polygon", "poly_polygon"}:
+            polygons = (a["points"],) if name == "polygon" else a["polygons"]
+            paths = tuple(self._mapped_path(points) for points in polygons)
+            self._paint_polygons(paths)
         elif name == "set_pixel":
             self._pixel(*self._point(a["x"], a["y"]), rgb(a["color"]))
         elif name == "save_dc":
@@ -219,16 +226,25 @@ class RasterContext(TraceContext):
                 self._fill_path(join_outline(before, vertex, after, pen, miter=miter), self._pen.color)
 
     def _fill_path(self, polygon, color, *, fill_mode=1) -> None:
-        if not polygon:
+        self._fill_contours((polygon,), color, fill_mode=fill_mode)
+
+    def _fill_contours(self, contours: tuple[Polygon, ...], color, *, fill_mode=1) -> None:
+        if not contours:
             return
-        left = max(0, min(p[0] for p in polygon) // 16)
-        top = max(0, min(p[1] for p in polygon) // 16)
-        right = min(self.image.width, max(p[0] for p in polygon) // 16 + 1)
-        bottom = min(self.image.height, max(p[1] for p in polygon) // 16 + 1)
+        left = max(0, min(p[0] for contour in contours for p in contour) // 16)
+        top = max(0, min(p[1] for contour in contours for p in contour) // 16)
+        right = min(self.image.width, max(p[0] for contour in contours for p in contour) // 16 + 1)
+        bottom = min(self.image.height, max(p[1] for contour in contours for p in contour) // 16 + 1)
         for y in range(top, bottom):
             for x in range(left, right):
-                if contains((polygon,), x, y, fill_mode=fill_mode):
+                if contains(contours, x, y, fill_mode=fill_mode):
                     self._pixel(x, y, color)
+
+    def _paint_polygons(self, paths: tuple[Polygon, ...]) -> None:
+        contours = tuple(path for path in paths if len(path) >= 2)
+        self._fill_contours(contours, self._brush.color, fill_mode=self._polygon_fill_mode)
+        for path in contours:
+            self._stroke_path(path, closed=True)
 
     def _rectangle(self, left: int, top: int, right: int, bottom: int) -> None:
         path = [
