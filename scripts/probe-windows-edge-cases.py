@@ -218,6 +218,30 @@ def main():
                 gdi.SelectObject(dc, previous)
                 gdi.DeleteObject(pen)
         print("arc-precision", tested - pen_tested, "cases", failures - pen_failures, "failures")
+        holdout_tested, holdout_failures = tested, failures
+        # New inputs, not used to reconstruct the algorithm: either side of
+        # the short-angle boundary, both sweep directions and all quadrants.
+        for width in (1, 7):
+            pen = check(gdi.CreatePen(0, width, 0), "CreatePen")
+            previous = check(gdi.SelectObject(dc, pen), "SelectObject")
+            try:
+                for box, offset, quadrant, reverse in product(
+                    ((8, 8, 120, 120), (8, 16, 120, 112)), (625, 630), range(4), (False, True)
+                ):
+                    radials = [(12000, 0), (12000, offset)]
+                    for _ in range(quadrant):
+                        radials = [(-y, x) for x, y in radials]
+                    start, end = ((64 + x, 64 + y) for x, y in radials[:: -1 if reverse else 1])
+                    ctypes.memset(bits, 255, 128 * 128 * 4)
+                    check(gdi.Arc(dc, *box, *start, *end), "Arc")
+                    context = RasterContext(128, 128)
+                    context.select_object(context.create_pen(0, width, 0))
+                    context.arc(*box, *start, *end)
+                    compare(("arc-holdout", width, box, start, end), context)
+            finally:
+                gdi.SelectObject(dc, previous)
+                gdi.DeleteObject(pen)
+        print("arc-holdout", tested - holdout_tested, "cases", failures - holdout_failures, "failures")
     assert not failures, f"{failures}/{tested} native edge cases failed"
 
 
