@@ -2,8 +2,47 @@
 
 import ctypes
 from ctypes import wintypes
+from itertools import product
 
-from windows_wmf_render import bind, check, reference_surface
+from windows_wmf_render import bind, check, reference_surface, render_wmf
+
+from pillow_wmf import Metafile, RasterContext, Recorder, play
+from pillow_wmf.ellipse import arc_figure
+
+
+def verify_pixels():
+    """Holdouts beyond the committed sweep atlases; no local image oracle."""
+    failures = 0
+    cases = product(
+        ((9, 17, 117, 108), (24, 8, 103, 121), (61, 8, 62, 120), (8, 8, 8, 64)),
+        (((123, 63), (64, 2)), ((90, 27), (23, 103)), ((124, 65), (124, 66)), ((97, 63), (97, 63))),
+        ((0, 1), (0, 7), (4, 1), (5, 1)),
+        (0, 1, 2),
+    )
+    for index, (box, radials, pen, brush) in enumerate(cases):
+        recorder = Recorder()
+        recorder.set_map_mode(8)
+        recorder.set_window_extent(128, 128)
+        recorder.set_viewport_extent(128, 128)
+        recorder.select_object(recorder.create_pen(*pen, 0x00402010))
+        recorder.select_object(recorder.create_brush(brush, 0x00CC8844, 5))
+        recorder.set_background_mode(1 if index % 2 else 2)
+        recorder.set_rop2(7 if index % 3 == 0 else 13)
+        if index % 5 == 0:
+            recorder.intersect_clip_rect(31, 19, 103, 99)
+        recorder.pie(*box, *radials[0], *radials[1])
+        data = recorder.to_bytes()
+        native = render_wmf(data, 128, 128)
+        context = RasterContext(128, 128)
+        assert play(Metafile.from_bytes(data), context, strict=True) == ()
+        differing = sum(
+            a != b for a, b in zip(native.get_flattened_data(), context.image.get_flattened_data(), strict=True)
+        )
+        if differing:
+            failures += 1
+            print("pie-pixels-FAIL", index, box, radials, pen, brush, differing)
+    print("pie-pixel-matrix", index + 1, failures)
+    assert not failures
 
 
 def main():
@@ -35,6 +74,10 @@ def main():
                     points = (wintypes.POINT * count)()
                     kinds = (ctypes.c_ubyte * count)()
                     assert gdi.GetPath(dc, points, kinds, count) == count
+                    path = arc_figure(*args[:4], args[4:6], args[6:8], closure="pie", null_pen=style == 5)
+                    expected = (path.commands[0][0], *(p for command in path.commands[:-1] for p in command[1:]))
+                    assert tuple((p.x, p.y) for p in points) == expected, (style, width, args)
+                    assert tuple(kinds) == (6, *([4] * (count - 2)), 3)
                     print("Pie", style, width, args, tuple((p.x, p.y, k) for p, k in zip(points, kinds, strict=True)))
                     check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
                     check(gdi.AbortPath(dc), "AbortPath")
@@ -45,3 +88,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    verify_pixels()

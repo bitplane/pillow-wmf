@@ -2,9 +2,10 @@
 
 from itertools import pairwise
 from math import ceil, floor, sqrt
+from typing import Literal
 
 from .gdi_math import SHORT_ANGLE, atan2_degrees, sincos_degrees
-from .geometry import Point, Polygon, flatten_cubic
+from .geometry import DevicePath, Point, Polygon, flatten_cubic
 
 _SCALE = 16
 _CUBIC_CIRCLE_CONTROL = 4 * (sqrt(2) - 1) / 3
@@ -135,6 +136,34 @@ def arc_cubics(
         cubic = tuple(tuple(round(value) for value in point) for point in cubic)
         cubics.append(cubic)
     return tuple(cubics)
+
+
+def arc_figure(
+    left: int,
+    top: int,
+    right: int,
+    bottom: int,
+    start: Point,
+    end: Point,
+    *,
+    closure: Literal["open", "chord", "pie"] = "open",
+    null_pen=False,
+) -> DevicePath:
+    """Retain one arc figure, optionally closed directly or through its centre."""
+    curves = arc_cubics(left, top, right, bottom, start, end, null_pen=null_pen)
+    if closure == "open":
+        return DevicePath(curves, closed=start == end)
+    if closure == "chord":
+        closing = ((curves[-1][-1], curves[0][0]),)
+    elif closure == "pie":
+        x0, y0, x1, y1 = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
+        centre = ((x0 + x1) // 2, (y0 + y1) // 2)
+        # Native Pie appends the centre after the cubics and closes there,
+        # including full revolutions. Preserve that order for styled pens.
+        closing = ((curves[-1][-1], centre), (centre, curves[0][0]))
+    else:
+        raise ValueError(f"Unknown arc closure: {closure}")
+    return DevicePath((*curves, *closing), closed=True)
 
 
 def arc_path(left: int, top: int, right: int, bottom: int, start: Point, end: Point) -> Polygon:
