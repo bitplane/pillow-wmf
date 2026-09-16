@@ -422,6 +422,18 @@ def polygon_cases():
     recorder.poly_polygon((((8, 16), (48, 16), (48, 56), (8, 56)), ((72, 72), (112, 72), (112, 112), (72, 112))))
     yield "poly-polygon-disjoint", recorder
 
+    overlapping = (
+        ((12, 12), (80, 12), (80, 80), (12, 80)),
+        ((48, 48), (116, 48), (116, 116), (48, 116)),
+    )
+    for mode, label in ((1, "alternate"), (2, "winding")):
+        recorder = mapped()
+        recorder.set_polygon_fill_mode(mode)
+        recorder.select_object(recorder.create_pen(5, 0, 0))
+        recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+        recorder.poly_polygon(overlapping)
+        yield f"poly-polygon-overlap-{label}", recorder
+
     outer = ((12, 12), (116, 12), (116, 116), (12, 116))
     inner = ((40, 40), (88, 40), (88, 88), (40, 88))
     for mode, label in ((1, "alternate"), (2, "winding")):
