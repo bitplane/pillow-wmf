@@ -73,7 +73,7 @@ def main():
                 ("polyline", raster(polyline=True)),
             ):
                 different = sum(
-                    direct[index : index + 4] != image[index : index + 4] for index in range(0, len(direct), 4)
+                    direct[index : index + 3] != image[index : index + 3] for index in range(0, len(direct), 4)
                 )
                 print(f"ellipse-{name}-{variant}-raster-difference: {different}")
 
