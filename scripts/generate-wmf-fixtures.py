@@ -118,6 +118,12 @@ def arc_cases():
         recorder.arc(8, 8, 56, 56, 56, 32, 32, 8)
         yield f"arc-{name}", recorder
 
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(0, 3, 0))
+    # The native flattened path of the wide Arc above, as an ordinary path.
+    recorder.polyline(((115, 32), (113, 22), (108, 15), (101, 10), (92, 8), (83, 10), (75, 15)))
+    yield "arc-wide-polyline-control", recorder
+
 
 def markers(recorder):
     """Asymmetric logical points; no pen, brush or curve realization involved."""
