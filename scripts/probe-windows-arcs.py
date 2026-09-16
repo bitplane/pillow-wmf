@@ -229,6 +229,8 @@ def main():
                 ((1280, 520), (1280, 136), (896, 136), (512, 136)),
                 ((1280, 512), (1280, 136), (896, 128), (512, 128)),
                 ((1840, 504), (1840, 296), (1672, 128), (1464, 128)),
+                ((256, 256), (768, 768), (768, 256), (1024, 256)),
+                ((512, 512), (516, 512), (512, 516), (516, 516)),
             ):
                 check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
                 check(gdi.BeginPath(dc), "BeginPath")
@@ -240,6 +242,23 @@ def main():
                 check(gdi.WidenPath(dc), "WidenPath")
                 print("fractional-cubic-widened", control, fixed_path_points(gdi, dc))
                 check(gdi.AbortPath(dc), "AbortPath")
+            cap_groups = {}
+            for fx in range(16):
+                for fy in range(16):
+                    start = (512 + fx, 512 + fy)
+                    end = (start[0] + 128, start[1] + 32)
+                    check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                    check(gdi.BeginPath(dc), "BeginPath")
+                    check(gdi.MoveToEx(dc, *start, None), "MoveToEx")
+                    check(gdi.LineTo(dc, *end), "LineTo")
+                    check(gdi.EndPath(dc), "EndPath")
+                    check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+                    check(gdi.WidenPath(dc), "WidenPath")
+                    cap = tuple((x - start[0], y - start[1]) for x, y, _ in fixed_path_points(gdi, dc)[:5])
+                    cap_groups.setdefault(cap, []).append((fx, fy))
+                    check(gdi.AbortPath(dc), "AbortPath")
+            for cap, phases in cap_groups.items():
+                print("fractional-cap-group", cap, phases)
         finally:
             gdi.SelectObject(dc, previous)
             gdi.DeleteObject(pen)
