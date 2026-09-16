@@ -57,6 +57,16 @@ def main():
             path = ctypes.string_at(bits, 128 * 128 * 4)
             difference = sum(direct[i : i + 3] != path[i : i + 3] for i in range(0, len(direct), 4))
             print("arc-direct-path-difference", case, difference)
+            ctypes.memset(bits, 255, 128 * 128 * 4)
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.Arc(dc, *case), "Arc")
+            check(gdi.EndPath(dc), "EndPath")
+            check(gdi.FlattenPath(dc), "FlattenPath")
+            check(gdi.StrokePath(dc), "StrokePath")
+            check(gdi.GdiFlush(), "GdiFlush")
+            flattened = ctypes.string_at(bits, 128 * 128 * 4)
+            difference = sum(direct[i : i + 3] != flattened[i : i + 3] for i in range(0, len(direct), 4))
+            print("arc-direct-flattened-difference", case, difference)
 
 
 if __name__ == "__main__":
