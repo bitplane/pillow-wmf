@@ -28,7 +28,7 @@ def main():
                     elif operation in ("Arc", "Chord", "Pie"):
                         args += (35, 16, -5, 34)
                     check(gdi.BeginPath(dc), "BeginPath")
-                    check(getattr(gdi, operation)(dc, *args), operation)
+                    succeeded = bool(getattr(gdi, operation)(dc, *args))
                     check(gdi.EndPath(dc), "EndPath")
                     check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
                     check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
@@ -37,7 +37,13 @@ def main():
                     points = (wintypes.POINT * count)()
                     kinds = (ctypes.c_ubyte * count)()
                     assert gdi.GetPath(dc, points, kinds, count) == count
-                    print(operation, width, scale, tuple((p.x, p.y, k) for p, k in zip(points, kinds, strict=True)))
+                    print(
+                        operation,
+                        width,
+                        scale,
+                        succeeded,
+                        tuple((p.x, p.y, k) for p, k in zip(points, kinds, strict=True)),
+                    )
                     check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
                     check(gdi.AbortPath(dc), "AbortPath")
             finally:
