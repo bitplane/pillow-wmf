@@ -1,6 +1,7 @@
-"""WMF codec and GDI recording foundation; pixel rendering is not implemented."""
+"""WMF codec, GDI recording, and an initial Pillow raster backend."""
 
 from .gdi import GDI, Call, Handle, UnsupportedOperation
+from .raster import RasterContext
 from .trace import TraceContext
 from .wmf import FormatError, Limits, Metafile, PlaceableHeader
 from .wmf.player import PlaybackError, play
@@ -15,6 +16,7 @@ __all__ = [
     "Metafile",
     "PlaceableHeader",
     "PlaybackError",
+    "RasterContext",
     "Recorder",
     "TraceContext",
     "UnsupportedOperation",

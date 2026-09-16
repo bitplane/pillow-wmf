@@ -12,7 +12,7 @@ the new images. If branch protection prevents the bot pushing, grant GitHub
 Actions write permission and allow its push, or use a dedicated reference-image
 branch and merge the generated commit manually.
 
-`test_layout.py` checks that input fixtures still match the generator and parses
-them. It validates PNGs once present; new fixtures may be pending their Windows
-run. No pixel renderer is implemented yet, so committed PNGs are reference data
-for the next rendering slice rather than asserted output.
+`test_layout.py` checks that generated inputs still match the recorder, requires a
+PNG for every WMF, parses every WMF, and compares pixels exactly with the Pillow
+raster backend. New fixtures fail locally until their Windows reference arrives.
+Unsupported WMF calls fail explicitly; differences report the number of pixels.

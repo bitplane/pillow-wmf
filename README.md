@@ -1,8 +1,8 @@
 # pillow-wmf
 
-A Windows Metafile loader for Pillow, under development. The current milestone
-provides a WMF reader/writer and a GDI recording/playback interface. Pixel rendering
-and Pillow plugin integration are not implemented yet.
+A Windows Metafile loader for Pillow, under development. It provides a WMF
+reader/writer, GDI recording/playback, and an initial Pillow raster backend for
+solid lines and shapes. Pillow plugin integration is not implemented yet.
 
 Requires Python 3.13 or newer.
 
@@ -27,7 +27,7 @@ assert trace.calls == recorder.calls
 `make test` runs unit tests; `make compatibility` runs the compatibility suite;
 `make test-all` runs both. Four small WMFs and their Windows-rendered reference
 PNGs are committed as compatibility inputs. Delete a PNG to have the Windows
-workflow recreate it. Pixel comparisons will follow the first raster backend slice.
+workflow recreate it. Compatibility tests compare rendered pixels with these PNGs.
 
 - [Implementation contracts and coverage](docs/wmf-implementation.md)
 - [Format research and scope](docs/wmf-format-research.md)

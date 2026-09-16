@@ -3,6 +3,8 @@
 The first milestone implements a bounded reader/writer and a non-rendering GDI
 command interface. The [research](wmf-format-research.md) and
 [record inventory](wmf-record-inventory.md) remain the reference for future work.
+The [coordinate-mapping design](gdi-coordinate-mapping.md) details GDI state,
+device metrics, rounding boundaries, and the next native compatibility probes.
 
 ## Current coverage
 
@@ -15,13 +17,15 @@ command interface. The [research](wmf-format-research.md) and
 | Objects | Pen/brush record fields, font, palette, region/scan structures | Native object realization and selected/saved-object quirks |
 | Bitmap payloads | Explicit `BitmapData` values; Bitmap16/DIB/legacy-pattern distinction | Header/pixel decoding, compression, palette resolution, validation of nested bitmap contents |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording | Full device-context state and raster backend |
+| GDI | 68 named operations, backend handles, tracing and recording; initial raster support for solid lines, rectangles and ellipses | Full device-context state and remaining primitives |
 | Playback | File-slot mapping, lowest-free allocation, references, unsupported-operation diagnostics | Native behavioral validation and device-state emulation |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
 The 70 opcode total includes EOF and the required-ignore SETRELABS record, so
 there are 68 callable operations. All 70 have structural round-trip tests.
-This does **not** mean 70 operations render correctly: no pixels are rendered yet.
+This does **not** mean 70 operations render correctly. The first raster slice
+draws only a few operations; the compatibility suite currently keeps an ellipse
+pixel mismatch visible as a failing test.
 
 The structural reader parses fields without realizing graphics objects. A valid
 envelope containing `BitmapData` is not certification that the bitmap itself is
@@ -136,10 +140,9 @@ carried through recording, not executed by the trace backend.
 The unit suite checks all record classes and both blit layouts, independently
 specified wire bytes, truncation/count/limit failures, sequence snapshots, handle
 reuse, save references, unsupported operations, and mixed command round trips.
-These tests do not replace Windows acceptance or pixel tests.
-
-Next: native acceptance probes for generated files and the research discrepancy
-list, then the first real golden-image fixture. Nested bitmap codecs and the
-stateful raster context can build on these interfaces with explicit coverage
-increments. The existing Windows updater and compatibility directory still
-contain scaffolding; this milestone does not turn them into a native oracle.
+Windows now renders the first four WMFs and commits reference PNGs. The
+compatibility suite compares every pixel through `RasterContext`. New WMFs
+require a PNG and unsupported operations fail explicitly. The first three cases
+match exactly; the overlapping ellipse currently differs at 39 pixels. Further
+fixtures will expand that ratchet. Native acceptance probes for other record
+families and nested bitmap codecs remain open work.
