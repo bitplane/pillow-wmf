@@ -50,6 +50,25 @@ def cases():
     yield from brush_cases()
     yield from styled_pen_cases()
     yield from arc_cases()
+    yield from edge_cases()
+
+
+def edge_cases():
+    for style in (1, 4):
+        recorder = mapped()
+        recorder.set_background_mode(1)
+        recorder.select_object(recorder.create_pen(style, 1, 0))
+        recorder.polyline(((0, -80), (40, -40), (120, 40), (160, 80), (80, 160), (40, 80)))
+        yield f"pen-style-{style}-minor-axis-clipping", recorder
+    for width in (3, 7):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(0, width, 0))
+        for index in range(16):
+            cx, cy = 16 + index % 4 * 32, 16 + index // 4 * 32
+            distance = (3, 31, 16300, 16300)[index % 4]
+            offset = index // 4 - 2
+            recorder.arc(cx - 10, cy - 10, cx + 10, cy + 10, cx + distance, cy + offset, cx + distance, cy + offset + 1)
+        yield f"arc-shallow-width-{width}", recorder
 
 
 def mapped():
