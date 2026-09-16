@@ -132,7 +132,7 @@ def main():
                     check(gdi.LineTo(dc, *end), "LineTo")
                     check(gdi.EndPath(dc), "EndPath")
                     check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
-                    if width in (7, 8) and epsilon == 0 and phase == (0, 0) and dx * dy < 0:
+                    if epsilon == 0 and phase == (0, 0):
                         check(gdi.WidenPath(dc), "WidenPath")
                         print("tie-outline", width, delta, "native", fixed_path(gdi, dc))
                         print(
@@ -173,22 +173,12 @@ def main():
                         radial = (-radial[1], radial[0])
                     start = (64 + radial[0], 64 + radial[1])
                     end = (64 + radial[0], 64 + radial[1] + 1)
-                    if (
-                        width == 1
-                        and box == (8, 8, 120, 120)
-                        and (start, end)
-                        in (
-                            ((67, 63), (67, 64)),
-                            ((61, 65), (61, 66)),
-                            ((61, 64), (61, 65)),
-                            ((62, -16236), (62, -16235)),
-                        )
-                    ):
+                    if width == 1:
                         check(gdi.BeginPath(dc), "BeginPath")
                         check(gdi.Arc(dc, *box, *start, *end), "Arc")
                         check(gdi.EndPath(dc), "EndPath")
-                        print("arc-controls", start, end, "native", fixed_path(gdi, dc))
-                        print("arc-controls", start, end, "local", arc_cubics(*box, start, end))
+                        print("arc-controls", box, start, end, "native", fixed_path(gdi, dc))
+                        print("arc-controls", box, start, end, "local", arc_cubics(*box, start, end))
                         check(gdi.FlattenPath(dc), "FlattenPath")
                         print("arc-flat", start, end, "native", fixed_path(gdi, dc))
                         check(gdi.AbortPath(dc), "AbortPath")
