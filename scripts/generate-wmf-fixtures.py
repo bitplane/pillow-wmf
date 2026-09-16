@@ -50,7 +50,52 @@ def cases():
     yield from brush_cases()
     yield from styled_pen_cases()
     yield from arc_cases()
+    yield from chord_cases()
     yield from edge_cases()
+
+
+def chord_cases():
+    # Independent Windows images exercise closure as well as curved coverage.
+    directions = ((1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1))
+    for name, style, width, brush, background in (
+        ("solid", 0, 1, 0, 2),
+        ("wide", 0, 7, 0, 2),
+        ("fill-only", 5, 1, 0, 2),
+        ("outline", 0, 7, 1, 2),
+        ("dashed", 1, 1, 0, 2),
+        ("hatch-transparent", 0, 1, 2, 1),
+    ):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(style, width, 0))
+        recorder.select_object(recorder.create_brush(brush, 0x00CC8844, 4))
+        recorder.set_background_mode(background)
+        for index in range(16):
+            cx, cy = 16 + index % 4 * 32, 16 + index // 4 * 32
+            sx, sy = directions[index % 8]
+            ex, ey = directions[(index + (1 if index < 8 else 5)) % 8]
+            recorder.chord(cx - 11, cy - 10, cx + 12, cy + 11, cx + sx * 20, cy + sy * 20, cx + ex * 20, cy + ey * 20)
+        yield f"chord-sweeps-{name}", recorder
+    for name, box, start, end in (
+        ("equal", (8, 16, 120, 112), (120, 64), (120, 64)),
+        ("same-ray", (8, 16, 120, 112), (120, 64), (176, 64)),
+        ("tiny", (8, 16, 120, 112), (62, 16364), (62, 16365)),
+        ("narrow", (60, 8, 63, 120), (100, 30), (20, 80)),
+        ("flat", (8, 60, 120, 63), (100, 30), (20, 80)),
+        ("reversed", (120, 112, 8, 16), (117, 43), (31, 107)),
+    ):
+        recorder = mapped()
+        recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+        recorder.chord(*box, *start, *end)
+        yield f"chord-edge-{name}", recorder
+    for sx, sy in ((-1, 1), (1, -1), (-1, -1), (2, 1)):
+        recorder = mapped()
+        recorder.set_viewport_origin(128 if sx < 0 else 0, 128 if sy < 0 else 0)
+        recorder.set_viewport_extent(128 * sx, 128 * sy)
+        recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+        recorder.move_to(4, 4)
+        recorder.chord(8, 8, 56, 104, 56, 40, 17, 93)
+        recorder.line_to(30, 12)  # Chord must not change the current position.
+        yield f"chord-mapping-{sx}-{sy}", recorder
 
 
 def edge_cases():
