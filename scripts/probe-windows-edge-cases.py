@@ -96,8 +96,24 @@ def main():
         bind(gdi, "MoveToEx", boolean, ptr, integer, integer, ptr)
         bind(gdi, "LineTo", boolean, ptr, integer, integer)
         bind(gdi, "Arc", boolean, ptr, *(integer for _ in range(8)))
+        bind(gdi, "AngleArc", boolean, ptr, integer, integer, wintypes.DWORD, ctypes.c_float, ctypes.c_float)
         bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
         bind(gdi, "GdiFlush", boolean)
+
+        # Large path-only geometry exposes the arithmetic before 28.4
+        # quantization hides it. No large bitmap or pixel enumeration is used.
+        for start, end in (((3, -1), (3, 0)), ((-3, 1), (-3, 2)), ((-3, 0), (-3, 1)), ((-2, -16300), (-2, -16299))):
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.Arc(dc, -1000000, -1000000, 1000000, 1000000, *start, *end), "Arc")
+            check(gdi.EndPath(dc), "EndPath")
+            print("large-arc", start, end, fixed_path(gdi, dc))
+            check(gdi.AbortPath(dc), "AbortPath")
+        for angle, sweep in ((0, 90), (90, 0), (180, 18.4349488), (198.4349488, 15.2551187), (90, 0.01), (90, 0.00001)):
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.AngleArc(dc, 0, 0, 1000000, angle, sweep), "AngleArc")
+            check(gdi.EndPath(dc), "EndPath")
+            print("large-angle-arc", angle, sweep, fixed_path(gdi, dc))
+            check(gdi.AbortPath(dc), "AbortPath")
 
         def compare(label, context):
             nonlocal failures, tested
