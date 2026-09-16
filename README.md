@@ -33,3 +33,4 @@ workflow recreate it. Compatibility tests compare rendered pixels with these PNG
 - [Format research and scope](docs/wmf-format-research.md)
 - [Complete record inventory](docs/wmf-record-inventory.md)
 - [Stroke algorithms and native validation](docs/gdi-strokes.md)
+- [ROP2 painting and native validation](docs/gdi-rop2.md)

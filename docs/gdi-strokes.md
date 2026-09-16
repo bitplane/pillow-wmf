@@ -49,7 +49,8 @@ or exhaustive coverage of every width and coordinate.
    segment, with support vertices selected by a cross-product maximum.
 4. Connected segments add their exterior joins. Filled paths and wide stroke
    polygons use the same fixed-point coverage test.
-5. Pixel writes apply the application clip and the bitmap bounds.
+5. Stroke coverage is unioned per drawing call; pixel writes apply the
+   application clip and the selected [ROP2 mix](gdi-rop2.md).
 
 ## Cosmetic lines
 
