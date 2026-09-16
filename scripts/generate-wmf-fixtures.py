@@ -62,6 +62,19 @@ def cases():
 def inside_frame_cases():
     for operation in ("rectangle", "ellipse", "round_rect", "arc", "chord", "pie"):
         recorder = mapped()
+        recorder.set_viewport_extent(192, 96)
+        recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+        for i, width in enumerate((1, 2, 3, 7, 20, 21)):
+            x, y = 5 + i % 3 * 26, 6 + i // 3 * 64
+            recorder.select_object(recorder.create_pen(6, width, 0x00402010))
+            args = (x, y, x + 21, y + 37)
+            if operation == "round_rect":
+                args += (13, 19)
+            elif operation in ("arc", "chord", "pie"):
+                args += (x + 30, y + 10, x - 10, y + 28)
+            getattr(recorder, operation)(*args)
+        yield f"insideframe-{operation}-fractional", recorder
+        recorder = mapped()
         recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
         for i, (width, height) in enumerate(product((20, 21, 22), (21, 37))):
             x, y = 6 + i % 3 * 40, 12 + i // 3 * 64
