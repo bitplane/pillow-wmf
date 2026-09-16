@@ -46,6 +46,7 @@ def cases():
     yield from foundation_cases()
     yield from stroke_cases()
     yield from polygon_cases()
+    yield from rop2_cases()
 
 
 def mapped():
@@ -444,6 +445,49 @@ def polygon_cases():
             recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
             recorder.poly_polygon((outer, inner[::-1] if reverse else inner))
             yield f"poly-polygon-nested-{label}-{orientation}", recorder
+
+
+def rop2_cases():
+    """Exercise each binary mode against nontrivial source and destination RGB."""
+    destination = 0x00663399
+    source = 0x00CA5BE1
+    for primitive in ("lines", "fills"):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(5, 0, 0))
+        recorder.select_object(recorder.create_brush(0, destination, 0))
+        recorder.rectangle(0, 0, 128, 128)
+        if primitive == "lines":
+            recorder.select_object(recorder.create_pen(0, 3, source))
+        else:
+            recorder.select_object(recorder.create_brush(0, source, 0))
+        for mode in range(1, 17):
+            x, y = ((mode - 1) % 4 * 32, (mode - 1) // 4 * 32)
+            recorder.set_rop2(mode)
+            if primitive == "lines":
+                recorder.move_to(x + 4, y + 16)
+                recorder.line_to(x + 28, y + 16)
+            else:
+                recorder.rectangle(x + 4, y + 4, x + 28, y + 28)
+        yield f"rop2-{primitive}-all", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, destination, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.select_object(recorder.create_pen(0, 3, source))
+    recorder.set_rop2(7)  # XOR
+    recorder.set_pixel(16, 16, source)
+    recorder.move_to(8, 32)
+    recorder.line_to(40, 32)
+    recorder.save_dc()
+    recorder.set_rop2(11)  # NOP
+    recorder.set_pixel(64, 16, source)
+    recorder.move_to(56, 32)
+    recorder.line_to(88, 32)
+    recorder.restore_dc(-1)
+    recorder.move_to(56, 64)
+    recorder.line_to(88, 64)
+    yield "rop2-state-setpixel", recorder
 
 
 def main():
