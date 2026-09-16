@@ -11,7 +11,53 @@ from pillow_wmf.geometry import DevicePath
 from pillow_wmf.stroke import realize_pen
 
 
+def verify_native_clipped_dash_pairs():
+    """Validate the crop hypothesis against native Polyline, not our renderer."""
+    tested = 0
+    for style, background, transpose, reverse in product((1, 2, 3, 4), (1, 2), (False, True), (False, True)):
+        points = ((0, -20), (10, -10), (30, 10), (40, 20), (20, 40), (10, 20))
+        if transpose:
+            points = tuple((y, x) for x, y in points)
+        if reverse:
+            points = points[::-1]
+        results = []
+        for size, offset in ((32, 0), (96, 32)):
+            with reference_surface(size, size) as (gdi, dc, bits):
+                ptr, integer = ctypes.c_void_p, ctypes.c_int
+                bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
+                bind(gdi, "Polyline", wintypes.BOOL, ptr, ctypes.POINTER(wintypes.POINT), integer)
+                bind(gdi, "SetBkMode", integer, ptr, integer)
+                bind(gdi, "SetBkColor", wintypes.DWORD, ptr, wintypes.DWORD)
+                bind(gdi, "GdiFlush", wintypes.BOOL)
+                pen = check(gdi.CreatePen(style, 1, 0), "CreatePen")
+                previous = check(gdi.SelectObject(dc, pen), "SelectObject")
+                try:
+                    check(gdi.SetBkMode(dc, background), "SetBkMode")
+                    gdi.SetBkColor(dc, 0x0000FF)
+                    native_points = (wintypes.POINT * len(points))(
+                        *(wintypes.POINT(x + offset, y + offset) for x, y in points)
+                    )
+                    check(gdi.Polyline(dc, native_points, len(points)), "Polyline")
+                    check(gdi.GdiFlush(), "GdiFlush")
+                    raw = ctypes.string_at(bits, size * size * 4)
+                    results.append(
+                        bytes(
+                            raw[((y + offset) * size + x + offset) * 4 + channel]
+                            for y in range(32)
+                            for x in range(32)
+                            for channel in range(3)
+                        )
+                    )
+                finally:
+                    gdi.SelectObject(dc, previous)
+                    gdi.DeleteObject(pen)
+        assert results[0] == results[1], ("native crop hypothesis disproved", style, background, transpose, reverse)
+        tested += 1
+    print("native-clipped-dash-pairs", tested, "exact matches")
+
+
 def main():
+    verify_native_clipped_dash_pairs()
     failures = tested = 0
     with reference_surface(128, 128) as (gdi, dc, bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
