@@ -42,6 +42,58 @@ for the suite-wide device profile and later exact numeric unit tests; the profil
 must be based on the actual report, not an assumed DPI. These observations are
 not themselves assertions of Windows compatibility.
 
+### First Windows results
+
+[Run 35071353163](https://github.com/bitplane/pillow-wmf/actions/runs/35071353163)
+succeeded on Windows Server 2025 build 26100. It generated 59 PNGs, committed as
+`0dd5bb4`, and left the four original references untouched. The inputs/tooling
+are in `dd5c69b`.
+
+Measured capabilities: physical size 271 by 203 mm, device resolution 1024 by
+768, logical DPI 96 by 96. These are now an explicit suite-wide check in the
+probe, run before reference generation. A mismatch stops generation for review;
+it does not refresh the profile or goldens automatically.
+
+Observed extents immediately after selecting each mode from the reference setup:
+
+| Mode | Window extent | Viewport extent |
+| --- | --- | --- |
+| Text | `(1, 1)` | `(1, 1)` |
+| Low metric | `(2709, 2032)` | `(1024, -768)` |
+| High metric | `(27093, 20320)` | `(1024, -768)` |
+| Low English | `(1067, 800)` | `(1024, -768)` |
+| High English | `(10667, 8000)` | `(1024, -768)` |
+| Twips | `(15360, 11520)` | `(1024, -768)` |
+| Isotropic | `(2709, 2032)` | `(1024, -768)` |
+| Anisotropic (reselected) | `(128, 128)` | `(128, 128)` |
+
+This already rules out deriving every mode's extents from the rounded millimetre
+capabilities: low metric does not use `(2710, 2030)` on this runner.
+
+Other observations, limited to the exercised inputs:
+
+- At half scale, coordinates `-15, -3, -1, 0, 1, 3, 15, 127` map to
+  `-7, -1, 0, 0, 1, 2, 8, 64` on either axis. These ties are not Python `round()`.
+- In arbitrary-unit modes, `SetWindowExtEx(0, 10)` failed unchanged, but
+  `SetViewportExtEx(10, 0)` succeeded unchanged. Wine's shared zero-rejection
+  assumption is not enough.
+- Scaling window extents `(-17, 19)` by `(2/3, 3/2)` produced `(-11, 28)`.
+  Scaling those extents by `(1/100, 1/100)` failed unchanged rather than replacing
+  zero results with one.
+- Fixed text/twips modes ignored the probed extent operations, including zero
+  factors, and reported success.
+- Both isotropic setter orders ended at `(100, 50)` viewport extents in this
+  example, but passed through different intermediate states.
+- Nested restores reinstated mapping and logical current position. RTL mapped
+  X relative to pixel 127 on this surface and retained anisotropic mode when
+  `SetMapMode(MM_TEXT)` was called while RTL was active.
+
+These values are a basis for upcoming mapping tests, not a claim that every
+primitive uses LPtoDP's numerical path. Exact image comparisons on the current
+local renderer give **17 passing / 49 failing compatibility tests** (including
+the three structural/reference checks); unsupported operations and ellipse
+differences remain visible. All 63 reference PNGs are present and valid.
+
 ## Cycle
 
 1. Generate inputs locally; check byte reproducibility and codec/trace round trips.

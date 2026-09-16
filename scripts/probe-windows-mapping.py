@@ -6,6 +6,23 @@ from ctypes import wintypes
 
 from windows_wmf_render import bind, check, reference_surface
 
+# Observed on windows-2025, run 35071353163. One suite-wide environment contract,
+# not per-image metadata. Physical-mode goldens depend on these device metrics.
+REFERENCE_DEVICE_CAPS = {
+    "HORZSIZE": (4, 271),
+    "VERTSIZE": (6, 203),
+    "HORZRES": (8, 1024),
+    "VERTRES": (10, 768),
+    "LOGPIXELSX": (88, 96),
+    "LOGPIXELSY": (90, 96),
+}
+
+
+def validate_device_caps(caps):
+    expected = {name: value for name, (_, value) in REFERENCE_DEVICE_CAPS.items()}
+    if caps != expected:
+        raise RuntimeError(f"Reference device changed: expected {expected}, got {caps}; review before generating PNGs")
+
 
 def sequences():
     """Each sequence runs on a fresh reference DC; names describe the question."""
@@ -121,18 +138,9 @@ def main():
     print(f"LPtoDP inputs={SAMPLES}")
     with reference_surface(128, 128) as (gdi, dc, _):
         bind_probe(gdi)
-        caps = {
-            name: gdi.GetDeviceCaps(dc, index)
-            for name, index in (
-                ("HORZSIZE", 4),
-                ("VERTSIZE", 6),
-                ("HORZRES", 8),
-                ("VERTRES", 10),
-                ("LOGPIXELSX", 88),
-                ("LOGPIXELSY", 90),
-            )
-        }
+        caps = {name: gdi.GetDeviceCaps(dc, index) for name, (index, _) in REFERENCE_DEVICE_CAPS.items()}
         print(f"Device capabilities={caps}")
+        validate_device_caps(caps)
         print("Reference initial state:")
         snapshot(gdi, dc)
     for name, calls in sequences():

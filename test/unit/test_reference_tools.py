@@ -60,6 +60,16 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
     assert sorted(path.suffix for path in tmp_path.iterdir()) == [".png", ".png", ".wmf", ".wmf"]
 
 
+def test_native_profile_rejects_environment_drift(monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    probe = runpy.run_path(str(SCRIPTS / "probe-windows-mapping.py"))
+    caps = {name: value for name, (_, value) in probe["REFERENCE_DEVICE_CAPS"].items()}
+    probe["validate_device_caps"](caps)
+    for name, value in caps.items():
+        with pytest.raises(RuntimeError, match="Reference device changed"):
+            probe["validate_device_caps"]({**caps, name: value + 1})
+
+
 @pytest.mark.parametrize(
     "failure", [None, "CreateCompatibleDC", "CreateDIBSection", "SetMapMode", "PlayMetaFile", "GdiFlush"]
 )
