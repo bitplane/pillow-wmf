@@ -48,6 +48,7 @@ def cases():
     yield from polygon_cases()
     yield from rop2_cases()
     yield from brush_cases()
+    yield from styled_pen_cases()
 
 
 def mapped():
@@ -578,6 +579,57 @@ def brush_cases():
     recorder.set_window_extent(64, 64)
     recorder.rectangle(39, 7, 59, 25)
     yield "brush-hatch-rop2-mapped", recorder
+
+
+def styled_pen_cases():
+    for mode, label in ((1, "transparent"), (2, "opaque")):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(5, 0, 0))
+        recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+        recorder.rectangle(0, 0, 128, 128)
+        recorder.set_background_mode(mode)
+        recorder.set_background_color(0x0033CC77)
+        for style in range(1, 5):
+            recorder.select_object(recorder.create_pen(style, 1, 0x00CA5BE1))
+            y = 12 + (style - 1) * 27
+            recorder.move_to(7, y)
+            recorder.line_to(120, y)
+        yield f"pen-styles-lines-{label}", recorder
+
+    for mode, label in ((1, "transparent"), (2, "opaque")):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(5, 0, 0))
+        recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+        recorder.rectangle(0, 0, 128, 128)
+        recorder.set_background_mode(mode)
+        recorder.set_background_color(0x0033CC77)
+        for style in range(1, 5):
+            recorder.select_object(recorder.create_pen(style, 1, 0x00CA5BE1))
+            y = 8 + (style - 1) * 28
+            recorder.polyline(((8, y + 16), (34, y), (60, y + 16), (84, y), (118, y + 16)))
+        yield f"pen-styles-polyline-{label}", recorder
+
+    for style in range(1, 5):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(style, 1, 0x00CA5BE1))
+        recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+        recorder.set_background_mode(1)
+        recorder.rectangle(12, 12, 60, 52)
+        recorder.ellipse(68, 12, 116, 52)
+        recorder.polygon(((16, 72), (56, 72), (72, 112), (8, 112)))
+        yield f"pen-style-{style}-shapes", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.set_background_mode(1)
+    for style in range(1, 5):
+        recorder.select_object(recorder.create_pen(style, 2, 0x00CA5BE1))
+        y = 12 + (style - 1) * 27
+        recorder.move_to(7, y)
+        recorder.line_to(120, y)
+    yield "pen-styles-wide", recorder
 
 
 def main():
