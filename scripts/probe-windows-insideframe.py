@@ -11,18 +11,24 @@ from pillow_wmf import Metafile, RasterContext, Recorder, play
 
 def verify_pixels():
     failures = 0
-    for index, (operation, width, brush) in enumerate(
+    for index, (operation, width, brush, box, viewport) in enumerate(
         product(
             ("rectangle", "ellipse", "round_rect", "arc", "chord", "pie"),
             (0, 1, 2, 3, 6, 7, 20, 21, 22, 36, 37, 38, 40),
             (0, 1, 2),
+            ((5, 6, 26, 43), (5, 6, 42, 27), (5, 6, 26, 27)),
+            ((128, 128), (192, 96), (-128, 256)),
         )
     ):
         recorder = Recorder()
+        recorder.set_map_mode(8)
+        recorder.set_window_extent(128, 128)
+        recorder.set_viewport_extent(*viewport)
+        recorder.set_viewport_origin(128 if viewport[0] < 0 else 0, 0)
         recorder.select_object(recorder.create_pen(6, width, 0x00402010))
         recorder.select_object(recorder.create_brush(brush, 0x00CC8844, 5))
-        recorder.set_rop2(7 if index % 3 == 0 else 13)
-        args = (5, 6, 26, 43)
+        recorder.set_rop2(7 if index % 2 == 0 else 13)
+        args = box
         if operation == "round_rect":
             args += (13, 19)
         elif operation in ("arc", "chord", "pie"):
@@ -37,7 +43,7 @@ def verify_pixels():
         )
         if differing:
             failures += 1
-            print("insideframe-pixels-FAIL", operation, width, brush, differing)
+            print("insideframe-pixels-FAIL", operation, width, brush, box, viewport, differing)
     print("insideframe-pixel-matrix", index + 1, failures)
     assert not failures
 

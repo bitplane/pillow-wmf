@@ -89,7 +89,7 @@ class RasterContext(TraceContext):
                 raise UnsupportedOperation(f"Background mode {a['mode']}")
         elif name == "create_pen":
             if a["style"] not in range(7) or a["width"] < 0:
-                raise UnsupportedOperation("Only solid, styled, null and inside-frame pens are supported")
+                raise UnsupportedOperation("Only solid, dashed, dotted, null and inside-frame pens are supported")
         elif name == "create_brush":
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
@@ -241,7 +241,10 @@ class RasterContext(TraceContext):
                 if self._pen.style == 6 and not pen.cosmetic:
                     dx = max(abs(x) for x, y in pen.vertices)
                     dy = max(abs(y) for x, y in pen.vertices)
-                    covered = 2 * dx >= (right - left) * 16 or 2 * dy >= (bottom - top) * 16
+                    # Equality retains a degenerate centreline and widens it
+                    # normally. Only a negative interior triggers GDI's
+                    # pen-colour fill (or rejection for arc-family calls).
+                    covered = 2 * dx > (right - left) * 16 or 2 * dy > (bottom - top) * 16
                     if covered:
                         if name in {"arc", "chord", "pie"}:
                             return result

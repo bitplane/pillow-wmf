@@ -1,5 +1,6 @@
 """Regenerate the small, deterministic WMF compatibility inputs."""
 
+from itertools import product
 from pathlib import Path
 
 from pillow_wmf import Recorder
@@ -60,6 +61,18 @@ def cases():
 
 def inside_frame_cases():
     for operation in ("rectangle", "ellipse", "round_rect", "arc", "chord", "pie"):
+        recorder = mapped()
+        recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+        for i, (width, height) in enumerate(product((20, 21, 22), (21, 37))):
+            x, y = 6 + i % 3 * 40, 12 + i // 3 * 64
+            recorder.select_object(recorder.create_pen(6, width, 0x00402010))
+            args = (x, y, x + 21, y + height)
+            if operation == "round_rect":
+                args += (13, 19)
+            elif operation in ("arc", "chord", "pie"):
+                args += (x + 30, y + 10, x - 10, y + 28)
+            getattr(recorder, operation)(*args)
+        yield f"insideframe-{operation}-collapse", recorder
         for brush in (0, 1):
             recorder = mapped()
             recorder.select_object(recorder.create_brush(brush, 0x00CC8844, 0))
