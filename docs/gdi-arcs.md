@@ -55,6 +55,13 @@ ownership. That floating-point model is a behavioral inference, **not** a
 claim to know Microsoft's internal constant or implementation. We do not use
 an angle tolerance to reclassify pieces or patch their resulting pixels.
 
+Very short terminal pieces can have different native control handles despite
+identical flattened geometry. The diagnostic logs those control differences
+and asserts exact equality of the consumed vertices (ignoring repeated
+zero-length edges); the PNG tests independently require exact pixels. Native
+control equality is asserted for the specific quadrant regressions measured
+in the unit tests, not claimed for every Arc parameterization.
+
 The regression suite includes six native atlases (96 arcs): all octants,
 short and wrapping sweeps, circular and elliptical bounds, widths 1/3/6, and
 near/far points on identical rays. The old PNG expectations remain unchanged.
