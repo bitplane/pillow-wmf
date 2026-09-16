@@ -17,7 +17,7 @@ def path_points(gdi, dc):
 def main():
     with reference_surface(128, 128) as (gdi, dc, bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
-        for name in ("BeginPath", "EndPath", "FlattenPath", "AbortPath", "StrokePath", "GdiFlush"):
+        for name in ("BeginPath", "EndPath", "FlattenPath", "AbortPath", "StrokePath", "WidenPath", "GdiFlush"):
             bind(gdi, name, boolean, ptr) if name != "GdiFlush" else bind(gdi, name, boolean)
         bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
         bind(gdi, "Arc", boolean, ptr, *(integer for _ in range(8)))
@@ -86,6 +86,22 @@ def main():
             check(gdi.AbortPath(dc), "AbortPath")
         check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
         check(gdi.SetViewportOrgEx(dc, 0, 0, None), "SetViewportOrgEx")
+        bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
+        bind(gdi, "SelectObject", ptr, ptr, ptr)
+        bind(gdi, "DeleteObject", boolean, ptr)
+        pen = check(gdi.CreatePen(0, 3, 0), "CreatePen")
+        previous = check(gdi.SelectObject(dc, pen), "SelectObject")
+        try:
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.Arc(dc, 68, 8, 116, 56, 136, 32, 68, 8), "Arc")
+            check(gdi.EndPath(dc), "EndPath")
+            print("arc-wide-raw", path_points(gdi, dc))
+            check(gdi.WidenPath(dc), "WidenPath")
+            print("arc-wide-widened", path_points(gdi, dc))
+            check(gdi.AbortPath(dc), "AbortPath")
+        finally:
+            gdi.SelectObject(dc, previous)
+            gdi.DeleteObject(pen)
 
 
 if __name__ == "__main__":
