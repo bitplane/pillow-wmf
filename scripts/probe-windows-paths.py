@@ -202,6 +202,15 @@ def main():
                     check(gdi.WidenPath(dc), "WidenPath")
                     points = path_points(gdi, dc)
                     print(f"pen-{width}-{scale_x}x{scale_y}-{segment_name}: {len(points)} vertices {points}")
+                    check(
+                        gdi.SetWindowExtEx(dc, 2048 * scale_x, 2048 * scale_y, None),
+                        "SetWindowExtEx",
+                    )
+                    expanded = path_points(gdi, dc)
+                    print(
+                        f"pen-{width}-{scale_x}x{scale_y}-{segment_name}-expanded: {len(expanded)} vertices {expanded}"
+                    )
+                    check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
                     check(gdi.AbortPath(dc), "AbortPath")
             finally:
                 gdi.SelectObject(dc, previous)
