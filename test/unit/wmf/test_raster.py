@@ -58,3 +58,12 @@ def test_invalid_polygon_fill_mode_does_not_change_context() -> None:
     with pytest.raises(UnsupportedOperation, match="Polygon fill mode"):
         context.set_polygon_fill_mode(3)
     assert context.calls == []
+
+
+def test_polyline_does_not_change_current_position() -> None:
+    context = RasterContext(10, 6)
+    context.move_to(1, 1)
+    context.polyline(((3, 3), (4, 3)))
+    context.line_to(8, 1)
+    assert context.image.getpixel((2, 1)) == (0, 0, 0)
+    assert context.image.getpixel((5, 3)) == (255, 255, 255)

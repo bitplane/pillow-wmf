@@ -93,6 +93,7 @@ class RasterContext(TraceContext):
             "scale_viewport_extent",
             "move_to",
             "line_to",
+            "polyline",
             "polygon",
             "poly_polygon",
             "set_polygon_fill_mode",
@@ -156,6 +157,8 @@ class RasterContext(TraceContext):
         elif name == "line_to":
             self._line(self._point(*self._position), self._point(a["x"], a["y"]))
             self._position = a["x"], a["y"]
+        elif name == "polyline":
+            self._stroke_path(self._mapped_path(a["points"]))
         elif name in {"polygon", "poly_polygon"}:
             polygons = (a["points"],) if name == "polygon" else a["polygons"]
             paths = tuple(self._mapped_path(points) for points in polygons)
@@ -226,7 +229,8 @@ class RasterContext(TraceContext):
                 self._fill_path(join_outline(before, vertex, after, pen, miter=miter), self._pen.color)
 
     def _fill_path(self, polygon, color, *, fill_mode=1) -> None:
-        self._fill_contours((polygon,), color, fill_mode=fill_mode)
+        if polygon:
+            self._fill_contours((polygon,), color, fill_mode=fill_mode)
 
     def _fill_contours(self, contours: tuple[Polygon, ...], color, *, fill_mode=1) -> None:
         if not contours:

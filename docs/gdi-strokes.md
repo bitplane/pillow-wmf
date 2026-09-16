@@ -1,8 +1,9 @@
 # Solid GDI stroke reconstruction
 
-The renderer uses a shared device-path pipeline for lines, rectangles and
-ellipses. This replaces the former kernel stamping, identity-only distance
-fill, hand-constructed diagonal outlines, and narrow-ellipse pixel correction.
+The renderer uses a shared device-path pipeline for lines, polylines, polygons,
+rectangles and ellipses. This replaces the former kernel stamping,
+identity-only distance fill, hand-constructed diagonal outlines, and
+narrow-ellipse pixel correction.
 There is no ImageDraw fallback.
 
 ## Evidence and scope
@@ -66,6 +67,12 @@ The same algorithm accepts integer LineTo coordinates and fractional curve
 vertices. Grid enumeration is bounded by the bitmap dimension, without moving
 the original endpoints or changing their rounding phase. A zero-length cosmetic
 segment paints nothing.
+
+`Polyline` maps its point array once and strokes the connected open path. It
+does not use or update the current drawing position. Explicitly repeating its
+first point creates a final segment, rather than requesting a closed polygon.
+Zero-length segments and joins pass through the same stroke machinery; empty
+join wedges add no pixels.
 
 ## Polygonal pens and wide strokes
 
