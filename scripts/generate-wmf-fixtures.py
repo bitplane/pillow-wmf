@@ -692,6 +692,20 @@ def styled_pen_cases():
         )
         yield f"pen-style-{style}-axis-switch", recorder
 
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.set_background_mode(2)
+    recorder.set_background_color(0x0033CC77)
+    recorder.set_rop2(7)
+    for style in range(1, 5):
+        recorder.select_object(recorder.create_pen(style, 1, 0x00CA5BE1))
+        y = 12 + (style - 1) * 27
+        recorder.move_to(7, y)
+        recorder.line_to(120, y)
+    yield "pen-styles-rop2-gaps", recorder
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
