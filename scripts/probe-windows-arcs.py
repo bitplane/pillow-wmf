@@ -262,12 +262,12 @@ def main():
             check(gdi.SetGraphicsMode(dc, 1), "SetGraphicsMode")
             bind(gdi, "Ellipse", boolean, ptr, integer, integer, integer, integer)
             bind(gdi, "StrokeAndFillPath", boolean, ptr)
-            check(gdi.SelectObject(dc, check(gdi.GetStockObject(5), "NULL_BRUSH")), "SelectObject")
-            ctypes.memset(bits, 255, 128 * 128 * 4)
-            check(gdi.Ellipse(dc, 24, 24, 96, 80), "Ellipse")
-            check(gdi.GdiFlush(), "GdiFlush")
-            direct = ctypes.string_at(bits, 128 * 128 * 4)
-            for operation in ("StrokePath", "StrokeAndFillPath"):
+            for brush_kind in (5, 0):
+                check(gdi.SelectObject(dc, check(gdi.GetStockObject(brush_kind), "GetStockObject")), "SelectObject")
+                ctypes.memset(bits, 255, 128 * 128 * 4)
+                check(gdi.Ellipse(dc, 24, 24, 96, 80), "Ellipse")
+                check(gdi.GdiFlush(), "GdiFlush")
+                direct = ctypes.string_at(bits, 128 * 128 * 4)
                 for flatten in (False, True):
                     check(gdi.BeginPath(dc), "BeginPath")
                     check(gdi.Ellipse(dc, 24, 24, 96, 80), "Ellipse")
@@ -275,12 +275,12 @@ def main():
                     if flatten:
                         check(gdi.FlattenPath(dc), "FlattenPath")
                     ctypes.memset(bits, 255, 128 * 128 * 4)
-                    check(getattr(gdi, operation)(dc), operation)
+                    check(gdi.StrokeAndFillPath(dc), "StrokeAndFillPath")
                     check(gdi.GdiFlush(), "GdiFlush")
                     raw = ctypes.string_at(bits, 128 * 128 * 4)
                     print(
                         "ellipse-wide-difference",
-                        operation,
+                        brush_kind,
                         flatten,
                         [
                             (i // 4 % 128, i // 4 // 128, direct[i], raw[i])
