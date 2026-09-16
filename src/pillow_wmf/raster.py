@@ -48,7 +48,7 @@ class RasterContext(TraceContext):
             raise ValueError("Image dimensions must be positive")
         self.image = Image.new("RGB", (width, height), background)
         self._objects: dict[Handle, Pen | Brush] = {}
-        self._pen = Pen((0, 0, 0))
+        self._pen = Pen((0, 0, 0), width=0)
         self._brush = Brush((255, 255, 255))
         self._position = (0, 0)
         self._polygon_fill_mode = 1
@@ -116,6 +116,7 @@ class RasterContext(TraceContext):
             "rectangle",
             "ellipse",
             "arc",
+            "chord",
             "set_pixel",
             "save_dc",
             "restore_dc",
@@ -226,7 +227,7 @@ class RasterContext(TraceContext):
         elif name == "offset_clip_region":
             dx, dy = self.mapping.vector(a["x"], a["y"])
             self._clip = self._clip.offset(dx, dy)
-        elif name in {"rectangle", "ellipse", "arc"}:
+        elif name in {"rectangle", "ellipse", "arc", "chord"}:
             left, top = self._point(a["left"], a["top"])
             right, bottom = self._point(a["right"], a["bottom"])
             left, right = sorted((left, right))
@@ -239,7 +240,7 @@ class RasterContext(TraceContext):
                 else:
                     start = self._point(a["start_x"], a["start_y"])
                     end = self._point(a["end_x"], a["end_y"])
-                    self._arc(left, top, right, bottom, start, end)
+                    self._arc(left, top, right, bottom, start, end, chord=name == "chord")
         return result
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int]) -> None:
@@ -277,7 +278,7 @@ class RasterContext(TraceContext):
                 major = 1 if abs(end[1] - start[1]) > abs(end[0] - start[0]) else 0
                 if not span:
                     continue
-                if segment_index == 0:
+                if segment_index == 0 and not path.closed:
                     position += span.step * (span.start - start[major] // 16)
                 for pixel in cosmetic_line(start, end, self.image.width, self.image.height):
                     phase = position + span.step * (pixel[major] - span.start)
@@ -377,7 +378,7 @@ class RasterContext(TraceContext):
         self._paint_polygons((DevicePath.polyline(path, closed=True),), miter=True, reserve_outline=True)
 
     def _ellipse(self, left: int, top: int, right: int, bottom: int) -> None:
-        path = DevicePath(ellipse_cubics(left, top, right, bottom), closed=True)
+        path = DevicePath(ellipse_cubics(left, top, right, bottom, null_pen=self._pen.style == 5), closed=True)
         self._paint_polygons((path,))
 
     def _arc(
@@ -388,6 +389,14 @@ class RasterContext(TraceContext):
         bottom: int,
         start: tuple[int, int],
         end: tuple[int, int],
+        *,
+        chord: bool = False,
     ) -> None:
-        path = DevicePath(arc_cubics(left, top, right, bottom, start, end), closed=start == end)
-        self._stroke_path(path)
+        curves = arc_cubics(left, top, right, bottom, start, end, null_pen=self._pen.style == 5)
+        if chord:
+            # Closure is an ordinary line command, retaining the cubic
+            # tangents for stroke-only paths and shared fill/stroke handling.
+            path = DevicePath((*curves, (curves[-1][-1], curves[0][0])), closed=True)
+            self._paint_polygons((path,))
+        else:
+            self._stroke_path(DevicePath(curves, closed=start == end))

@@ -10,10 +10,23 @@ _SCALE = 16
 _CUBIC_CIRCLE_CONTROL = 4 * (sqrt(2) - 1) / 3
 
 
-def ellipse_cubics(left: int, top: int, right: int, bottom: int) -> tuple[tuple[Point, Point, Point, Point], ...]:
+def _ellipse_bounds(left, top, right, bottom, *, null_pen=False):
+    # Native compatible-mode paths with PS_NULL move the center by -1/2
+    # pixel and reduce each radius by 1/4 pixel. This is path geometry,
+    # independent of the pen's requested width or subsequent scan conversion.
+    return (
+        left * _SCALE - (4 if null_pen else 0),
+        top * _SCALE - (4 if null_pen else 0),
+        (right - 1) * _SCALE - (12 if null_pen else 0),
+        (bottom - 1) * _SCALE - (12 if null_pen else 0),
+    )
+
+
+def ellipse_cubics(
+    left: int, top: int, right: int, bottom: int, *, null_pen=False
+) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """The four counterclockwise GDI-style cubics of an exclusive-bound ellipse."""
-    left_fixed, top_fixed = left * _SCALE, top * _SCALE
-    right_fixed, bottom_fixed = (right - 1) * _SCALE, (bottom - 1) * _SCALE
+    left_fixed, top_fixed, right_fixed, bottom_fixed = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
     cx, cy = (left_fixed + right_fixed) // 2, (top_fixed + bottom_fixed) // 2
     rx, ry = (right_fixed - left_fixed) // 2, (bottom_fixed - top_fixed) // 2
     horizontal_control = ceil(_CUBIC_CIRCLE_CONTROL * rx)
@@ -58,6 +71,8 @@ def arc_cubics(
     bottom: int,
     start: tuple[int, int],
     end: tuple[int, int],
+    *,
+    null_pen=False,
 ) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """Cut an exclusive-bound ellipse at two radial directions.
 
@@ -65,12 +80,9 @@ def arc_cubics(
     the exclusive-bound drawing box. WMF stores points on the radials, not
     points required to lie on the ellipse.
     """
-    if start == end:
-        return ellipse_cubics(left, top, right, bottom)
-    cx = (left + right - 1) / 2
-    cy = (top + bottom - 1) / 2
-    rx = (right - left - 1) / 2
-    ry = (bottom - top - 1) / 2
+    x0, y0, x1, y1 = _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
+    cx, cy = (x0 + x1) / 32, (y0 + y1) / 32
+    rx, ry = (x1 - x0) / 32, (y1 - y0) / 32
     radial_cx = (left + right) / 2
     radial_cy = (top + bottom) / 2
     radial_rx = (right - left) / 2
@@ -96,7 +108,7 @@ def arc_cubics(
         return (cx + rx * nx) * 16, (cy + ry * ny) * 16
 
     cubics = []
-    quadrants = ellipse_cubics(left, top, right, bottom)
+    quadrants = ellipse_cubics(left, top, right, bottom, null_pen=null_pen)
     for index, (a, b) in enumerate(pairwise(boundaries)):
         if 0 < index < len(boundaries) - 2:
             cubics.append(quadrants[round(a / 90) % 4])
