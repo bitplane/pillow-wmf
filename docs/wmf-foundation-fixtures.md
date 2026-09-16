@@ -88,11 +88,15 @@ Other observations, limited to the exercised inputs:
   X relative to pixel 127 on this surface and retained anisotropic mode when
   `SetMapMode(MM_TEXT)` was called while RTL was active.
 
-These values are a basis for upcoming mapping tests, not a claim that every
-primitive uses LPtoDP's numerical path. Exact image comparisons on the current
-local renderer give **17 passing / 49 failing compatibility tests** (including
+These values were a basis for the mapping tests, not a claim that every
+primitive uses LPtoDP's numerical path. At the first capture, image comparisons
+gave **17 passing / 49 failing compatibility tests** (including
 the three structural/reference checks); unsupported operations and ellipse
 differences remain visible. All 63 reference PNGs are present and valid.
+
+The foundation batch now passes. The subsequent [stroke review](gdi-strokes.md)
+replaced fixture-fitted raster branches with shared path algorithms and added
+63 more WMF/PNG cases and a direct native stroke matrix.
 
 ## Cycle
 

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from fractions import Fraction
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
-from .ellipse import contains, ellipse_path, widen_pixel_path
+from .clip import ClipRegion
+from .ellipse import ellipse_path
 from .gdi import Call, Handle, UnsupportedOperation
+from .geometry import contains
 from .mapping import Mapping
-from .stroke import line_outline
+from .stroke import cosmetic_line, join_outline, realize_pen, widen_segment
 from .trace import TraceContext
 
 
@@ -46,8 +49,8 @@ class RasterContext(TraceContext):
         self._brush = Brush((255, 255, 255))
         self._position = (0, 0)
         self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height))
-        self._clip: set[tuple[int, int]] | None = None
-        self._saved: list[tuple[Mapping, Pen, Brush, tuple[int, int], set[tuple[int, int]] | None]] = []
+        self._clip = ClipRegion()
+        self._saved: list[tuple[Mapping, Pen, Brush, tuple[int, int], ClipRegion]] = []
 
     def _point(self, x: int, y: int) -> tuple[int, int]:
         return self.mapping.point(x, y)
@@ -146,7 +149,7 @@ class RasterContext(TraceContext):
                     self._pen,
                     self._brush,
                     self._position,
-                    None if self._clip is None else self._clip.copy(),
+                    self._clip,
                 )
             )
         elif name == "restore_dc":
@@ -155,21 +158,14 @@ class RasterContext(TraceContext):
         elif name in ("intersect_clip_rect", "exclude_clip_rect"):
             left, top = self._point(a["left"], a["top"])
             right, bottom = self._point(a["right"], a["bottom"])
-            region = {
-                (x, y)
-                for y in range(max(0, min(top, bottom)), min(self.image.height, max(top, bottom)))
-                for x in range(max(0, min(left, right)), min(self.image.width, max(left, right)))
-            }
-            current = (
-                self._clip
-                if self._clip is not None
-                else {(x, y) for y in range(self.image.height) for x in range(self.image.width)}
-            )
-            self._clip = current & region if name == "intersect_clip_rect" else current - region
+            rectangle = (min(left, right), min(top, bottom), max(left, right), max(top, bottom))
+            if name == "intersect_clip_rect":
+                self._clip = self._clip.intersect(rectangle)
+            else:
+                self._clip = self._clip.exclude(rectangle)
         elif name == "offset_clip_region":
-            if self._clip is not None:
-                dx, dy = self.mapping.vector(a["x"], a["y"])
-                self._clip = {(x + dx, y + dy) for x, y in self._clip}
+            dx, dy = self.mapping.vector(a["x"], a["y"])
+            self._clip = self._clip.offset(dx, dy)
         elif name in {"rectangle", "ellipse"}:
             left, top = self._point(a["left"], a["top"])
             right, bottom = self._point(a["right"], a["bottom"])
@@ -183,134 +179,54 @@ class RasterContext(TraceContext):
         return result
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int]) -> None:
-        if 0 <= x < self.image.width and 0 <= y < self.image.height and (self._clip is None or (x, y) in self._clip):
+        if 0 <= x < self.image.width and 0 <= y < self.image.height and self._clip.contains(x, y):
             self.image.putpixel((x, y), color)
 
     def _line(self, start: tuple[int, int], end: tuple[int, int]) -> None:
-        """One-pixel Bresenham stroke; GDI LineTo excludes the last point."""
-        x, y = start
-        end_x, end_y = end
-        dx = abs(end_x - x)
-        dy = abs(end_y - y)
-        step_x = 1 if x < end_x else -1
-        step_y = 1 if y < end_y else -1
-        error = dx - dy
+        self._stroke_path([(start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16)])
+
+    def _stroke_path(self, path, *, closed=False, miter=False) -> None:
         if self._pen.style == 5:
             return
-        scale_x = self.mapping.viewport_extent[0] / self.mapping.window_extent[0]
-        scale_y = self.mapping.viewport_extent[1] / self.mapping.window_extent[1]
-        if self._pen.width and (
-            (self._pen.width == 1 and abs(scale_x) != 1)
-            or (self._pen.width > 1 and (abs(scale_x) != 1 or abs(scale_y) != 1))
-        ):
-            outline = line_outline(start, end, self._pen.width, scale_x, scale_y)
-            if outline:
-                left = max(0, min(p[0] for p in outline) // 16)
-                top = max(0, min(p[1] for p in outline) // 16)
-                right = min(self.image.width, max(p[0] for p in outline) // 16 + 2)
-                bottom = min(self.image.height, max(p[1] for p in outline) // 16 + 2)
-                for py in range(top, bottom):
-                    for px in range(left, right):
-                        if contains((outline,), px, py):
-                            self._pixel(px, py, self._pen.color)
-                return
-        pen_width = max(1, abs(self.mapping.vector(self._pen.width, 0)[0])) if self._pen.width else 1
-        pen_height = max(1, abs(self.mapping.vector(0, self._pen.width)[1])) if self._pen.width else 1
-        if pen_width == 1 and self._pen.width == 1:
-            pen_height = 1
-        kernel = Image.new("1", (pen_width, pen_height))
-        if pen_width == pen_height == 1:
-            kernel.putpixel((0, 0), 1)
-        else:
-            ImageDraw.Draw(kernel).ellipse((0, 0, pen_width - 1, pen_height - 1), fill=1)
-        while (x, y) != (end_x, end_y):
-            self._stroke_pixel(x, y, kernel)
-            doubled = 2 * error
-            if doubled > -dy or (doubled == -dy and step_x < 0):
-                error -= dy
-                x += step_x
-            if doubled < dx or (doubled == dx and step_y < 0):
-                error += dx
-                y += step_y
-        if pen_width > 1 or pen_height > 1:
-            self._stroke_pixel(end_x, end_y, kernel)
-        # Anisotropic geometric pens need their own device-space widening
-        # rule; the circular logical-space body only matches unit mapping.
-        if (
-            self._pen.width > 1
-            and abs(self.mapping.viewport_extent[0]) == abs(self.mapping.window_extent[0])
-            and abs(self.mapping.viewport_extent[1]) == abs(self.mapping.window_extent[1])
-        ):
-            self._fill_stroke_body(start, end)
-
-    def _fill_stroke_body(self, start: tuple[int, int], end: tuple[int, int]) -> None:
-        """Cover the continuous body between the discrete pen endcaps."""
-        scale_x = self.mapping.viewport_extent[0] / self.mapping.window_extent[0]
-        scale_y = self.mapping.viewport_extent[1] / self.mapping.window_extent[1]
-        dx = (end[0] - start[0]) / scale_x
-        dy = (end[1] - start[1]) / scale_y
-        length_squared = dx * dx + dy * dy
-        if not length_squared:
-            return
-        radius = self._pen.width / 2
-        x_margin = abs(scale_x) * radius + 1
-        y_margin = abs(scale_y) * radius + 1
-        for y in range(
-            max(0, int(min(start[1], end[1]) - y_margin)),
-            min(self.image.height, int(max(start[1], end[1]) + y_margin + 1)),
-        ):
-            for x in range(
-                max(0, int(min(start[0], end[0]) - x_margin)),
-                min(self.image.width, int(max(start[0], end[0]) + x_margin + 1)),
-            ):
-                logical_x = (x - start[0]) / scale_x
-                logical_y = (y - start[1]) / scale_y
-                projection = (logical_x * dx + logical_y * dy) / length_squared
-                if (
-                    0 <= projection <= 1
-                    and (logical_x - projection * dx) ** 2 + (logical_y - projection * dy) ** 2 <= radius**2
-                ):
+        pen = realize_pen(
+            self._pen.width,
+            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
+            Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
+        )
+        for start, end in zip(path, path[1:] + (path[:1] if closed else [])):
+            if pen.cosmetic:
+                for x, y in cosmetic_line(start, end, self.image.width, self.image.height):
                     self._pixel(x, y, self._pen.color)
+            else:
+                self._fill_path(widen_segment(start, end, pen), self._pen.color)
+        if not pen.cosmetic:
+            triples = zip(path[-1:] + path[:-1], path, path[1:] + path[:1]) if closed else zip(path, path[1:], path[2:])
+            for before, vertex, after in triples:
+                self._fill_path(join_outline(before, vertex, after, pen, miter=miter), self._pen.color)
 
-    def _stroke_pixel(self, x: int, y: int, kernel: Image.Image) -> None:
-        left, top = kernel.width // 2, kernel.height // 2
-        for ky in range(kernel.height):
-            for kx in range(kernel.width):
-                if kernel.getpixel((kx, ky)):
-                    self._pixel(x + kx - left, y + ky - top, self._pen.color)
+    def _fill_path(self, polygon, color) -> None:
+        if not polygon:
+            return
+        left = max(0, min(p[0] for p in polygon) // 16)
+        top = max(0, min(p[1] for p in polygon) // 16)
+        right = min(self.image.width, max(p[0] for p in polygon) // 16 + 1)
+        bottom = min(self.image.height, max(p[1] for p in polygon) // 16 + 1)
+        for y in range(top, bottom):
+            for x in range(left, right):
+                if contains((polygon,), x, y):
+                    self._pixel(x, y, color)
 
     def _rectangle(self, left: int, top: int, right: int, bottom: int) -> None:
-        # A null pen removes the outline, but GDI still reserves its final
-        # right/bottom boundary when it fills a rectangle.
-        if self._pen.style == 5:
-            right -= 1
-            bottom -= 1
-        for y in range(max(0, top), min(self.image.height, bottom)):
-            for x in range(max(0, left), min(self.image.width, right)):
-                if self._pen.style != 5 and (x in (left, right - 1) or y in (top, bottom - 1)):
-                    self._pixel(x, y, self._pen.color)
-                else:
-                    self._pixel(x, y, self._brush.color)
+        path = [
+            (left * 16, top * 16),
+            ((right - 1) * 16, top * 16),
+            ((right - 1) * 16, (bottom - 1) * 16),
+            (left * 16, (bottom - 1) * 16),
+        ]
+        self._fill_path(path, self._brush.color)
+        self._stroke_path(path, closed=True, miter=True)
 
     def _ellipse(self, left: int, top: int, right: int, bottom: int) -> None:
-        if right - left < 2 or bottom - top < 2 or self._pen.width > 1:
-            ImageDraw.Draw(self.image).ellipse(
-                (left, top, right - 1, bottom - 1),
-                fill=self._brush.color,
-                outline=None if self._pen.style == 5 else self._pen.color,
-            )
-            return
-
         path = ellipse_path(left, top, right, bottom)
-        stroke = widen_pixel_path(path) if self._pen.style != 5 else None
-        for y in range(max(0, top - 1), min(self.image.height, bottom + 1)):
-            for x in range(max(0, left - 1), min(self.image.width, right + 1)):
-                if stroke is not None and contains(stroke, x, y):
-                    self._pixel(x, y, self._pen.color)
-                elif contains((path,), x, y):
-                    self._pixel(x, y, self._brush.color)
-        if right - left == 2 and self._pen.style != 5:
-            # At this width the two arcs form a cusp.  Its one-pixel cap is
-            # owned by the left pixel at both vertical extrema.
-            self._pixel(left, top, self._pen.color)
-            self._pixel(left, bottom - 1, self._pen.color)
+        self._fill_path(path, self._brush.color)
+        self._stroke_path(path, closed=True)

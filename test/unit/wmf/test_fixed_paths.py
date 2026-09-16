@@ -2,7 +2,7 @@
 
 import pytest
 
-from pillow_wmf.stroke import line_outline
+from pillow_wmf.stroke import cosmetic_line, line_outline
 
 
 @pytest.mark.parametrize(
@@ -73,3 +73,26 @@ from pillow_wmf.stroke import line_outline
 )
 def test_widened_line_matches_windows_fixed_path(start, end, width, scale, expected) -> None:
     assert line_outline(start, end, width, *scale) == expected
+
+
+def test_fractional_shared_vertex_belongs_to_the_following_segment() -> None:
+    # Native flattened ellipse: the shared vertex lies on this pixel's diamond.
+    first = set(cosmetic_line((427, 472), (395, 499), 128, 128))
+    second = set(cosmetic_line((395, 499), (384, 528), 128, 128))
+    assert (25, 31) not in first
+    assert (25, 31) in second
+
+
+def test_cosmetic_line_clips_enumeration_without_changing_the_line() -> None:
+    assert list(cosmetic_line((-(10**12), 64), (10**12, 64), 8, 8)) == [(x, 4) for x in range(8)]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_cosmetic_half_ties_keep_the_same_interior_pixel(reverse: bool) -> None:
+    start, end = (0, 0), (32, 16)
+    if reverse:
+        start, end = end, start
+    pixels = set(cosmetic_line(start, end, 8, 8))
+    assert (1, 0) in pixels
+    assert (1, 1) not in pixels
+    assert (end[0] // 16, end[1] // 16) not in pixels

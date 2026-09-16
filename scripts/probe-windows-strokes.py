@@ -4,15 +4,19 @@ The report is printed to the CI log; it does not create reference sidecars.
 Coordinates in reported paths are sixteenths of a device pixel.
 """
 
+import argparse
 import ctypes
 import json
 from ctypes import wintypes
 
 from windows_wmf_render import bind, check, reference_surface
 
+from pillow_wmf import RasterContext
 
-def main():
+
+def main(*, dump_paths=False):
     size = 128
+    tested = failures = 0
     with reference_surface(size, size) as (gdi, dc, bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
         for name in ("BeginPath", "EndPath", "WidenPath", "AbortPath", "StrokePath", "FillPath"):
@@ -81,6 +85,23 @@ def main():
                                     check(gdi.MoveToEx(dc, *start, None), "MoveToEx")
                                     check(gdi.LineTo(dc, *end), "LineTo")
                                     direct = pixels()
+                                    tested += 1
+                                    if not dump_paths:
+                                        context = RasterContext(size, size)
+                                        context.select_object(context.create_pen(0, width, 0))
+                                        context.set_window_extent(size * xd, size * yd)
+                                        context.set_viewport_extent(size * xn, size * yn)
+                                        context.set_viewport_origin(40, 40)
+                                        context.move_to(*start)
+                                        context.line_to(*end)
+                                        actual = context.image.convert("L").tobytes()
+                                        differing = sum(a != b for a, b in zip(actual, direct, strict=True))
+                                        if differing:
+                                            failures += 1
+                                            print(
+                                                f"FAIL width={width} scale={scale} {start}->{end}: {differing} pixels"
+                                            )
+                                        continue
                                     check(gdi.BeginPath(dc), "BeginPath")
                                     check(gdi.MoveToEx(dc, *start, None), "MoveToEx")
                                     check(gdi.LineTo(dc, *end), "LineTo")
@@ -118,10 +139,13 @@ def main():
         finally:
             gdi.SelectObject(dc, previous_brush)
             gdi.DeleteObject(brush)
+    print(f"Native strokes: {tested} cases, {failures} failures")
+    if failures:
+        raise SystemExit(1)
 
 
 def probe_shapes():
-    with reference_surface(128, 128) as (gdi, dc, bits):
+    with reference_surface(128, 128) as (gdi, dc, _bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
         for name in ("BeginPath", "EndPath", "WidenPath", "AbortPath"):
             bind(gdi, name, boolean, ptr)
@@ -162,5 +186,11 @@ def probe_shapes():
 
 
 if __name__ == "__main__":
-    main()
-    probe_shapes()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dump-paths", action="store_true", help="Report raw native geometry instead of comparing pixels"
+    )
+    args = parser.parse_args()
+    main(dump_paths=args.dump_paths)
+    if args.dump_paths:
+        probe_shapes()
