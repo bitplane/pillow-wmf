@@ -5,6 +5,8 @@ from ctypes import wintypes
 
 from windows_wmf_render import bind, check, reference_surface
 
+from pillow_wmf.stroke import cosmetic_line
+
 
 def path_points(gdi, dc):
     count = gdi.GetPath(dc, None, None, 0)
@@ -61,6 +63,44 @@ def main():
                 end,
                 [(i // 4 % 128, i // 4 // 128) for i in range(0, len(raw), 4) if raw[i] == 0],
             )
+        check(gdi.SetGraphicsMode(dc, 1), "SetGraphicsMode")
+        failures = 0
+        tested = 0
+        check(gdi.SetGraphicsMode(dc, 2), "SetGraphicsMode")
+        for fx in range(16):
+            for fy in range(16):
+                for dx, dy in ((64, 0), (64, 16), (64, 63), (64, 64), (64, 65), (16, 64), (0, 64), (-64, 64)):
+                    for reverse in (False, True):
+                        start = (512 + fx, 512 + fy)
+                        end = (start[0] + dx, start[1] + dy)
+                        if reverse:
+                            start, end = end, start
+                        check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                        check(gdi.BeginPath(dc), "BeginPath")
+                        check(gdi.MoveToEx(dc, *start, None), "MoveToEx")
+                        check(gdi.LineTo(dc, *end), "LineTo")
+                        check(gdi.EndPath(dc), "EndPath")
+                        check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+                        ctypes.memset(bits, 255, 128 * 128 * 4)
+                        check(gdi.StrokePath(dc), "StrokePath")
+                        check(gdi.GdiFlush(), "GdiFlush")
+                        raw = ctypes.string_at(bits, 128 * 128 * 4)
+                        native = {(i % 128, i // 128) for i, pixel in enumerate(raw[::4]) if pixel == 0}
+                        actual = set(cosmetic_line(start, end, 128, 128))
+                        tested += 1
+                        if native != actual:
+                            failures += 1
+                            if failures <= 20:
+                                print(
+                                    "fractional-line-FAIL",
+                                    start,
+                                    end,
+                                    "extra",
+                                    actual - native,
+                                    "missing",
+                                    native - actual,
+                                )
+        print("fractional-line-matrix", tested, "cases", failures, "failures")
         check(gdi.SetGraphicsMode(dc, 1), "SetGraphicsMode")
         cases = (
             (8, 8, 47, 47, 47, 27, 27, 8),
@@ -183,6 +223,23 @@ def main():
                     check(gdi.WidenPath(dc), "WidenPath")
                     print("cubic-fixed-widened", control, flatten, fixed_path_points(gdi, dc))
                     check(gdi.AbortPath(dc), "AbortPath")
+            check(gdi.SetGraphicsMode(dc, 2), "SetGraphicsMode")
+            for control in (
+                ((1280, 512), (1280, 128), (896, 128), (512, 128)),
+                ((1280, 520), (1280, 136), (896, 136), (512, 136)),
+                ((1280, 512), (1280, 136), (896, 128), (512, 128)),
+                ((1840, 504), (1840, 296), (1672, 128), (1464, 128)),
+            ):
+                check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                check(gdi.BeginPath(dc), "BeginPath")
+                points = (wintypes.POINT * 4)(*(wintypes.POINT(*point) for point in control))
+                check(gdi.PolyBezier(dc, points, 4), "PolyBezier")
+                check(gdi.EndPath(dc), "EndPath")
+                print("fractional-cubic-input", path_points(gdi, dc))
+                check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+                check(gdi.WidenPath(dc), "WidenPath")
+                print("fractional-cubic-widened", control, fixed_path_points(gdi, dc))
+                check(gdi.AbortPath(dc), "AbortPath")
         finally:
             gdi.SelectObject(dc, previous)
             gdi.DeleteObject(pen)
