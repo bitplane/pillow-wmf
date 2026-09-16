@@ -14,6 +14,15 @@ def path_points(gdi, dc):
     return tuple((point.x, point.y, kind) for point, kind in zip(points, kinds, strict=True))
 
 
+def fixed_path_points(gdi, dc):
+    """Magnify the inverse mapping only after constructing the device path."""
+    check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+    try:
+        return path_points(gdi, dc)
+    finally:
+        check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+
+
 def main():
     with reference_surface(128, 128) as (gdi, dc, bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
@@ -22,6 +31,7 @@ def main():
         bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
         bind(gdi, "Arc", boolean, ptr, *(integer for _ in range(8)))
         bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
+        bind(gdi, "SetWindowExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
         cases = (
             (8, 8, 47, 47, 47, 27, 27, 8),
             (68, 8, 107, 47, 87, 8, 68, 27),
@@ -34,8 +44,10 @@ def main():
             check(gdi.Arc(dc, *case), "Arc")
             check(gdi.EndPath(dc), "EndPath")
             print("arc-raw", case, path_points(gdi, dc))
+            print("arc-fixed-controls", case, fixed_path_points(gdi, dc))
             check(gdi.FlattenPath(dc), "FlattenPath")
             print("arc-flat", case, path_points(gdi, dc))
+            print("arc-fixed-flat", case, fixed_path_points(gdi, dc))
             check(gdi.AbortPath(dc), "AbortPath")
             check(gdi.SetViewportExtEx(dc, 2048, 2048, None), "SetViewportExtEx")
             check(gdi.BeginPath(dc), "BeginPath")
@@ -96,6 +108,9 @@ def main():
             check(gdi.Arc(dc, 68, 8, 116, 56, 136, 32, 68, 8), "Arc")
             check(gdi.EndPath(dc), "EndPath")
             print("arc-wide-raw", path_points(gdi, dc))
+            print("arc-wide-fixed-controls", fixed_path_points(gdi, dc))
+            check(gdi.FlattenPath(dc), "FlattenPath")
+            print("arc-wide-fixed-flat", fixed_path_points(gdi, dc))
             check(gdi.WidenPath(dc), "WidenPath")
             print("arc-wide-widened", path_points(gdi, dc))
             check(gdi.AbortPath(dc), "AbortPath")
