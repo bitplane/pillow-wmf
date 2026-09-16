@@ -45,6 +45,7 @@ def cases():
 
     yield from foundation_cases()
     yield from stroke_cases()
+    yield from polygon_cases()
 
 
 def mapped():
@@ -350,6 +351,71 @@ def stroke_cases():
     recorder.select_object(recorder.create_pen(0, 6, 0))
     recorder.ellipse(40, 8, 96, 80)
     yield "state-clip-ellipse-strokes", recorder
+
+
+def polygon_cases():
+    """Native references for connected strokes and polygon fill rules."""
+    for width in (0, 3, 8):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(0, width, 0))
+        recorder.set_pixel(104, 88, 0x000000CC)
+        recorder.polyline(((16, 24), (48, 24), (64, 56), (104, 88)))
+        yield f"polyline-open-width-{width}", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(0, 6, 0))
+    recorder.polyline(((16, 16), (104, 16), (104, 104), (16, 104), (16, 16)))
+    yield "polyline-explicit-closure", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(0, 5, 0))
+    recorder.polyline(((16, 24), (16, 24), (64, 24), (64, 24), (96, 72), (96, 72)))
+    yield "polyline-repeated-vertices", recorder
+
+    recorder = mapped()
+    recorder.set_viewport_extent(-128, 128)
+    recorder.set_viewport_origin(120, 0)
+    recorder.select_object(recorder.create_pen(0, 4, 0))
+    recorder.polyline(((16, 24), (40, 80), (72, 40), (104, 96)))
+    yield "polyline-reflect-x", recorder
+
+    concave = ((16, 16), (112, 16), (112, 48), (64, 48), (64, 112), (16, 112))
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+    recorder.polygon(concave)
+    yield "polygon-concave-fill", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(0, 7, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+    recorder.polygon(((16, 16), (112, 24), (88, 104), (32, 88)))
+    yield "polygon-wide-outline", recorder
+
+    for mode, label in ((1, "alternate"), (2, "winding")):
+        recorder = mapped()
+        recorder.set_polygon_fill_mode(mode)
+        recorder.select_object(recorder.create_pen(5, 0, 0))
+        recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+        recorder.polygon(((16, 16), (112, 16), (112, 112), (16, 112), (16, 16), (112, 16), (112, 112), (16, 112)))
+        yield f"polygon-double-wound-{label}", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(0, 3, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+    recorder.poly_polygon((((8, 16), (48, 16), (48, 56), (8, 56)), ((72, 72), (112, 72), (112, 112), (72, 112))))
+    yield "poly-polygon-disjoint", recorder
+
+    outer = ((12, 12), (116, 12), (116, 116), (12, 116))
+    inner = ((40, 40), (88, 40), (88, 88), (40, 88))
+    for mode, label in ((1, "alternate"), (2, "winding")):
+        for reverse, orientation in ((False, "same"), (True, "opposite")):
+            recorder = mapped()
+            recorder.set_polygon_fill_mode(mode)
+            recorder.select_object(recorder.create_pen(5, 0, 0))
+            recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+            recorder.poly_polygon((outer, inner[::-1] if reverse else inner))
+            yield f"poly-polygon-nested-{label}-{orientation}", recorder
 
 
 def main():
