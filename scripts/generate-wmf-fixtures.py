@@ -51,10 +51,11 @@ def cases():
     yield from styled_pen_cases()
     yield from arc_cases()
     yield from chord_cases()
+    yield from chord_cases("pie")
     yield from edge_cases()
 
 
-def chord_cases():
+def chord_cases(operation="chord"):
     # Independent Windows images exercise closure as well as curved coverage.
     directions = ((1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1))
     for name, style, width, brush, background in (
@@ -73,8 +74,10 @@ def chord_cases():
             cx, cy = 16 + index % 4 * 32, 16 + index // 4 * 32
             sx, sy = directions[index % 8]
             ex, ey = directions[(index + (1 if index < 8 else 5)) % 8]
-            recorder.chord(cx - 11, cy - 10, cx + 12, cy + 11, cx + sx * 20, cy + sy * 20, cx + ex * 20, cy + ey * 20)
-        yield f"chord-sweeps-{name}", recorder
+            getattr(recorder, operation)(
+                cx - 11, cy - 10, cx + 12, cy + 11, cx + sx * 20, cy + sy * 20, cx + ex * 20, cy + ey * 20
+            )
+        yield f"{operation}-sweeps-{name}", recorder
     for name, box, start, end in (
         ("equal", (8, 16, 120, 112), (120, 64), (120, 64)),
         ("same-ray", (8, 16, 120, 112), (120, 64), (176, 64)),
@@ -85,17 +88,17 @@ def chord_cases():
     ):
         recorder = mapped()
         recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
-        recorder.chord(*box, *start, *end)
-        yield f"chord-edge-{name}", recorder
+        getattr(recorder, operation)(*box, *start, *end)
+        yield f"{operation}-edge-{name}", recorder
     for sx, sy in ((-1, 1), (1, -1), (-1, -1), (2, 1)):
         recorder = mapped()
         recorder.set_viewport_origin(128 if sx < 0 else 0, 128 if sy < 0 else 0)
         recorder.set_viewport_extent(128 * sx, 128 * sy)
         recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
         recorder.move_to(4, 4)
-        recorder.chord(8, 8, 56, 104, 56, 40, 17, 93)
-        recorder.line_to(30, 12)  # Chord must not change the current position.
-        yield f"chord-mapping-{sx}-{sy}", recorder
+        getattr(recorder, operation)(8, 8, 56, 104, 56, 40, 17, 93)
+        recorder.line_to(30, 12)  # Neither operation changes the current position.
+        yield f"{operation}-mapping-{sx}-{sy}", recorder
 
 
 def edge_cases():
