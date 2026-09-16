@@ -8,7 +8,7 @@ from fractions import Fraction
 from PIL import Image
 
 from .clip import ClipRegion
-from .ellipse import ellipse_path
+from .ellipse import arc_path, ellipse_path
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import Polygon, contains
 from .mapping import Mapping
@@ -115,6 +115,7 @@ class RasterContext(TraceContext):
             "set_background_color",
             "rectangle",
             "ellipse",
+            "arc",
             "set_pixel",
             "save_dc",
             "restore_dc",
@@ -225,7 +226,7 @@ class RasterContext(TraceContext):
         elif name == "offset_clip_region":
             dx, dy = self.mapping.vector(a["x"], a["y"])
             self._clip = self._clip.offset(dx, dy)
-        elif name in {"rectangle", "ellipse"}:
+        elif name in {"rectangle", "ellipse", "arc"}:
             left, top = self._point(a["left"], a["top"])
             right, bottom = self._point(a["right"], a["bottom"])
             left, right = sorted((left, right))
@@ -233,8 +234,12 @@ class RasterContext(TraceContext):
             if right > left and bottom > top:
                 if name == "rectangle":
                     self._rectangle(left, top, right, bottom)
-                else:
+                elif name == "ellipse":
                     self._ellipse(left, top, right, bottom)
+                else:
+                    start = self._point(a["start_x"], a["start_y"])
+                    end = self._point(a["end_x"], a["end_y"])
+                    self._arc(left, top, right, bottom, start, end)
         return result
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int]) -> None:
@@ -386,3 +391,37 @@ class RasterContext(TraceContext):
     def _ellipse(self, left: int, top: int, right: int, bottom: int) -> None:
         path = ellipse_path(left, top, right, bottom)
         self._paint_polygons((path,))
+
+    def _arc(
+        self,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+        start: tuple[int, int],
+        end: tuple[int, int],
+    ) -> None:
+        path = arc_path(left, top, right, bottom, start, end)
+        foreground, gaps = self._stroke_fragments((path,), closed=start == end)
+        pen = realize_pen(
+            self._pen.width,
+            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
+            Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
+        )
+        if start != end and self._pen.style == 0 and pen.cosmetic:
+            # A GDI arc's path contributes its top/right cardinal endpoint
+            # to the following cubic. The open-path stroke therefore owns
+            # the terminal pixel there, rather than the initial pixel.
+            cx, cy = (left + right - 1) / 2, (top + bottom - 1) / 2
+
+            def top_or_right(point):
+                return (abs(point[0] - cx) <= 0.5 and point[1] < cy) or (abs(point[1] - cy) <= 0.5 and point[0] > cx)
+
+            if top_or_right(start):
+                foreground.discard(tuple((coordinate + 8) // 16 for coordinate in path[0]))
+            if top_or_right(end):
+                foreground.add(tuple((coordinate + 8) // 16 for coordinate in path[-1]))
+        for x, y in gaps:
+            self._pixel(x, y, self._background_color)
+        for x, y in foreground:
+            self._pixel(x, y, self._pen.color)
