@@ -2,6 +2,8 @@ import pytest
 
 from pillow_wmf import RasterContext
 from pillow_wmf.ellipse import arc_cubics, ellipse_cubics
+from pillow_wmf.geometry import DevicePath
+from pillow_wmf.stroke import cosmetic_line
 
 
 def test_equal_radials_keep_native_terminal_quadrant_arithmetic():
@@ -43,3 +45,15 @@ def test_chord_preserves_current_position():
     context.chord(32, 32, 112, 112, 112, 72, 72, 32)
     context.line_to(12, 4)
     assert context.image.getpixel((8, 4)) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("closed", (False, True))
+def test_fractional_figure_starts_at_dash_phase_zero(closed):
+    # Independent native fractional-path probe, not a Chord-specific phase.
+    points = ((513, 519), (1001, 287), (1389, 1271))
+    context = RasterContext(128, 128)
+    context.select_object(context.create_pen(1, 1, 0))
+    foreground, gaps = context._stroke_fragments((DevicePath.polyline(points, closed=closed),))
+    first_span = list(cosmetic_line(*points[:2], 128, 128))
+    assert set(first_span[:18]) <= foreground
+    assert set(first_span[18:24]) <= gaps

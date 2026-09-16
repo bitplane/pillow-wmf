@@ -7,6 +7,7 @@ from itertools import product
 from windows_wmf_render import bind, check, reference_surface
 
 from pillow_wmf import RasterContext
+from pillow_wmf.ellipse import arc_cubics, ellipse_cubics
 from pillow_wmf.geometry import DevicePath
 
 
@@ -96,6 +97,14 @@ def main():
                         points = (wintypes.POINT * count)()
                         kinds = (ctypes.c_ubyte * count)()
                         assert gdi.GetPath(dc, points, kinds, count) == count
+                        curves = (
+                            ellipse_cubics(*args[:4], null_pen=style == 5)
+                            if operation == "Ellipse"
+                            else arc_cubics(*args[:4], args[4:6], args[6:8], null_pen=style == 5)
+                        )
+                        expected = (curves[0][0], *(p for curve in curves for p in curve[1:]))
+                        assert tuple((p.x, p.y) for p in points) == expected, (operation, style, width, args)
+                        assert bool(kinds[-1] & 1) == (operation != "Arc")
                         print(
                             operation,
                             style,
