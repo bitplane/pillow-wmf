@@ -513,6 +513,17 @@ def rop2_cases():
     recorder.polygon(((88, 24), (120, 72), (80, 72)))
     yield "rop2-fill-and-outline", recorder
 
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, destination, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.select_object(recorder.create_pen(0, 7, source))
+    recorder.select_object(recorder.create_brush(0, 0x0017A958, 0))
+    recorder.set_rop2(7)
+    recorder.rectangle(16, 16, 72, 72)
+    recorder.polygon(((88, 24), (120, 72), (80, 72)))
+    yield "rop2-distinct-pen-brush", recorder
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
