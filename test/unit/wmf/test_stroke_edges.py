@@ -7,6 +7,25 @@ All 32 crop pairs were rendered independently by Windows GDI in workflow run
 import pytest
 
 from pillow_wmf import RasterContext
+from pillow_wmf.geometry import StrokeSegment
+from pillow_wmf.stroke import realize_pen, widen_segment
+
+
+@pytest.mark.parametrize(
+    "width,delta,expected",
+    (
+        (2, (-64, 128), (1032, 1040)),
+        (7, (-128, 312), (1064, 1064)),
+        (8, (-152, 360), (1072, 1072)),
+        (8, (152, -360), (960, 1024)),
+    ),
+)
+def test_native_support_at_half_contour_seams(width, delta, expected):
+    # First WidenPath vertex, measured in original 28.4 device coordinates
+    # in run 35104558437. These ties used to select the wrong half-contour.
+    start = (1024, 1024)
+    end = (start[0] + delta[0], start[1] + delta[1])
+    assert widen_segment(StrokeSegment.line(start, end), realize_pen(width))[0] == expected
 
 
 @pytest.mark.parametrize("style", (1, 2, 3, 4))

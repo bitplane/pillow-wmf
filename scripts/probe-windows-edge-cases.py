@@ -108,8 +108,14 @@ def main():
             check(gdi.EndPath(dc), "EndPath")
             print("large-arc", start, end, fixed_path(gdi, dc))
             check(gdi.AbortPath(dc), "AbortPath")
-        for angle, sweep in ((0, 90), (90, 0), (180, 18.4349488), (198.4349488, 15.2551187), (90, 0.01), (90, 0.00001)):
+        angle_cases = ((90, 0), (180, 18.4349488), (198.4349488, 15.2551187), (90, 0.01), (90, 0.00001))
+        angle_cases += tuple(
+            (0, sweep)
+            for sweep in (0.01, 1, 2, 2.8125, 5.625, 10, 11.25, 15, 18.4349488, 20, 22.5, 30, 33.75, 45, 60, 67.5, 90)
+        )
+        for angle, sweep in angle_cases:
             check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.MoveToEx(dc, 0, 0, None), "MoveToEx")
             check(gdi.AngleArc(dc, 0, 0, 1000000, angle, sweep), "AngleArc")
             check(gdi.EndPath(dc), "EndPath")
             print("large-angle-arc", angle, sweep, fixed_path(gdi, dc))

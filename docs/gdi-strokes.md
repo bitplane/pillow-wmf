@@ -114,12 +114,17 @@ fixed-point unit toward zero; fractional centers retain their offsets.
 Traverse the relevant half of the same pen contour at each open endpoint.
 No slope, width, or transform chooses a different line-body algorithm.
 
-Equal-support vertices require a tie convention because their subsequent
-rounding can change coverage. The native diamond and hexagonal contours prefer
-Y, then X; the other measured contours prefer X, then Y. This convention is
-inferred from the matrix, including negative slopes and reflections. Some tied
-choices produce different GetPath sequences with identical raster coverage;
-pixel equality remains the compatibility criterion.
+Equal-support vertices preserve half-contour traversal order: visit the
+reflected half backwards, then the original half forwards, retaining the first
+maximum. This is one contour-index rule for every pen, independent of screen
+axes and vertex count. The former X/Y preference by shape failed at the seams.
+[Run 35104558437](https://github.com/bitplane/pillow-wmf/actions/runs/35104558437)
+captures native support choices around every edge of six pen shapes, including
+the seams. The traversal model also passes all **846** native pixel comparisons
+in [run 35104948443](https://github.com/bitplane/pillow-wmf/actions/runs/35104948443),
+which adds widths 9, 12 and 17, and checks slopes on either side of each tie and
+three subpixel origins. This is a reconstruction of observable ordering, not
+a claim about Microsoft's internal search implementation.
 
 Wide zero-length segments retain their two caps and paint the native pen
 footprint. Connected segments add the exterior wedge between their support
