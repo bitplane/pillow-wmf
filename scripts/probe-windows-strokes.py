@@ -35,11 +35,25 @@ def main():
         brush = check(gdi.CreateSolidBrush(0), "CreateSolidBrush")
         previous_brush = check(gdi.SelectObject(dc, brush), "SelectObject")
         try:
-            for width in (1, 2, 3, 4, 5, 7, 12):
+            for width in (0, 1, 2, 3, 4, 5, 6, 7, 12):
                 pen = check(gdi.CreatePen(0, width, 0), "CreatePen")
                 previous_pen = check(gdi.SelectObject(dc, pen), "SelectObject")
                 try:
-                    for scale in ((1, 1, 1, 1), (2, 1, 1, 1), (1, 1, 2, 1), (1, 2, 1, 1), (1, 1, 1, 2), (3, 2, 2, 3)):
+                    for scale in (
+                        (1, 1, 1, 1),
+                        (2, 1, 1, 1),
+                        (1, 1, 2, 1),
+                        (1, 2, 1, 1),
+                        (1, 1, 1, 2),
+                        (3, 2, 2, 3),
+                        (2, 1, 2, 1),
+                        (1, 2, 1, 2),
+                        (3, 2, 3, 2),
+                        (-1, 1, 1, 1),
+                        (1, 1, -1, 1),
+                        (-2, 1, 1, 1),
+                        (1, 1, -2, 1),
+                    ):
                         xn, xd, yn, yd = scale
                         for delta in (
                             (24, 0),
@@ -51,6 +65,10 @@ def main():
                             (12, 24),
                             (3, 24),
                             (0, 24),
+                            (24, -6),
+                            (24, -24),
+                            (6, -24),
+                            (0, 0),
                         ):
                             for reverse in (False, True):
                                 check(gdi.SaveDC(dc), "SaveDC")
