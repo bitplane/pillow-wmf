@@ -49,6 +49,7 @@ def cases():
     yield from rop2_cases()
     yield from brush_cases()
     yield from styled_pen_cases()
+    yield from arc_cases()
 
 
 def mapped():
@@ -57,6 +58,41 @@ def mapped():
     recorder.set_window_extent(128, 128)
     recorder.set_viewport_extent(128, 128)
     return recorder
+
+
+def arc_cases():
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(0, 1, 0x000000CC))
+    recorder.select_object(recorder.create_brush(0, 0x00AA00, 0))
+    # Four distinct quarter sweeps; the brush must not affect Arc.
+    for left, top, start, end in (
+        (8, 8, (47, 27), (27, 8)),
+        (68, 8, (87, 8), (68, 27)),
+        (8, 68, (8, 87), (27, 106)),
+        (68, 68, (87, 106), (106, 87)),
+    ):
+        recorder.arc(left, top, left + 39, top + 39, *start, *end)
+    yield "arc-quarters", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(0, 1, 0))
+    for left, top, right, bottom, start, end in (
+        (8, 8, 59, 43, (54, 13), (12, 38)),
+        (69, 8, 120, 43, (74, 38), (115, 13)),
+        (8, 67, 55, 119, (55, 93), (31, 67)),
+        (69, 67, 120, 119, (95, 119), (69, 93)),
+    ):
+        recorder.arc(left, top, right, bottom, *start, *end)
+    yield "arc-oblique", recorder
+
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(0, 1, 0))
+    recorder.arc(8, 8, 58, 58, 58, 33, 58, 33)  # Equal directions: full ellipse.
+    recorder.arc(68, 8, 118, 58, 168, 33, 93, -92)  # Radials need not end on the ellipse.
+    recorder.move_to(8, 82)
+    recorder.arc(8, 68, 58, 118, 58, 93, 33, 68)
+    recorder.line_to(58, 118)  # Arc must leave the current position unchanged.
+    yield "arc-radials-and-position", recorder
 
 
 def markers(recorder):
