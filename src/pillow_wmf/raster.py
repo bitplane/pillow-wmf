@@ -13,7 +13,7 @@ from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import Polygon, contains
 from .mapping import Mapping
 from .paint import rop2
-from .stroke import cosmetic_line, dash_is_foreground, diamond_touch_phase, join_outline, realize_pen, widen_segment
+from .stroke import cosmetic_line, dash_is_foreground, join_outline, realize_pen, widen_segment
 from .trace import TraceContext
 
 
@@ -271,22 +271,10 @@ class RasterContext(TraceContext):
         gaps: set[tuple[int, int]] = set()
         for path in paths:
             position = 0
-            previous_major = None
-            previous_start = None
             segments = zip(path, path[1:] + (path[:1] if closed else []))
             for segment_index, (start, end) in enumerate(segments):
                 pixels = list(cosmetic_line(start, end, self.image.width, self.image.height))
                 major = 1 if abs(end[1] - start[1]) > abs(end[0] - start[0]) else 0
-                suppressed = None
-                if previous_major is not None and major != previous_major:
-                    adjustment = diamond_touch_phase(previous_start, start, end)
-                    position += adjustment
-                    if adjustment < 0:
-                        # A path that just grazes a diamond does not paint it,
-                        # though its style position is still consumed.
-                        suppressed = ((start[0] + 8) // 16, (start[1] + 8) // 16)
-                previous_major = major
-                previous_start = start
                 if not pixels:
                     position += abs(end[major] // 16 - start[major] // 16)
                     continue
@@ -298,9 +286,7 @@ class RasterContext(TraceContext):
                 elif pixels and not (0 <= start[major] // 16 < (self.image.height if major else self.image.width)):
                     position += abs(pixels[0][major] - start[major] // 16)
                 for pixel in pixels:
-                    if pixel == suppressed:
-                        pass
-                    elif dash_is_foreground(self._pen.style, position):
+                    if dash_is_foreground(self._pen.style, position):
                         foreground.add(pixel)
                     elif self._background_mode == 2:
                         gaps.add(pixel)
@@ -402,26 +388,4 @@ class RasterContext(TraceContext):
         end: tuple[int, int],
     ) -> None:
         path = arc_path(left, top, right, bottom, start, end)
-        foreground, gaps = self._stroke_fragments((path,), closed=start == end)
-        pen = realize_pen(
-            self._pen.width,
-            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
-            Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
-        )
-        if start != end and self._pen.style == 0 and pen.cosmetic:
-            # A GDI arc's path contributes its top/right cardinal endpoint
-            # to the following cubic. The open-path stroke therefore owns
-            # the terminal pixel there, rather than the initial pixel.
-            cx, cy = (left + right - 1) / 2, (top + bottom - 1) / 2
-
-            def top_or_right(point):
-                return (abs(point[0] - cx) <= 0.5 and point[1] < cy) or (abs(point[1] - cy) <= 0.5 and point[0] > cx)
-
-            if top_or_right(start):
-                foreground.discard(tuple((coordinate + 8) // 16 for coordinate in path[0]))
-            if top_or_right(end):
-                foreground.add(tuple((coordinate + 8) // 16 for coordinate in path[-1]))
-        for x, y in gaps:
-            self._pixel(x, y, self._background_color)
-        for x, y in foreground:
-            self._pixel(x, y, self._pen.color)
+        self._stroke_path(path, closed=start == end)

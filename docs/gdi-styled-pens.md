@@ -16,15 +16,13 @@ field requests dashes or dots. Clipping must not reset phase.
 
 Direct native `Ellipse`, `StrokePath`, and `FlattenPath` produce identical
 styled pixels; this is not a separate ellipse painter. The flattened 28.4
-path geometry matches ours exactly. Counting visible pixels alone missed
-style behavior at vertices that touch the edge of a pixel diamond
-(Manhattan distance 8 in 28.4 coordinates) while the path switches major
-axis. When both adjacent segments lie inside the touched diamond, GDI
-advances the style once more. When both lie outside, it advances once less
-and does not paint the touched pixel. A crossing from one side to the other
-needs no correction. Other diamond touches away from an axis switch do
-not alter style phase. A fractional starting point offsets the initial
-style phase according to the first visible pixel, without a shape-specific
-correction.
+path geometry matches ours exactly. The former major-axis-switch correction
+compensated for incorrect diamond-edge membership in the shared rasterizer.
+Using the [legacy GIQ membership rules](gdi-strokes.md#cosmetic-lines) produces
+the right segment coverage and style steps directly. A path may exit and
+re-enter the same diamond, consuming two steps, or merely graze an excluded
+edge and consume none. No ellipse-specific or adjacent-segment phase patch is
+needed. A fractional starting point offsets the initial style phase according
+to the first visible pixel. Clipped segments still advance the style.
 
 Native path probe: [workflow run 35089932802](https://github.com/bitplane/pillow-wmf/actions/runs/35089932802).

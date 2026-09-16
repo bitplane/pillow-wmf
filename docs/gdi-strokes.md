@@ -60,9 +60,20 @@ an otherwise cosmetic pen.
 
 For each major-axis grid intersection, choose the nearest minor-coordinate
 pixel, resolving a half tie toward the smaller coordinate. Intersect the
-segment with that pixel's half-pixel diamond. The segment owns the pixel when
-it exits the diamond before its endpoint. A shared vertex belongs to the next
-segment; this matters where flattened ellipse segments meet on a diamond edge.
+segment with that pixel's half-pixel diamond. A pixel is emitted only when the
+segment visits and exits the diamond; an endpoint inside it is excluded.
+Diamond membership follows the legacy GIQ rules in Intel's
+[Broadwell PRM, volume 7, printed pages 593–594](https://www.x.org/docs/intel/BDW/intel-gfx-prm-osrc-bdw-vol07-3d_media_gpgpu_0.pdf):
+edges are outside except the bottom corner, the right corner (left for slope
++1), and the bottom-left/right edges for slopes +1/-1 respectively.
+The implementation clips in rotated coordinates and tests exact membership;
+it does not use an epsilon or adjust pixels after stroking.
+
+[Windows run 35096891899](https://github.com/bitplane/pillow-wmf/actions/runs/35096891899)
+verifies fractional segment coordinates before stroking and records their
+pixels. A shared vertex is **not** universally owned by the following segment.
+Correct boundary ownership removes both the former Arc endpoint patch and
+the dashed-ellipse phase correction. Existing PNG expectations are unchanged.
 
 The same algorithm accepts integer LineTo coordinates and fractional curve
 vertices. Grid enumeration is bounded by the bitmap dimension, without moving

@@ -131,6 +131,8 @@ def main():
         bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
         bind(gdi, "SelectObject", ptr, ptr, ptr)
         bind(gdi, "DeleteObject", boolean, ptr)
+        bind(gdi, "GetStockObject", ptr, integer)
+        brush = check(gdi.SelectObject(dc, check(gdi.GetStockObject(4), "BLACK_BRUSH")), "SelectObject")
         pen = check(gdi.CreatePen(0, 3, 0), "CreatePen")
         previous = check(gdi.SelectObject(dc, pen), "SelectObject")
         try:
@@ -163,9 +165,28 @@ def main():
                             if direct[i : i + 3] != raw[i : i + 3]
                         ],
                     )
+            bind(gdi, "PolyBezier", boolean, ptr, ctypes.POINTER(wintypes.POINT), wintypes.DWORD)
+            for control in (
+                ((80, 32), (80, 8), (56, 8), (32, 8)),
+                ((80, 32), (80, 32), (56, 8), (32, 8)),
+                ((32, 8), (56, 8), (80, 8), (80, 32)),
+                ((16, 16), (48, 48), (16, 48), (48, 16)),
+            ):
+                for flatten in (False, True):
+                    check(gdi.BeginPath(dc), "BeginPath")
+                    points = (wintypes.POINT * 4)(*(wintypes.POINT(*point) for point in control))
+                    check(gdi.PolyBezier(dc, points, 4), "PolyBezier")
+                    check(gdi.EndPath(dc), "EndPath")
+                    if flatten:
+                        check(gdi.FlattenPath(dc), "FlattenPath")
+                        print("cubic-fixed-flat", control, fixed_path_points(gdi, dc))
+                    check(gdi.WidenPath(dc), "WidenPath")
+                    print("cubic-fixed-widened", control, flatten, fixed_path_points(gdi, dc))
+                    check(gdi.AbortPath(dc), "AbortPath")
         finally:
             gdi.SelectObject(dc, previous)
             gdi.DeleteObject(pen)
+            gdi.SelectObject(dc, brush)
 
 
 if __name__ == "__main__":

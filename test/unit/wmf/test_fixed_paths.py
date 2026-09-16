@@ -75,12 +75,20 @@ def test_widened_line_matches_windows_fixed_path(start, end, width, scale, expec
     assert line_outline(start, end, width, *scale) == expected
 
 
-def test_fractional_shared_vertex_belongs_to_the_following_segment() -> None:
-    # Native flattened ellipse: the shared vertex lies on this pixel's diamond.
-    first = set(cosmetic_line((427, 472), (395, 499), 128, 128))
-    second = set(cosmetic_line((395, 499), (384, 528), 128, 128))
-    assert (25, 31) not in first
-    assert (25, 31) in second
+@pytest.mark.parametrize(
+    "start,end,expected",
+    [
+        ((736, 424), (710, 308), {(45, 20), (45, 21), (45, 22), (45, 23), (45, 24), (46, 25), (46, 26)}),
+        ((432, 128), (424, 128), {(27, 8)}),
+        ((427, 472), (395, 499), {(26, 30), (25, 31)}),
+        ((395, 499), (384, 528), {(24, 32)}),
+    ],
+)
+def test_fractional_segments_match_native_windows(start, end, expected) -> None:
+    # Run 35096891899: fractional paths verified with GetPath before StrokePath.
+    # The shared vertex (395, 499) is outside the diamond: the incoming segment
+    # owns (25, 31), contrary to the former blanket "following segment" rule.
+    assert set(cosmetic_line(start, end, 128, 128)) == expected
 
 
 def test_cosmetic_line_clips_enumeration_without_changing_the_line() -> None:

@@ -46,25 +46,6 @@ def dash_is_foreground(style: int, position: int) -> bool:
     raise AssertionError("Dash phase outside pattern")
 
 
-def diamond_touch_phase(before: Point, vertex: Point, after: Point) -> int:
-    """Style-step correction where two GIQ segments meet on a diamond edge."""
-    center = tuple(((coordinate + 8) // 16) * 16 for coordinate in vertex)
-    offsets = tuple(coordinate - middle for coordinate, middle in zip(vertex, center, strict=True))
-    if sum(abs(offset) for offset in offsets) != 8:
-        return 0
-
-    def side(neighbor: Point) -> int:
-        change = tuple(coordinate - middle for coordinate, middle in zip(neighbor, vertex, strict=True))
-        derivative = sum(
-            (1 if offset > 0 else -1 if offset < 0 else 0) * delta if offset else abs(delta)
-            for offset, delta in zip(offsets, change, strict=True)
-        )
-        return (derivative > 0) - (derivative < 0)
-
-    first, second = side(before), side(after)
-    return -first if first == second else 0
-
-
 @dataclass(frozen=True)
 class PenGeometry:
     vertices: tuple[Point, ...]
@@ -166,12 +147,27 @@ def line_outline(start: Point, end: Point, width: int, scale_x, scale_y) -> Poly
     )
 
 
+def _inside_diamond(x, y, dx: int, dy: int) -> bool:
+    """Legacy GIQ membership relative to a pixel center, in sixteenths."""
+    distance = abs(x) + abs(y)
+    return distance < 8 or (
+        distance == 8
+        and (
+            (x == 0 and y == 8)
+            or (y == 0 and x == (-8 if dx == dy else 8))
+            or (y > 0 and (dx == dy and x < 0 or dx == -dy and x > 0))
+        )
+    )
+
+
 def cosmetic_line(start: Point, end: Point, width: int, height: int):
     """GIQ coverage for a 28.4 segment, including fractional curve vertices.
 
     Choose the closest minor-coordinate pixel at each major grid intersection
     (ties to the smaller coordinate). A pixel is emitted when the segment exits
-    its half-pixel diamond. A shared vertex belongs to the following segment.
+    its half-pixel diamond. Endpoint ownership uses the legacy GIQ boundary
+    rules (including slope +/-1 edges), not a blanket start/end convention.
+    See docs/gdi-strokes.md for the specification and native measurements.
     Bounds restrict grid enumeration without changing the original line.
     """
     dx, dy = end[0] - start[0], end[1] - start[1]
@@ -189,6 +185,7 @@ def cosmetic_line(start: Point, end: Point, width: int, height: int):
         if not (0 <= x < width and 0 <= y < height):
             continue
         enter, leave = None, None
+
         # Transform the diamond into an axis-aligned square with u=x+y, v=x-y.
         for origin, change, center in (
             (start[0] + start[1], dx + dy, (x + y) * 16),
@@ -202,5 +199,7 @@ def cosmetic_line(start: Point, end: Point, width: int, height: int):
             enter = lower if enter is None else max(enter, lower)
             leave = upper if leave is None else min(leave, upper)
         else:
-            if enter <= leave and 0 <= leave < 1:
-                yield x, y
+            if enter <= leave and 0 <= leave <= 1 and not _inside_diamond(end[0] - x * 16, end[1] - y * 16, dx, dy):
+                middle = (max(enter, 0) + leave) / 2
+                if _inside_diamond(start[0] + middle * dx - x * 16, start[1] + middle * dy - y * 16, dx, dy):
+                    yield x, y

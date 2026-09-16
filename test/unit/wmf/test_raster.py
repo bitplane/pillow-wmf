@@ -2,7 +2,7 @@ import pytest
 
 from pillow_wmf import RasterContext, UnsupportedOperation
 from pillow_wmf.ellipse import ellipse_path
-from pillow_wmf.stroke import dash_is_foreground, diamond_touch_phase
+from pillow_wmf.stroke import cosmetic_line, dash_is_foreground
 
 
 def test_raster_rejects_unimplemented_pen_style_before_changing_context() -> None:
@@ -42,15 +42,18 @@ def test_styled_pen_gaps_use_background_mode_and_color() -> None:
     assert [context.image.getpixel((x, 4)) for x in range(6)] == [(255, 0, 0)] * 3 + [(0, 255, 0)] * 3
 
 
-def test_pixel_diamond_touch_phase_depends_on_both_adjacent_segments() -> None:
+def test_diamond_touches_are_resolved_by_segment_coverage() -> None:
     for bounds, index, expected in (
-        ((66, 16, 121, 69), 3, 1),  # Both segments lie inside the touched diamond.
-        ((64, 12, 102, 61), 8, -1),  # Both segments lie outside.
-        ((12, 12, 40, 43), 2, 0),  # Crossing the edge has no correction.
-        ((8, 8, 57, 43), 3, 0),  # Not on a diamond edge.
+        ((66, 16, 121, 69), 3, 2),  # Exit then re-enter: two style steps.
+        ((64, 12, 102, 61), 8, 0),  # Grazing an excluded edge: no step.
+        ((12, 12, 40, 43), 2, 1),  # Crossing: one step.
+        ((8, 8, 57, 43), 3, 1),  # Ordinary shared vertex: one step.
     ):
         path = ellipse_path(*bounds)
-        assert diamond_touch_phase(path[index - 1], path[index], path[index + 1]) == expected
+        pixel = tuple((coordinate + 8) // 16 for coordinate in path[index])
+        first = set(cosmetic_line(path[index - 1], path[index], 128, 128))
+        second = set(cosmetic_line(path[index], path[index + 1], 128, 128))
+        assert int(pixel in first) + int(pixel in second) == expected
 
 
 def test_fully_offscreen_segment_still_advances_connected_dash_phase() -> None:
