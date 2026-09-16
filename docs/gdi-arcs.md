@@ -57,6 +57,22 @@ interpolation at 32 intervals of the reduced ratio `[0, 1]`. The former
 `gdi_math.py` generates these mathematical tables; there are no fixture-specific
 values or pixel corrections.
 
+Lookup precision applies **before** quadrant reduction. Normalize the degree
+angle to `[0, 360)`, store it as FLOAT, multiply by the FLOAT representation of
+`32/90`, and store that full-circle table position as FLOAT. Only then fold the
+position into the first quadrant. Interpolated results also use FLOAT storage.
+[Run 35111628013](https://github.com/bitplane/pillow-wmf/actions/runs/35111628013)
+checks five explicit `AngleArc` input angles near cardinal boundaries, bypassing
+radial angle conversion and exposing this lookup precision independently.
+
+Folding the angle in double precision before lookup had left one tiny ellipse
+loop with a wrong control point and flattened vertex. Its unrounded control X
+was `1001.5203`; native lookup precision produces about `1001.4937`, crossing the
+fixed-point rounding boundary. The handle is now `(1001, 1776)` and FlattenPath
+emits `(1005, 1776)`, exactly as Windows does. Translated and reflected path
+captures in [run 35111160259](https://github.com/bitplane/pillow-wmf/actions/runs/35111160259)
+confirm that this difference originates before device-coordinate translation.
+
 The reconstruction reduces the radial slope for arctangent lookup, stores that
 result at FLOAT precision, and restores quadrants. Degree conversion retains
 the previously measured FLOAT-pi convention. Nearly equal radial directions
@@ -99,8 +115,12 @@ atlas cells can conceal control differences. No old expectations changed.
 
 This remains a behavioral reconstruction, not Microsoft's source algorithm.
 All tested pixels match, but arbitrary control-point bit equality is not
-claimed. In the 120 captured edge paths, one tiny elliptical terminal loop
-still differs by a fixed-point unit in a handle and an emitted vertex without
-changing its tested pixels. The trigonometric/floating-point operation ordering
-is not exhaustively recovered. Diagnostics retain raw native geometry, and
-unit tests assert exact controls for the measured regressions they name.
+claimed. The edge probe now also asserts exact consumed vertices for all 120
+captured paths, including the formerly mismatching tiny loop. Unit tests assert
+its exact handles and flattened vertices, plus native lookup values from the
+explicit FLOAT-angle experiments. These checks and the existing pixel matrices
+pass in [run 35111971038](https://github.com/bitplane/pillow-wmf/actions/runs/35111971038).
+Very large path-only measurements still
+expose differences in some raw coordinates; the remaining angle and transform
+arithmetic is not claimed to be bit-exact at every scale. Those measurements
+remain diagnostic evidence for future work.
