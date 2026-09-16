@@ -706,6 +706,14 @@ def styled_pen_cases():
         recorder.line_to(120, y)
     yield "pen-styles-rop2-gaps", recorder
 
+    recorder = mapped()
+    recorder.set_background_mode(1)
+    for style in range(1, 5):
+        recorder.select_object(recorder.create_pen(style, 1, 0x00CA5BE1))
+        y = 12 + (style - 1) * 27
+        recorder.polyline(((-80, y), (-32, y), (96, y)))
+    yield "pen-styles-offscreen-connected", recorder
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
