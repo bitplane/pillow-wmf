@@ -17,7 +17,7 @@ def verify_pixels():
             (0, 1, 2, 3, 6, 7, 20, 21, 22, 36, 37, 38, 40),
             (0, 1, 2),
             ((5, 6, 26, 43), (5, 6, 42, 27), (5, 6, 26, 27)),
-            ((128, 128), (192, 96), (192, 192), (-128, 256)),
+            ((128, 128), (192, 96), (192, 192), (224, 112), (-128, 256)),
         )
     ):
         recorder = Recorder()
@@ -115,7 +115,7 @@ def main():
                 if width in (1, 7, 21) and scale == (1.5, 0.75):
                     check(gdi.SetViewportExtEx(dc, 192, 96, None), "SetViewportExtEx")
                     check(gdi.BeginPath(dc), "BeginPath")
-                    check(gdi.Rectangle(dc, 5, 6, 26, 43), "Rectangle")
+                    check(gdi.Arc(dc, 5, 6, 26, 43, 35, 16, -5, 34), "Arc")
                     check(gdi.EndPath(dc), "EndPath")
                     check(gdi.WidenPath(dc), "WidenPath")
                     check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
@@ -124,7 +124,7 @@ def main():
                     points = (wintypes.POINT * count)()
                     kinds = (ctypes.c_ubyte * count)()
                     assert gdi.GetPath(dc, points, kinds, count) == count
-                    print("widened-rectangle", width, tuple((p.x, p.y, k) for p, k in zip(points, kinds, strict=True)))
+                    print("widened-arc", width, tuple((p.x, p.y, k) for p, k in zip(points, kinds, strict=True)))
                     check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
                     check(gdi.AbortPath(dc), "AbortPath")
             finally:
