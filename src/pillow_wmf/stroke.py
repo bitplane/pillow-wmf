@@ -87,7 +87,7 @@ def _support_index(pen: PenGeometry, dx: int, dy: int) -> int:
 
 
 def _body(value):
-    return (1 if value >= 0 else -1) * ((abs(value) + 3) // 8) * 8
+    return (1 if value >= 0 else -1) * ((abs(value) + 4) // 8) * 8
 
 
 def _cap(value, origin: Point):

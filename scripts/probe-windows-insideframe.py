@@ -74,11 +74,13 @@ def verify_collapsed_polygons():
 def main():
     with reference_surface(128, 128) as (gdi, dc, _bits):
         ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
-        for name in ("BeginPath", "EndPath", "AbortPath"):
+        for name in ("BeginPath", "EndPath", "AbortPath", "WidenPath"):
             bind(gdi, name, boolean, ptr)
         for name, count in (("Rectangle", 4), ("Ellipse", 4), ("RoundRect", 6), ("Arc", 8), ("Chord", 8), ("Pie", 8)):
             bind(gdi, name, boolean, ptr, *([integer] * count))
         bind(gdi, "CreatePen", ptr, integer, integer, wintypes.DWORD)
+        bind(gdi, "MoveToEx", boolean, ptr, integer, integer, ptr)
+        bind(gdi, "LineTo", boolean, ptr, integer, integer)
         bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
         for width, scale in product((0, 1, 2, 3, 4, 7, 20, 21, 22, 37, 40), ((1, 1), (2, 1), (1.5, 0.75), (1.5, 1.5))):
             pen = check(gdi.CreatePen(6, width, 0), "CreatePen")
@@ -108,6 +110,21 @@ def main():
                         succeeded,
                         tuple((p.x, p.y, k) for p, k in zip(points, kinds, strict=True)),
                     )
+                    check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
+                    check(gdi.AbortPath(dc), "AbortPath")
+                if width in (1, 7, 21) and scale == (1.5, 0.75):
+                    check(gdi.SetViewportExtEx(dc, 192, 96, None), "SetViewportExtEx")
+                    check(gdi.BeginPath(dc), "BeginPath")
+                    check(gdi.Rectangle(dc, 5, 6, 26, 43), "Rectangle")
+                    check(gdi.EndPath(dc), "EndPath")
+                    check(gdi.WidenPath(dc), "WidenPath")
+                    check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
+                    check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                    count = gdi.GetPath(dc, None, None, 0)
+                    points = (wintypes.POINT * count)()
+                    kinds = (ctypes.c_ubyte * count)()
+                    assert gdi.GetPath(dc, points, kinds, count) == count
+                    print("widened-rectangle", width, tuple((p.x, p.y, k) for p, k in zip(points, kinds, strict=True)))
                     check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
                     check(gdi.AbortPath(dc), "AbortPath")
             finally:
