@@ -566,6 +566,19 @@ def brush_cases():
     recorder.rectangle(88, 8, 120, 40)
     yield "brush-background-state", recorder
 
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 0, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00663399, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    recorder.select_object(recorder.create_brush(2, 0x00CA5BE1, 5))
+    recorder.set_background_mode(2)
+    recorder.set_background_color(0x0033CC77)
+    recorder.set_rop2(7)
+    recorder.rectangle(11, 13, 57, 59)
+    recorder.set_window_extent(64, 64)
+    recorder.rectangle(39, 7, 59, 25)
+    yield "brush-hatch-rop2-mapped", recorder
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
