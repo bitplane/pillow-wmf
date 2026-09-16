@@ -11,6 +11,7 @@ on:
       - "scripts/probe-windows-mapping.py"
       - "scripts/probe-windows-paths.py"
       - "scripts/probe-windows-strokes.py"
+      - "scripts/probe-windows-arcs.py"
       - "scripts/windows_wmf_render.py"
       - "scripts/update-goldens.py"
       - ".github/workflows/update-goldens.yml"
@@ -46,6 +47,9 @@ jobs:
       - name: Verify native stroke matrix
         if: github.event_name == 'workflow_dispatch'
         run: python scripts/probe-windows-strokes.py
+      - name: Probe native Arc paths
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/probe-windows-arcs.py
       - name: Render missing reference images
         run: python scripts/update-goldens.py
       - name: Commit reference images

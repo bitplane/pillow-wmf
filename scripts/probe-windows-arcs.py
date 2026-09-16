@@ -1,0 +1,55 @@
+"""Inspect Windows GDI's native Arc path and direct raster output."""
+
+import ctypes
+from ctypes import wintypes
+
+from windows_wmf_render import bind, check, reference_surface
+
+
+def path_points(gdi, dc):
+    count = gdi.GetPath(dc, None, None, 0)
+    points = (wintypes.POINT * count)()
+    kinds = (ctypes.c_ubyte * count)()
+    check(gdi.GetPath(dc, points, kinds, count) == count, "GetPath")
+    return tuple((point.x, point.y, kind) for point, kind in zip(points, kinds, strict=True))
+
+
+def main():
+    with reference_surface(128, 128) as (gdi, dc, bits):
+        ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
+        for name in ("BeginPath", "EndPath", "FlattenPath", "AbortPath", "StrokePath", "GdiFlush"):
+            bind(gdi, name, boolean, ptr) if name != "GdiFlush" else bind(gdi, name, boolean)
+        bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+        bind(gdi, "Arc", boolean, ptr, *(integer for _ in range(8)))
+        cases = (
+            (8, 8, 47, 47, 47, 27, 27, 8),
+            (68, 8, 107, 47, 87, 8, 68, 27),
+            (8, 68, 47, 107, 8, 87, 27, 106),
+            (68, 68, 107, 107, 87, 106, 106, 87),
+            (8, 8, 59, 43, 54, 13, 12, 38),
+        )
+        for case in cases:
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.Arc(dc, *case), "Arc")
+            check(gdi.EndPath(dc), "EndPath")
+            print("arc-raw", case, path_points(gdi, dc))
+            check(gdi.FlattenPath(dc), "FlattenPath")
+            print("arc-flat", case, path_points(gdi, dc))
+            check(gdi.AbortPath(dc), "AbortPath")
+            ctypes.memset(bits, 255, 128 * 128 * 4)
+            check(gdi.Arc(dc, *case), "Arc")
+            check(gdi.GdiFlush(), "GdiFlush")
+            direct = ctypes.string_at(bits, 128 * 128 * 4)
+            ctypes.memset(bits, 255, 128 * 128 * 4)
+            check(gdi.BeginPath(dc), "BeginPath")
+            check(gdi.Arc(dc, *case), "Arc")
+            check(gdi.EndPath(dc), "EndPath")
+            check(gdi.StrokePath(dc), "StrokePath")
+            check(gdi.GdiFlush(), "GdiFlush")
+            path = ctypes.string_at(bits, 128 * 128 * 4)
+            difference = sum(direct[i : i + 3] != path[i : i + 3] for i in range(0, len(direct), 4))
+            print("arc-direct-path-difference", case, difference)
+
+
+if __name__ == "__main__":
+    main()
