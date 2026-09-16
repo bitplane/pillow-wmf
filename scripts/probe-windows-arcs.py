@@ -108,6 +108,14 @@ def main():
             (8, 68, 47, 107, 8, 87, 27, 106),
             (68, 68, 107, 107, 87, 106, 106, 87),
             (8, 8, 59, 43, 54, 13, 12, 38),
+            (6, 70, 26, 92, 17, 81, 15, 82),
+            (6, 70, 26, 92, 16, 80, 15, 81),
+            (6, 70, 26, 92, 15, 81, 16, 82),
+            (6, 70, 26, 92, 16, 82, 17, 81),
+            (8, 8, 56, 56, 33, 32, 32, 31),
+            (8, 8, 56, 56, 32, 31, 31, 32),
+            (8, 8, 56, 56, 31, 32, 32, 33),
+            (8, 8, 56, 56, 32, 33, 33, 32),
         )
         for case in cases:
             check(gdi.BeginPath(dc), "BeginPath")
@@ -119,13 +127,6 @@ def main():
             print("arc-flat", case, path_points(gdi, dc))
             print("arc-fixed-flat", case, fixed_path_points(gdi, dc))
             check(gdi.AbortPath(dc), "AbortPath")
-            check(gdi.SetViewportExtEx(dc, 2048, 2048, None), "SetViewportExtEx")
-            check(gdi.BeginPath(dc), "BeginPath")
-            check(gdi.Arc(dc, *case), "Arc")
-            check(gdi.EndPath(dc), "EndPath")
-            print("arc-raw-16x", case, path_points(gdi, dc))
-            check(gdi.AbortPath(dc), "AbortPath")
-            check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
             ctypes.memset(bits, 255, 128 * 128 * 4)
             check(gdi.Arc(dc, *case), "Arc")
             check(gdi.GdiFlush(), "GdiFlush")
@@ -163,6 +164,7 @@ def main():
             check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
             check(gdi.SetViewportOrgEx(dc, 0, 0, None), "SetViewportOrgEx")
             print("arc-reflected-raw", label, path_points(gdi, dc))
+            print("arc-reflected-fixed-controls", label, fixed_path_points(gdi, dc))
             check(gdi.FlattenPath(dc), "FlattenPath")
             print("arc-reflected-flat", label, path_points(gdi, dc))
             check(gdi.AbortPath(dc), "AbortPath")
