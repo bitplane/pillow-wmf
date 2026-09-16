@@ -52,14 +52,19 @@ def main():
             pen = check(gdi.CreatePen(0, width, 0), "CreatePen")
             previous = check(gdi.SelectObject(dc, pen), "SelectObject")
             try:
-                check(gdi.BeginPath(dc), "BeginPath")
-                check(gdi.MoveToEx(dc, 8, 16, None), "MoveToEx")
-                check(gdi.LineTo(dc, 40, 40), "LineTo")
-                check(gdi.EndPath(dc), "EndPath")
-                check(gdi.WidenPath(dc), "WidenPath")
-                points = path_points(gdi, dc)
-                print(f"pen-{width}-{scale_x}x{scale_y}: {len(points)} vertices {points}")
-                check(gdi.AbortPath(dc), "AbortPath")
+                for segment_name, start, end in (
+                    ("horizontal", (8, 8), (48, 8)),
+                    ("vertical", (48, 8), (48, 48)),
+                    ("diagonal", (8, 16), (40, 40)),
+                ):
+                    check(gdi.BeginPath(dc), "BeginPath")
+                    check(gdi.MoveToEx(dc, *start, None), "MoveToEx")
+                    check(gdi.LineTo(dc, *end), "LineTo")
+                    check(gdi.EndPath(dc), "EndPath")
+                    check(gdi.WidenPath(dc), "WidenPath")
+                    points = path_points(gdi, dc)
+                    print(f"pen-{width}-{scale_x}x{scale_y}-{segment_name}: {len(points)} vertices {points}")
+                    check(gdi.AbortPath(dc), "AbortPath")
             finally:
                 gdi.SelectObject(dc, previous)
                 gdi.DeleteObject(pen)
