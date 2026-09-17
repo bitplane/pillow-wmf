@@ -24,6 +24,18 @@ def source(depth, width=13, height=7, *, pattern=False, native=False, extra_stri
 
 
 def cases():
+    for operation in ("bit_blt", "stretch_blt"):
+        r = Recorder()
+        r.select_object(r.create_brush(0, 0x713519, 0))
+        for y, depth in enumerate((1, 4, 8, 16, 24, 32)):
+            for x, rop in enumerate((0xF00021, 0x550009, 0x000042, 0x330008)):
+                bitmap = source(depth)
+                if operation == "bit_blt":
+                    r.bit_blt(2 + 30 * x, 2 + 20 * y, 13, 7, 0, 0, rop, bitmap)
+                else:
+                    r.stretch_blt(2 + 30 * x, 2 + 20 * y, 26, 14, 0, 0, 13, 7, rop, bitmap)
+        yield f"bitmap16-{operation}-embedded-depth-rop-atlas", r
+
     r = Recorder()
     indexed = BitmapData("pattern16", pack("<hhhhBB", 0, 16, 16, 16, 1, 8) + bytes(26) + bytes(range(256)))
     brush = r.create_pattern_brush(indexed)
