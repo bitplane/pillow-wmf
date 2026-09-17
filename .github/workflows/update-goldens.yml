@@ -10,6 +10,7 @@ on:
         options:
           - none
           - mapping
+          - layout
           - patblt
           - dib-brush
           - paths
@@ -85,6 +86,9 @@ jobs:
       - name: Verify native PatBlt
         if: inputs.probe == 'patblt' || inputs.probe == 'all'
         run: python scripts/probe-windows-patblt.py
+      - name: Report native layout state
+        if: inputs.probe == 'layout'
+        run: python scripts/probe-windows-layout.py
       - name: Verify native DIB brushes
         if: inputs.probe == 'dib-brush' || inputs.probe == 'all'
         run: python scripts/probe-windows-dib-brush.py
