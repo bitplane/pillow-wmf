@@ -267,11 +267,18 @@ class RasterContext(TraceContext):
             if region is not None:
                 region = region.transformed(self._point)
                 if name == "frame_region":
-                    # Native framing realizes the full rectangular footprint
-                    # before splitting it about the boundary. Mapping each
-                    # half separately loses odd-width and reflection ties.
-                    dx, dy = self.mapping.vector(2 * a["width"], 2 * a["height"])
-                    region = region.frame(Fraction(abs(dx), 2), Fraction(abs(dy), 2))
+                    # Realize the rectangular support in 28.4, then quantize
+                    # to half-pixel body support (x inward, y outward).
+                    support = [
+                        abs(ceil(abs(size) * 16 / (window / viewport)))
+                        for size, window, viewport in zip(
+                            (a["width"], a["height"]),
+                            self.mapping.window_extent,
+                            self.mapping.viewport_extent,
+                            strict=True,
+                        )
+                    ]
+                    region = region.frame(Fraction((support[0] + 3) // 8, 2), Fraction((support[1] + 4) // 8, 2))
                 brush = self._objects[a["brush"]] if "brush" in a else self._brush
                 for left, top, right, bottom in region.rectangles():
                     for y in range(max(0, top), min(self.image.height, bottom)):
