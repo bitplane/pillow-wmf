@@ -1684,6 +1684,7 @@ def dib_stretch_cases():
 
 
 def halftone_cases():
+    yield from halftone_boundary_cases()
     for pattern in ("constant", "ramp-x", "ramp-y", "impulse-x", "impulse-y"):
         pixels = []
         for y in range(9):
@@ -1755,6 +1756,81 @@ def halftone_cases():
         r.dib_stretch_blt(value % 16 * 8, value // 16 * 8, 2, 1, 0, 0, 3, 3, 0xCC0020, source)
         r.dib_stretch_blt(value % 16 * 8 + 3, value // 16 * 8, 3, 1, 0, 0, 3, 3, 0xCC0020, source)
     yield "halftone-constant-levels", r
+
+
+def halftone_boundary_cases():
+    # Classifier thresholds: small images, full colour counting, then sampled
+    # rows. Repeated rows distinguish spatial structure from palette size.
+    for size in (48, 49, 129):
+        for pattern in ("noise", "rows", "palette19", "palette20", "palette21"):
+            pixels = bytearray()
+            for y in range(size):
+                for x in range(size):
+                    if pattern.startswith("palette"):
+                        value = (x * 7 + y * 11) % int(pattern[7:])
+                        color = ((value * 37) % 256, (value * 71) % 256, (value * 113) % 256)
+                    else:
+                        color = tuple(
+                            (x * 37 + (y * 53 + x * y * 11 if pattern == "noise" else 0) + c * 71) % 256
+                            for c in range(3)
+                        )
+                    pixels.extend(color)
+            source = encode_dib24(RGBBitmap(size, size, bytes(pixels)))
+            r = mapped()
+            r.set_stretch_mode(4)
+            # The large source intentionally exceeds the canvas: clipping must
+            # not turn classification or filtering into a different operation.
+            destination = (size * 5 + 3) // 4
+            r.dib_stretch_blt(2, 2, destination, destination, 0, 0, size, size, 0xCC0020, source)
+            yield f"halftone-classify-{size}-{pattern}", r
+
+    bitmap = RGBBitmap(
+        11,
+        9,
+        bytes(
+            (17 + x * 19, 13 + y * 27, (x * 31 + y * 43) % 256)[c]
+            for y in range(9)
+            for x in range(11)
+            for c in range(3)
+        ),
+    )
+    for top_down, operation in product((False, True), ("dib_stretch_blt", "stretch_dib")):
+        source = encode_dib24(bitmap, top_down=top_down)
+        source_args = {"source": source}
+        if operation == "stretch_dib":
+            source_args["color_usage"] = 0
+        for profile, (dw, dh) in enumerate(((5, 3), (17, 3), (17, 13))):
+            for rop in (0xCC0020, 0x660046):
+                r = mapped()
+                r.set_stretch_mode(4)
+                for i, (dxsign, dysign, sxsign, sysign) in enumerate(product((1, -1), repeat=4)):
+                    x, y = 3 + i % 4 * 32, 3 + i // 4 * 32
+                    getattr(r, operation)(
+                        x + (dw - 1 if dxsign < 0 else 0),
+                        y + (dh - 1 if dysign < 0 else 0),
+                        dw * dxsign,
+                        dh * dysign,
+                        1 if sxsign > 0 else 8,
+                        1 if sysign > 0 else 7,
+                        7 * sxsign,
+                        6 * sysign,
+                        rop,
+                        **source_args,
+                    )
+                yield f"halftone-signs-{operation}-{int(top_down)}-{profile}-{rop >> 16:02x}", r
+        r = mapped()
+        r.set_stretch_mode(4)
+        for i, (sx, sy) in enumerate(product((-3, 0, 8), (-2, 0, 7))):
+            getattr(r, operation)(3 + i % 3 * 40, 3 + i // 3 * 40, 23, 7, sx, sy, 11, 9, 0xCC0020, **source_args)
+        yield f"halftone-source-clip-{operation}-{int(top_down)}", r
+
+    r = mapped()
+    r.set_stretch_mode(4)
+    r.select_object(r.create_brush(0, 0x17C3A5, 0))
+    source = encode_dib24(bitmap)
+    for table in range(256):
+        r.dib_stretch_blt(table % 16 * 8, table // 16 * 8, 5, 5, 1, 1, 7, 6, table << 16, source)
+    yield "halftone-rop3", r
 
 
 def main():

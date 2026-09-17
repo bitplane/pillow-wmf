@@ -16,6 +16,7 @@ from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
+from .halftone import halftone_bitmap
 from .mapping import Mapping
 from .paint import pattern_rop2, rop2, rop3
 from .stroke import (
@@ -485,8 +486,6 @@ class RasterContext(TraceContext):
         if not all((sw, sh, dw, dh)):
             return None, None, None, None
         scaled = abs(dw) != abs(sw) or abs(dh) != abs(sh)
-        if scaled and self._stretch_mode == 4:
-            raise UnsupportedOperation("HALFTONE sampling")
         bitmap = layout.decode()
         mirrored = (dw < 0) != (sw < 0) or (dh < 0) != (sh < 0)
         copy = (a["rop"] >> 16) & 255 == 0xCC
@@ -496,6 +495,10 @@ class RasterContext(TraceContext):
         # the top-down storage distinction documented in gdi-dib-transfers.md.
         if (name == "stretch_dib") != (layout.top_down and not copy):
             sy = layout.height - sy - sh
+        if scaled and self._stretch_mode == 4:
+            filtered = halftone_bitmap(bitmap, a["src_x"], sy, sw, sh, dw, dh)
+            if filtered is not None:
+                return filtered, BlitAxis(x, 0, dw), BlitAxis(y, 0, dh), None
         if scaled:
             horizontal = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
             vertical = StretchAxis.create(y, dh, sy, sh, bitmap.height)

@@ -60,6 +60,11 @@ class StretchAxis:
             return ()
         index = coordinate - self.destination
         last = ((2 * index + 1) * self.source_length) // (2 * self.length)
+        if mode == 4 and self.source_length > self.length:
+            # HALFTONE's replication path builds the inverse enlargement's
+            # run lengths and keeps the final source scan in each run. It is
+            # not COLORONCOLOR's centre sample (e.g. 7 -> 5 keeps 0,2,3,5,6).
+            last = (2 * (index + 1) * self.source_length - self.length - 1) // (2 * self.length)
         if not 0 <= self.source + last < self.limit:
             return ()  # The scan selected by the DDA must survive source clipping.
         first = last
