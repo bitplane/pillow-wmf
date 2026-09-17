@@ -4,7 +4,7 @@ from itertools import product
 from struct import pack
 
 from pillow_wmf import Metafile, Recorder
-from pillow_wmf.wmf.objects import BitmapData
+from pillow_wmf.wmf.objects import BitmapData, Palette
 
 
 def source(depth, width=13, height=7, *, pattern=False, native=False, extra_stride=0):
@@ -24,6 +24,30 @@ def source(depth, width=13, height=7, *, pattern=False, native=False, extra_stri
 
 
 def cases():
+    r = Recorder()
+    indexed = BitmapData("pattern16", pack("<hhhhBB", 0, 16, 16, 16, 1, 8) + bytes(26) + bytes(range(256)))
+    brush = r.create_pattern_brush(indexed)
+    r.select_object(brush)
+    r.pat_blt(0, 0, 32, 32, 0xF00021)
+    r.select_palette(r.create_palette(Palette(entries=tuple((i, 31, 73, 0) for i in range(256)))))
+    r.realize_palette()
+    r.pat_blt(32, 0, 32, 32, 0xF00021)
+    r.select_object(r.create_pattern_brush(indexed))
+    r.pat_blt(64, 0, 32, 32, 0xF00021)
+    yield "bitmap16-native-pattern-device-palette", r
+
+    for depth in (4, 16, 24):
+        r = Recorder()
+        r.select_object(r.create_pattern_brush(source(depth, pattern=True, native=True)))
+        r.select_object(r.create_pen(0, 1, 0x0000FF))
+        r.rectangle(2, 2, 32, 32)
+        r.pat_blt(40, 2, 30, 30, 0x550009)
+        r.move_to(2, 40)
+        r.line_to(32, 40)
+        r.select_object(r.create_brush(0, 0x713519, 0))
+        r.rectangle(2, 50, 32, 80)
+        yield f"bitmap16-native-pattern-unrealizable-{depth}", r
+
     # Native PlayMetaFileRecord reads legacy brush bits at payload byte 36,
     # four bytes beyond the documented Pattern Object layout.
     for depth, extra_stride in (*product((1, 4, 8, 16, 24, 32), (0,)), (1, 4), (32, 4)):
