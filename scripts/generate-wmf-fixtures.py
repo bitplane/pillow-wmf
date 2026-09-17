@@ -1840,6 +1840,30 @@ def halftone_boundary_cases():
                 )
                 i += 1
         yield f"halftone-vertical-slivers-{operation}-{int(top_down)}", r
+    r = mapped()
+    r.set_stretch_mode(4)
+    source = encode_dib24(
+        RGBBitmap(7, 3, bytes((y * 37 + x * 53 + c * 71) % 256 for y in range(3) for x in range(7) for c in range(3)))
+    )
+    i = 0
+    for sw in range(3, 8):
+        for dw, available, leading in product(range(1, sw), (1, 2, 3), (False, True)):
+            sx = available - sw if leading else 7 - available
+            r.dib_stretch_blt(i % 12 * 10, i // 12 * 10, dw, 3, sx, 0, sw, 3, 0xCC0020, source)
+            i += 1
+    yield "halftone-horizontal-slivers", r
+    source = encode_dib24(
+        RGBBitmap(7, 7, bytes((x * 37 + y * 53 + c * 71) % 256 for y in range(7) for x in range(7) for c in range(3)))
+    )
+    r = mapped()
+    r.set_stretch_mode(4)
+    i = 0
+    for size, output in ((4, 2), (4, 3), (6, 2), (6, 4)):
+        for ax, ay, leading_x, leading_y in product((1, 2, 3), (1, 2, 3), (False, True), (False, True)):
+            sx, sy = ax - size if leading_x else 7 - ax, ay - size if leading_y else 7 - ay
+            r.dib_stretch_blt(i % 12 * 10, i // 12 * 10, output, output, sx, sy, size, size, 0xCC0020, source)
+            i += 1
+    yield "halftone-clipped-grid-boundaries", r
     # Classifier thresholds: small images, full colour counting, then sampled
     # rows. Repeated rows distinguish spatial structure from palette size.
     for size in (48, 49, 129):
