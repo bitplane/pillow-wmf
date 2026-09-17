@@ -1703,6 +1703,16 @@ def halftone_cases():
             r.dib_stretch_blt(2 + i % 7 * 18, 2 + i // 7 * 18, dw, dh, 0, 0, 9, 9, 0xCC0020, source)
         yield f"halftone-kernel-{pattern}", r
 
+    for base in (0, 3, 6):
+        r = mapped()
+        r.set_stretch_mode(4)
+        source = encode_dib24(
+            RGBBitmap(9, 9, bytes(64 + 128 * (x == base + c) for y in range(9) for x in range(9) for c in range(3)))
+        )
+        for i, (dw, dh) in enumerate(product((1, 2, 3, 5, 9, 13, 17), (1, 5, 9))):
+            r.dib_stretch_blt(2 + i % 7 * 18, 2 + i // 7 * 32, dw, dh, 0, 0, 9, 9, 0xCC0020, source)
+        yield f"halftone-basis-{base}", r
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
