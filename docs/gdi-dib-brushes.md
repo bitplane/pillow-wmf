@@ -30,8 +30,8 @@ source = recorder.to_bytes()
   before allocation. `RasterContext(max_bitmap_pixels=...)` and the decoder's
   `max_pixels` bound each bitmap; the default is 16,777,216 pixels. This is not
   an aggregate resource limit across all selected/saved objects.
-- Unsupported headers, depths, compression, palette usage and legacy Bitmap16
-  payloads raise `UnsupportedOperation`. Malformed supported data raises
+- Unsupported DIB headers, depths, compression and palette usage
+  raise `UnsupportedOperation`. Malformed supported data raises
   `FormatError` before committing a renderer handle.
 
 ## Brush realization
@@ -87,6 +87,7 @@ and [Wine WMF playback](https://github.com/wine-mirror/wine/blob/master/dlls/gdi
 
 ## Next
 
-[Unstretched 24-bit DIB transfers](gdi-dib-transfers.md) now reuse the decoder
-and Boolean ROP3 evaluator. Indexed colour, compression, additional headers,
-legacy Bitmap16 and stretching modes remain future slices.
+[Unstretched DIB transfers](gdi-dib-transfers.md) reuse the decoder and Boolean
+ROP3 evaluator. Subsequent slices cover [DIB formats](gdi-dib-formats.md),
+[stretching](gdi-dib-stretching.md), [palettes](gdi-palettes.md), and
+[legacy Bitmap16](gdi-bitmap16.md).

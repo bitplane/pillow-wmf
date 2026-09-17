@@ -104,7 +104,8 @@ Existing WMF/PNG pairs were not rewritten to accommodate the implementation.
 
 The subsequent [logical palette slice](gdi-palettes.md) adds DIB_PAL_COLORS and
 DIB_PAL_INDICES layout handling and native RGB-device realization.
-Still outside these slices: Bitmap16, JPEG/PNG/CMYK payloads, linked/embedded profiles and
+[Bitmap16](gdi-bitmap16.md) is covered separately.
+Still outside these slices: JPEG/PNG/CMYK payloads, linked/embedded profiles and
 ICM colour management. V4/V5 header acceptance is not a claim of ICM support.
 Linked/embedded profiles are rejected explicitly and never followed as paths.
 

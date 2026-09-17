@@ -15,9 +15,9 @@ device metrics, rounding boundaries, and the next native compatibility probes.
 | Variable records | 19 record classes, including all six bitmap transfer envelopes | Native probes for ambiguous layouts |
 | Text | Raw strings, word padding, optional rectangle and raw advances | Charset/glyph interpretation, layout and drawing |
 | Objects | Pen/brush record fields, font, palette, region/scan structures | Native object realization and selected/saved-object quirks |
-| Bitmap payloads | Explicit `BitmapData` values; Core/Info/V4/V5 DIB codecs, RGB and logical-palette tables, 1/4/8/16/24/32-bit RGB, bitfields and RLE4/RLE8; deterministic writers | Colour management, embedded image codecs, legacy Bitmap16 decoding |
+| Bitmap payloads | Explicit `BitmapData` values; Core/Info/V4/V5 DIB codecs, RGB and logical-palette tables, 1/4/8/16/24/32-bit RGB, bitfields and RLE4/RLE8; Bitmap16 device-sample codecs and deterministic writers | Colour management, embedded image codecs, other historical device formats |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including DIB patterns, logical palettes, text-colour state, ROP2/ROP3, PatBlt, indexed/direct-colour DIB transfers including integer stretching and HALFTONE, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Legacy bitmaps, hardware-palette devices and text drawing; remaining pen/state behavior |
+| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including DIB and legacy patterns, logical palettes, text-colour state, ROP2/ROP3, PatBlt, indexed/direct-colour DIB transfers including integer stretching and HALFTONE, modern Bitmap16 playback, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Historical/hardware-palette devices and text drawing; remaining pen/state behavior |
 | Playback | File-slot mapping, lowest-free allocation, references, unsupported-operation diagnostics | Native behavioral validation and device-state emulation |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
@@ -149,6 +149,10 @@ use command traces for semantic round trips. Escape and bitmap payloads are
 carried through recording, not executed by the trace backend.
 
 ## Verification and next work
+
+[Bitmap16](gdi-bitmap16.md) adds 39 exact Windows references and documents
+modern playback's bitmap-selection/transfer quirk and native pattern layout. That
+profile is not a claim of historical display-driver compatibility.
 
 The unit suite checks all record classes and both blit layouts, independently
 specified wire bytes, truncation/count/limit failures, sequence snapshots, handle

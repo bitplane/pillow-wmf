@@ -324,4 +324,6 @@ reference images.
 Additional depths and RLE compression are covered by the subsequent
 [DIB format slice](gdi-dib-formats.md), including source-scan fixup and
 format-dependent channel conversion. [Logical palettes](gdi-palettes.md) now
-resolve into the same transfer pipeline. Legacy Bitmap16 and fonts remain deferred.
+resolve into the same transfer pipeline. [Legacy Bitmap16](gdi-bitmap16.md)
+now covers modern playback and reuses that pipeline for source-free copies.
+Fonts remain deferred.

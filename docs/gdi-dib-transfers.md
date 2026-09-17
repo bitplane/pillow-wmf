@@ -92,6 +92,6 @@ and [Wine WMF playback](https://github.com/wine-mirror/wine/blob/master/dlls/gdi
 Wine corroborates separate copy/ternary and band paths, but Windows remains
 the oracle. The implementation is not a transcription of Wine's source.
 
-Still unsupported: indexed and other pixel formats, additional headers,
-compression, palettes and legacy Bitmap16 blits.
+Subsequent slices cover [additional formats and compression](gdi-dib-formats.md),
+[palettes](gdi-palettes.md), and [legacy Bitmap16 playback](gdi-bitmap16.md).
 Fonts remain deferred.

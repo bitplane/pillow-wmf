@@ -67,8 +67,9 @@ The realization/storage holdouts are from
 [35226281933](https://github.com/bitplane/pillow-wmf/actions/runs/35226281933).
 
 Hardware palette allocation, foreground/background palette competition,
-display-wide animation, ICM and legacy Bitmap16 are not implemented by this
-slice. The reference device's RGB behaviour must not be mistaken for a claim
+display-wide animation and ICM are not implemented by this slice.
+[Legacy Bitmap16](gdi-bitmap16.md) is covered separately.
+The reference device's RGB behaviour must not be mistaken for a claim
 to emulate every historical display depth.
 
 References: [WMF ColorUsage](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/30403797-a408-40ca-b024-dd8a1acb39be),

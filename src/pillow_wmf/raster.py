@@ -10,6 +10,7 @@ from math import ceil
 from PIL import Image
 
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, DIBLayout, RGBBitmap, read_dib
+from .bitmap16 import read_bitmap16
 from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
 from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
@@ -27,7 +28,7 @@ from .halftone import (
 from .halftone_fixup import fixup_bitmap
 from .mapping import Mapping
 from .paint import pattern_rop2, rop2, rop3
-from .palette import LogicalPalette, PaletteIndex
+from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
 from .stroke import (
     cosmetic_line,
     cosmetic_span,
@@ -62,6 +63,7 @@ class Brush:
     hatch: int = 0
     pattern: RGBBitmap | DIBLayout | None = None
     monochrome: bool = False
+    realizable: bool = True
 
 
 class TransferAction(Enum):
@@ -169,6 +171,8 @@ class RasterContext(TraceContext):
                 raise UnsupportedOperation(f"Stretch mode {a['mode']}")
         elif name in ("dib_bit_blt", "dib_stretch_blt", "stretch_dib"):
             transfer = self._prepare_transfer(name, a)
+        elif name in ("bit_blt", "stretch_blt"):
+            transfer = self._prepare_legacy_transfer(name, a)
         elif name == "set_background_mode":
             if a["mode"] not in (1, 2):
                 raise UnsupportedOperation(f"Background mode {a['mode']}")
@@ -181,6 +185,14 @@ class RasterContext(TraceContext):
         elif name == "create_brush":
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
+        elif name == "create_pattern_brush":
+            layout = read_bitmap16(a["bitmap"], native_pattern=True, max_pixels=self.max_bitmap_pixels)
+            # A DDB keeps its device format. Only monochrome, the default
+            # indexed device palette, and matching RGB32 realize on this DC.
+            pattern = None
+            if layout.complete and layout.depth in (1, 8, 32):
+                colors = DEFAULT_COLORS[:10] + ((0, 0, 0),) * 236 + DEFAULT_COLORS[10:]
+                pattern = layout.decode(colors=colors if layout.depth == 8 else None)
         elif name == "create_dib_pattern_brush":
             layout = read_dib(
                 a["bitmap"],
@@ -354,6 +366,12 @@ class RasterContext(TraceContext):
             self._objects[result] = Pen(logical_color(a["color"]), a["width"], a["style"])
         elif name == "create_brush":
             self._objects[result] = Brush(logical_color(a["color"]), a["style"], a["hatch"])
+        elif name == "create_pattern_brush":
+            self._objects[result] = (
+                Brush((0, 0, 0), style=3, pattern=pattern, monochrome=layout.depth == 1, realizable=pattern is not None)
+                if layout.complete
+                else None
+            )
         elif name == "create_dib_pattern_brush":
             self._objects[result] = (
                 Brush((0, 0, 0), style=3, pattern=pattern, monochrome=a["style"] == 3) if pattern is not None else None
@@ -389,7 +407,7 @@ class RasterContext(TraceContext):
             self._pixel(*self._point(a["x"], a["y"]), logical_color(a["color"]))
         elif name == "pat_blt":
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
-        elif name in ("dib_bit_blt", "set_dib_to_device", "dib_stretch_blt", "stretch_dib"):
+        elif name in ("bit_blt", "stretch_blt", "dib_bit_blt", "set_dib_to_device", "dib_stretch_blt", "stretch_dib"):
             if isinstance(transfer, SourceTransfer):
                 self._source_blt(
                     transfer.bitmap,
@@ -560,6 +578,29 @@ class RasterContext(TraceContext):
                     self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
         return result
 
+    def _prepare_legacy_transfer(self, name, a) -> SourceTransfer | TransferAction:
+        if a["source"] is not None:
+            layout = read_bitmap16(a["source"], max_pixels=self.max_bitmap_pixels)
+            # PlayMetaFileRecord exits after successful bitmap selection,
+            # before testing the ROP. Other depths fail selection into the
+            # RGB32 memory DC; only source-independent operations can execute
+            # without a source bitmap. See gdi-bitmap16.md and native controls.
+            if layout.complete and layout.depth not in (1, 32) and pattern_rop2(a["rop"]) is not None:
+                return TransferAction.PATTERN
+            return TransferAction.NOOP
+        if pattern_rop2(a["rop"]) is not None:
+            return TransferAction.PATTERN
+        # Without embedded bits Windows uses the destination DC as source.
+        # Snapshot before painting so overlapping transfers read original data.
+        sx, sy = self._point(a["src_x"], a["src_y"])
+        sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
+        right, bottom = self._point(a["src_x"] + sw, a["src_y"] + sh)
+        a = dict(a, src_x=sx, src_width=right - sx, src_height=bottom - sy)
+        bitmap = RGBBitmap(self.image.width, self.image.height, self.image.tobytes())
+        return self._prepare_bitmap_transfer(
+            a, bitmap, sy, depth=32, halftone=name == "stretch_blt" and self._stretch_mode == 4
+        )
+
     def _prepare_transfer(self, name, a) -> SourceTransfer | TransferAction:
         if pattern_rop2(a["rop"]) is not None:
             return TransferAction.PATTERN
@@ -568,14 +609,6 @@ class RasterContext(TraceContext):
         layout = read_dib(a["source"], color_usage=a.get("color_usage", 0), max_pixels=self.max_bitmap_pixels)
         if not self._accepts_dib(layout):
             return TransferAction.NOOP
-        x, y = self._point(a["x"], a["y"])
-        right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
-        sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
-        dw, dh = right - x, bottom - y
-        if not all((sw, sh, dw, dh)):
-            return TransferAction.NOOP
-        scaled = abs(dw) != abs(sw) or abs(dh) != abs(sh)
-        mirrored = (dw < 0) != (sw < 0) or (dh < 0) != (sh < 0)
         copy = (a["rop"] >> 16) & 255 == 0xCC
         # DIB[STRETCH]BITBLT realizes a canonical black/white table as a
         # monochrome bitmap. Its bits use the destination DC's text/background
@@ -585,7 +618,6 @@ class RasterContext(TraceContext):
             layout = replace(
                 layout, colors=tuple(self._palette.colorref(c) for c in (self._text_color, self._background_color))
             )
-        halftone = self._stretch_mode == 4 and copy and not (monochrome and name == "dib_bit_blt" and not scaled)
         bitmap = layout.decode(
             replicate_channels=not (self._stretch_mode == 4 and copy), palette=self._palette.colors()
         )
@@ -594,7 +626,27 @@ class RasterContext(TraceContext):
         # adapts the source to top-left. The native ternary path also retains
         # the top-down storage distinction documented in gdi-dib-transfers.md.
         if (name == "stretch_dib") != (layout.top_down and not copy):
-            sy = layout.height - sy - sh
+            sy = layout.height - sy - a.get("src_height", a["height"])
+        return self._prepare_bitmap_transfer(
+            a,
+            bitmap,
+            sy,
+            depth=layout.depth,
+            halftone=self._stretch_mode == 4,
+            monochrome_bitblt=monochrome and name == "dib_bit_blt",
+        )
+
+    def _prepare_bitmap_transfer(self, a, bitmap, sy, *, depth, halftone, monochrome_bitblt=False):
+        x, y = self._point(a["x"], a["y"])
+        right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
+        sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
+        dw, dh = right - x, bottom - y
+        if not all((sw, sh, dw, dh)):
+            return TransferAction.NOOP
+        scaled = abs(dw) != abs(sw) or abs(dh) != abs(sh)
+        mirrored = (dw < 0) != (sw < 0) or (dh < 0) != (sh < 0)
+        copy = (a["rop"] >> 16) & 255 == 0xCC
+        halftone = halftone and copy and not (monochrome_bitblt and not scaled)
         if halftone:
             hx = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
             hy = StretchAxis.create(y, dh, sy, sh, bitmap.height)
@@ -604,7 +656,7 @@ class RasterContext(TraceContext):
                 return TransferAction.NOOP
             # Classify the original source once: filtering introduces colours
             # which must not change CheckBMPNeedFixup's dispatch decision.
-            content = classify_content(bitmap, left, top, right - left, bottom - top, depth=layout.depth)
+            content = classify_content(bitmap, left, top, right - left, bottom - top, depth=depth)
             if content.fixup and fixup_candidate(abs(sw), abs(sh), abs(dw), abs(dh)):
                 bitmap = fixup_bitmap(bitmap, left, top, right, bottom)
         if scaled and halftone:
@@ -852,7 +904,7 @@ class RasterContext(TraceContext):
         brush = self._brush if brush is None else brush
         if brush.style == 0:
             return self._palette.colorref(brush.color)
-        if brush.style == 1:
+        if brush.style == 1 or not brush.realizable:
             return None
         if brush.pattern is not None:
             px, py = x % brush.pattern.width, y % brush.pattern.height
