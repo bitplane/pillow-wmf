@@ -1467,6 +1467,22 @@ def dib_brush_cases():
         r.select_object(brush)
         r.pat_blt(0, 0, 128, 128, 0xF00021)
         yield f"dib-brush-legacy-{int(top_down)}-{usage}-{background:x}", r
+    for style, mode in product((3, 5), (1, 2)):
+        r = mapped()
+        r.set_text_color(0xCC1122)
+        r.set_background_color(0xEEBB33)
+        r.set_background_mode(mode)
+        r.select_object(r.create_pen(5, 0, 0))
+        r.select_object(r.create_dib_pattern_brush(style, 0, encode_dib24(legacy)))
+        r.rectangle(0, 0, 128, 32)
+        r.save_dc()
+        r.set_text_color(0x1188CC)
+        r.set_background_color(0x993311)
+        r.rectangle(0, 32, 128, 64)
+        r.pat_blt(0, 64, 128, 32, 0xF00021)
+        r.restore_dc(-1)
+        r.pat_blt(0, 96, 128, 32, 0xF00021)
+        yield f"dib-brush-live-colors-{style}-{mode}", r
 
 
 def main():
