@@ -1,6 +1,18 @@
 import pytest
 
 from pillow_wmf import RasterContext
+from pillow_wmf.mapping import Mapping
+
+
+def test_driver_translation_is_quantized_before_point_conversion():
+    mapping = Mapping(
+        window_extent=(128, 127), viewport_extent=(43, -64), window_origin=(9, 8), viewport_origin=(64, 64)
+    )
+    # X: translation 60.9765625 -> 61; product -24.5234375 -> -24.5.
+    # Rounding only the combined value (36.453125) would select pixel 36.
+    assert mapping.point(-73, 19) == (36, 58)
+    assert mapping.device_point(-73, 19) == (37, 59)
+    assert mapping.clip_point(-73, 19) == (37, 59)
 
 
 @pytest.mark.parametrize("width,height", ((4, 3), (-4, 3), (4, -3), (-4, -3), (0, 3), (4, 0)))

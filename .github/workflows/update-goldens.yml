@@ -41,6 +41,9 @@ jobs:
         run: python -m pip install .
       - name: Report native coordinate mapping
         run: python scripts/probe-windows-mapping.py
+      - name: Verify native PatBlt
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/probe-windows-patblt.py
       - name: Report native drawing paths
         if: github.event_name == 'workflow_dispatch'
         run: python scripts/probe-windows-paths.py
@@ -61,9 +64,6 @@ jobs:
       - name: Verify native region painting
         if: github.event_name == 'workflow_dispatch'
         run: python scripts/probe-windows-region-paint.py
-      - name: Verify native PatBlt
-        if: github.event_name == 'workflow_dispatch'
-        run: python scripts/probe-windows-patblt.py
       - name: Probe native inside-frame paths
         if: github.event_name == 'workflow_dispatch'
         run: python scripts/probe-windows-insideframe.py

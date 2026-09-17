@@ -72,7 +72,7 @@ class RasterContext(TraceContext):
         ] = []
 
     def _point(self, x: int, y: int) -> tuple[int, int]:
-        return self.mapping.point(x, y)
+        return self.mapping.device_point(x, y)
 
     def is_null_object(self, handle: Handle) -> bool:
         return handle.owner is self and handle in self._objects and self._objects[handle] is None

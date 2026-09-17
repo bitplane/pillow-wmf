@@ -52,9 +52,20 @@ class Mapping:
         )
 
     def clip_point(self, x: int, y: int) -> tuple[int, int]:
-        """Rectangular clip edges pass through 28.4 before pixel rounding."""
+        """Rectangular clip edges use the driver's fixed-point transform."""
+        return self.device_point(x, y)
+
+    def device_point(self, x: int, y: int) -> tuple[int, int]:
+        """Driver coordinates: quantize translation and product to 28.4.
+
+        The translation is realized separately, not reassociated with the
+        logical coordinate as (value - window_origin) * scale. Both stages
+        precede pixel rounding, which matters near half-pixel boundaries.
+        ``point`` retains the separate LPtoDP-style integer conversion.
+        """
         return tuple(
-            (rounded((origin + (value - window_origin) * viewport / window) * 16) + 8) // 16
+            (rounded(value * viewport / window * 16) + rounded((origin - window_origin * viewport / window) * 16) + 8)
+            // 16
             for value, origin, window_origin, viewport, window in zip(
                 (x, y), self.viewport_origin, self.window_origin, self.viewport_extent, self.window_extent, strict=True
             )
