@@ -11,6 +11,7 @@ on:
           - none
           - mapping
           - patblt
+          - dib-brush
           - paths
           - strokes
           - arcs
@@ -84,6 +85,9 @@ jobs:
       - name: Verify native PatBlt
         if: inputs.probe == 'patblt' || inputs.probe == 'all'
         run: python scripts/probe-windows-patblt.py
+      - name: Inspect native DIB brushes
+        if: inputs.probe == 'dib-brush' || inputs.probe == 'all'
+        run: python scripts/probe-windows-dib-brush.py
       - name: Report native drawing paths
         if: inputs.probe == 'paths' || inputs.probe == 'all'
         run: python scripts/probe-windows-paths.py
