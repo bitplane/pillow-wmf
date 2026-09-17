@@ -1812,6 +1812,34 @@ def halftone_boundary_cases():
         for i, (sx, sy) in enumerate(product(range(-4, 5), repeat=2)):
             r.dib_stretch_blt(i % 9 * 8, i // 9 * 8, dw, dh, sx, sy, 5, 5, 0xCC0020, small)
         yield f"halftone-clip-cells-{dw}x{dh}", r
+    for operation, top_down in product(("dib_stretch_blt", "stretch_dib"), (False, True)):
+        r = mapped()
+        r.set_stretch_mode(4)
+        source = encode_dib24(
+            RGBBitmap(
+                3, 7, bytes((x * 37 + y * 53 + c * 71) % 256 for y in range(7) for x in range(3) for c in range(3))
+            ),
+            top_down=top_down,
+        )
+        i = 0
+        for sh in range(3, 8):
+            for dh, available, leading in product(range(1, sh), (1, 2, 3), (False, True)):
+                sy = available - sh if leading else 7 - available
+                source_args = {"source": source, "color_usage": 0} if operation == "stretch_dib" else {"source": source}
+                getattr(r, operation)(
+                    i % 12 * 10,
+                    i // 12 * 10,
+                    3,
+                    dh,
+                    0,
+                    7 - sy - sh if operation == "stretch_dib" else sy,
+                    3,
+                    sh,
+                    0xCC0020,
+                    **source_args,
+                )
+                i += 1
+        yield f"halftone-vertical-slivers-{operation}-{int(top_down)}", r
     # Classifier thresholds: small images, full colour counting, then sampled
     # rows. Repeated rows distinguish spatial structure from palette size.
     for size in (48, 49, 129):
