@@ -495,10 +495,17 @@ class RasterContext(TraceContext):
         # the top-down storage distinction documented in gdi-dib-transfers.md.
         if (name == "stretch_dib") != (layout.top_down and not copy):
             sy = layout.height - sy - sh
-        if scaled and self._stretch_mode == 4:
-            filtered = halftone_bitmap(bitmap, a["src_x"], sy, sw, sh, dw, dh)
+        if scaled and self._stretch_mode == 4 and copy:
+            hx = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
+            hy = StretchAxis.create(y, dh, sy, sh, bitmap.height)
+            filtered = halftone_bitmap(bitmap, hx.source, hy.source, abs(sw), abs(sh), abs(dw), abs(dh))
             if filtered is not None:
-                return filtered, BlitAxis(x, 0, dw), BlitAxis(y, 0, dh), None
+                return (
+                    filtered,
+                    BlitAxis(hx.destination, abs(dw) - 1 if hx.mirrored else 0, abs(dw), -1 if hx.mirrored else 1),
+                    BlitAxis(hy.destination, abs(dh) - 1 if hy.mirrored else 0, abs(dh), -1 if hy.mirrored else 1),
+                    None,
+                )
         if scaled:
             horizontal = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
             vertical = StretchAxis.create(y, dh, sy, sh, bitmap.height)
@@ -506,13 +513,16 @@ class RasterContext(TraceContext):
             horizontal = BlitAxis.unscaled(x, dw, a["src_x"], sw, bitmap.width, anchor_pixel=copy or mirrored)
             vertical = BlitAxis.unscaled(y, dh, sy, sh, bitmap.height, anchor_pixel=copy or mirrored)
         pad_bounds = None
-        if (scaled or mirrored) and not copy:
+        if (scaled or mirrored) and (not copy or (scaled and self._stretch_mode == 4)):
             left, top = x + min(0, dw + 1), y + min(0, dh + 1)
             pad_bounds = (left, top, left + abs(dw), top + abs(dh))
         return bitmap, horizontal, vertical, pad_bounds
 
     def _source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
         table = (operation >> 16) & 255
+        # EngStretchBltROP downgrades HALFTONE for ternary operations. Keep
+        # this per-transfer; the saved DC stretch mode must remain unchanged.
+        mode = 3 if self._stretch_mode == 4 and table != 0xCC else self._stretch_mode
         needs_pattern = (table & 15) != (table >> 4)
         left, top, right, bottom = pad_bounds or (
             horizontal.destination,
@@ -526,8 +536,8 @@ class RasterContext(TraceContext):
                     continue
                 samples = (
                     bitmap.pixel(sx, sy)
-                    for sy in vertical.samples(y, self._stretch_mode)
-                    for sx in horizontal.samples(x, self._stretch_mode)
+                    for sy in vertical.samples(y, mode)
+                    for sx in horizontal.samples(x, mode)
                     if 0 <= sx < bitmap.width and 0 <= sy < bitmap.height
                 )
                 source = next(samples, None)

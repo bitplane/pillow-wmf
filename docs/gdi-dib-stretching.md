@@ -5,8 +5,8 @@ preparation, scan selection and the existing brush/ROP3 compositor. Modes 1
 (BLACKONWHITE), 2 (WHITEONBLACK) and 3 (COLORONCOLOR) are implemented for the
 24-bit BI_RGB profile. Stretch mode defaults to 1 and is saved/restored with DC
 state. Mode 4 implements HALFTONE reduction, enlargement and mixed-axis transfers
-with positive extents and an in-bounds source rectangle. Reflected extents,
-source clipping and the large-image content classifier still raise explicitly.
+including reflected extents, large-image classification and replication-path
+source clipping. Source clipping on the filtered path still raises explicitly.
 
 ## Integer scan selection
 
@@ -219,21 +219,64 @@ area** overrides that decision and restores filtering. These interacting rules
 explain 3x2-to-17x1 replication, 9x2-to-17x1 filtering, and 9x2-to-61x1
 replication. For 3x3-to-17x1, the vertical ratio alone prevents replication.
 
-Larger eligible images use a content-dependent colour classifier. That branch
-is explicitly unsupported for now, not assumed to replicate or filter.
+Larger eligible images use the content-dependent colour census described below.
 
 Replication itself has a different reduction phase from COLORONCOLOR. It builds
 the inverse enlargement's run lengths and retains the **last source scan** in
 each run. For S > D, output index j therefore selects
-`(2*(j+1)*S - D - 1) // (2*D)`. For enlargement it uses the centre-phase DDA
-already described above. This resolves the original 7x9-to-5x13 colour atlas:
+`(2*(j+1)*S - D - 1) // (2*D)`. For enlargement it uses
+`((2*j+1)*S - 1) // (2*D)`: exact centre ties go to the earlier scan.
+This resolves the original 7x9-to-5x13 colour atlas:
 its shrinking axis selects `[0,2,3,5,6]`, not `[0,2,3,4,6]`. This is mode-specific
 scan arithmetic, not a per-ratio rendering exception.
 
-Next native boundary coverage should include source clipping, reflected
-extents and cropped sources with contrasting pixels outside the selected
-rectangle. Existing destination clipping and ROP composition remain shared;
-their HALFTONE-specific native boundary behavior needs those probes too.
+### Colour census and fast enlargement
+
+`CheckBMPNeedFixup` clips the census to the available source rectangle. At most
+2304 pixels always select replication. Through 16384 pixels it scans every row,
+initially permitting `area >> 3` distinct colour keys. A row with no new colours
+subtracts its width from the remaining area: reaching 2304 selects replication;
+otherwise the new colour limit becomes `remaining >> 4`. Scanning stops when
+the colour count exceeds the limit. Above 16384 pixels, it samples every sixth
+row with a limit of 20 colours. The final count must be **less than** 20 to
+select replication. Keys mask each channel with 252 when red equals blue.
+The implementation uses a bounded set rather than the native linear search.
+
+If both axes enlarge by at most 5x and the census does not select replication,
+native `FastExpAA_CY`/`FastExpAA_CX` use replication runs of lengths 1 through 5.
+Each run has a fixed three-source-sample stencil. The coefficients in
+`RunExpansionAxis.kernels` express those native arithmetic stencils in units of
+1/32; they are not fitted fixture corrections. For example, a one-pixel run uses
+`(5*previous + 22*center + 5*next + 16) >> 5`, whereas a two-pixel run uses
+`(previous + 3*center + 2) >> 2` then `(3*center + next + 2) >> 2`.
+
+First apply the two-dimensional source Laplacian
+`clamp((12*C - L - R - U - D) >> 3)`. Fast enlargement extends raw source rows
+before sharpening, then filters vertically to bytes and horizontally to bytes.
+General two-axis tent enlargement (either axis above 5x) sharpens the source,
+extends its sharpened endpoints, then filters horizontally followed by vertically.
+These different orders and boundary stages are observable in the PNGs.
+
+### Boundary and ROP validation
+
+48 additional WMF/PNG pairs cover the 2304/16384-pixel classifier thresholds,
+19/20/21 colours, repeated rows, every fast run length, general two-axis expansion,
+destination clipping, cropped source rectangles, all extent-sign combinations,
+both DIB orientations and record types, replication source clipping, and all
+256 ROP3 truth tables. References came from two missing-only Windows runs
+([boundary census](https://github.com/bitplane/pillow-wmf/actions/runs/35210925583),
+[enlargement runs](https://github.com/bitplane/pillow-wmf/actions/runs/35211885627));
+all comparisons run locally with exact pixels.
+
+HALFTONE reflects the realized output, including its sampling phase. Replication
+reduction retains the last available source scan in a partially clipped run;
+unavailable output pixels are black. Ternary operations instead use native
+`EngStretchBltROP`'s downgrade to COLORONCOLOR, without changing the DC's stored
+stretch mode. The shared brush/ROP compositor remains in use.
+
+Still to characterize: clipping an out-of-bounds source when the classifier
+selects filtering, and combinations of that clipping with reflection. Those
+filtered source rectangles remain explicitly rejected rather than approximated.
 
 Additional depths, compression, palettes and legacy Bitmap16 remain outside
 this slice; fonts are still deferred.

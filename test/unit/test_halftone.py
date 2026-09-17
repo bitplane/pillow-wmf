@@ -9,9 +9,11 @@ from pillow_wmf.halftone import (
     ExpansionAxis,
     HalftoneExpansion,
     HalftoneReduction,
+    RunExpansionAxis,
     area_weights,
     halftone_bitmap,
     replication_candidate,
+    replication_content,
 )
 from pillow_wmf.halftone_power import tent_power
 
@@ -127,10 +129,39 @@ def test_source_sharpening_saturates_before_expansion():
     assert [view.sharp(i, 0) for i in range(3)] == [(32, 32, 32), (255, 255, 255), (32, 32, 32)]
 
 
-def test_unresolved_large_image_classifier_is_not_assumed_to_replicate():
+def test_large_constant_image_is_classified_for_replication():
     bitmap = RGBBitmap(49, 49, bytes(49 * 49 * 3))
-    with pytest.raises(UnsupportedOperation, match="classification"):
-        halftone_bitmap(bitmap, 0, 0, 49, 49, 50, 50)
+    assert halftone_bitmap(bitmap, 0, 0, 49, 49, 50, 50) is None
+
+
+@pytest.mark.parametrize("colours,replicate", ((19, True), (20, False), (21, False)))
+def test_sampled_classifier_has_a_strict_twenty_colour_boundary(colours, replicate):
+    bitmap = RGBBitmap(129, 129, bytes(c for y in range(129) for x in range(129) for c in (x % colours, 71, 113)))
+    assert replication_content(bitmap, 0, 0, 129, 129) == replicate
+
+
+def test_replication_ties_and_reflection_are_output_addressed():
+    forward = StretchAxis.create(0, 13, 0, 6, 6)
+    reverse = StretchAxis.create(12, -13, 0, 6, 6)
+    values = [tuple(forward.samples(i, 4)) for i in range(13)]
+    assert values[6] == (2,)
+    assert [tuple(reverse.samples(i, 4)) for i in range(13)] == values[::-1]
+
+
+def test_halftone_clipped_reduction_retains_last_available_scan_in_run():
+    axis = StretchAxis.create(0, 7, 7, 9, 9)
+    assert [tuple(axis.samples(i, 4)) for i in range(3)] == [(7,), (8,), ()]
+
+
+def test_fast_run_stencils_partition_the_integer_replication_runs():
+    for source in range(1, 17):
+        for destination in range(source + 1, source * 5 + 1):
+            axis = RunExpansionAxis(source, destination)
+            for index in range(destination):
+                weights = axis.weights(index)
+                assert sum(w for _, w in weights) == 8192
+                assert len(weights) == 3
+                assert all(-1 <= scan <= source and w >= 0 for scan, w in weights)
 
 
 def test_excessive_tap_allocation_is_rejected():

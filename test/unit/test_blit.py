@@ -148,14 +148,14 @@ def test_wmf_device_transfer_rejects_short_packed_image_even_with_complete_band(
     assert set(context.image.get_flattened_data()) == {(255, 255, 255)}
 
 
-def test_unsupported_halftone_geometry_is_rejected_before_commit():
+def test_unresolved_halftone_filter_clipping_is_rejected_before_commit():
     context = RasterContext(8, 8)
-    context.set_window_extent(1, 1)
-    context.set_viewport_extent(2, 2)
+    context.set_window_extent(2, 2)
+    context.set_viewport_extent(1, 1)
     context.set_stretch_mode(4)
     before = list(context.calls)
     with pytest.raises(UnsupportedOperation, match="HALFTONE"):
-        context.dib_bit_blt(0, 0, 1, 1, -1, 0, 0xCC0020, encode_dib24(RGBBitmap(1, 1, bytes(3))))
+        context.dib_bit_blt(0, 0, 3, 3, -1, 0, 0xCC0020, encode_dib24(RGBBitmap(3, 3, bytes(27))))
     assert context.calls == before
     assert set(context.image.get_flattened_data()) == {(255, 255, 255)}
 
