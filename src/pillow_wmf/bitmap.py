@@ -1,7 +1,7 @@
 """Packed DIB codecs, separate from WMF record framing and brush sampling."""
 
 from dataclasses import dataclass
-from struct import pack, unpack_from
+from struct import pack, pack_into, unpack_from
 
 from .gdi import UnsupportedOperation
 from .wmf.binary import FormatError
@@ -56,6 +56,86 @@ def encode_dib24(bitmap: RGBBitmap, *, top_down: bool = False) -> BitmapData:
         data.extend(row)
         data.extend(bytes(stride - width * 3))
     return BitmapData("dib", bytes(data))
+
+
+def encode_dib(width, height, samples, *, depth, colors=(), masks=None, header_size=40, top_down=False, rle=False):
+    """Record exact integer pixels, without quantization or palette selection.
+
+    Indexed samples are table indexes; direct-colour samples are packed words
+    in the requested RGB/mask layout. Samples are supplied top-to-bottom.
+    """
+    samples = tuple(samples)
+    if width <= 0 or height <= 0 or len(samples) != width * height:
+        raise ValueError("Invalid DIB dimensions or sample count")
+    if depth not in (1, 4, 8, 16, 24, 32) or any(not 0 <= s < 1 << depth for s in samples):
+        raise ValueError("Invalid DIB sample depth or value")
+    if header_size not in (12, 40, 108, 124):
+        raise ValueError("Invalid DIB header size")
+    if header_size == 12 and (top_down or masks or rle or depth not in (1, 4, 8, 24) or max(width, height) > 65535):
+        raise ValueError("Unsupported Core DIB representation")
+    if depth <= 8 and (not 0 < len(colors) <= 1 << depth or any(s >= len(colors) for s in samples)):
+        raise ValueError("DIB sample outside colour table")
+    if any(len(c) != 3 or any(not 0 <= v <= 255 for v in c) for c in colors):
+        raise ValueError("Invalid DIB colour table")
+    if masks is not None and (depth not in (16, 32) or len(masks) != 3):
+        raise ValueError("Bitfields require three masks and 16/32-bit pixels")
+    if rle and (depth not in (4, 8) or top_down or masks):
+        raise ValueError("RLE requires bottom-up indexed pixels")
+    compression = (1 if depth == 8 else 2) if rle else 3 if masks else 0
+    payload = bytearray()
+    for y in range(height) if top_down else range(height - 1, -1, -1):
+        row = samples[y * width : (y + 1) * width]
+        if rle:
+            # Deterministic encoded runs. More elaborate absolute/delta streams
+            # can still be recorded losslessly through BitmapData.
+            x = 0
+            while x < width:
+                end = x + 1
+                while end < min(width, x + 255) and row[end] == row[x]:
+                    end += 1
+                payload.extend((end - x, row[x] if depth == 8 else row[x] * 17))
+                x = end
+            payload.extend((0, 0))
+        else:
+            packed = bytearray(((width * depth + 31) // 32) * 4)
+            for x, value in enumerate(row):
+                if depth < 8:
+                    packed[x * depth // 8] |= value << (8 - depth - x * depth % 8)
+                else:
+                    start = x * (depth // 8)
+                    packed[start : start + depth // 8] = value.to_bytes(depth // 8, "little")
+            payload.extend(packed)
+    if rle:
+        payload.extend((0, 1))
+    if header_size == 12:
+        header = pack("<IHHHH", 12, width, height, 1, depth)
+        table = tuple(colors) + ((0, 0, 0),) * ((1 << depth) - len(colors)) if depth <= 8 else tuple(colors)
+        return BitmapData("dib", header + bytes(v for r, g, b in table for v in (b, g, r)) + payload)
+    header = bytearray(header_size)
+    pack_into(
+        "<IiiHHIIiiII",
+        header,
+        0,
+        header_size,
+        width,
+        -height if top_down else height,
+        1,
+        depth,
+        compression,
+        len(payload),
+        0,
+        0,
+        len(colors),
+        0,
+    )
+    if header_size >= 108:
+        pack_into("<I", header, 56, 0x73524742)  # LCS_sRGB; no external profile.
+    if masks:
+        if header_size == 40:
+            header.extend(pack("<III", *masks))
+        else:
+            pack_into("<III", header, 40, *masks)
+    return BitmapData("dib", bytes(header) + bytes(v for r, g, b in colors for v in (b, g, r, 0)) + payload)
 
 
 @dataclass(frozen=True)
