@@ -82,13 +82,18 @@ without modifying either state. All four obey the application clip.
 The frame is an **inner rectangular morphological border**, not the outlines
 of the individual scan rectangles. Dilating the region's complement and
 intersecting it with the region handles holes, narrow arms, disconnected
-islands and concave corners without introducing scan-band seams. Region
+islands and concave corners without introducing scan-band seams. The complement
+is formed in source coordinates before mapping: collapsing a narrow gap must
+not erase the source contour. A gap mapped to a line retains a framed seam
+with flat ends; a gap mapped to a point has no remaining edge. Region
 subtraction and dilation operate on bands, not bitmap-sized masks.
 
 Native probes and inspection of the reference runner's frame/widening entry
 points establish the following device footprint realization:
 
-1. Map the region's rectangle edges using ordinary point mapping.
+1. Map region/path rectangle edges through 28.4 fixed point, then round to
+   pixels. Rectangular clip operations use this conversion too; ordinary
+   point mapping is not interchangeable near half-pixel thresholds.
 2. Take absolute logical dimensions. Use twice the larger dimension as a
    common geometric-pen width and normalize the shorter axis of its transform.
    The normalization and transform multiplication use IEEE single precision.
@@ -133,16 +138,19 @@ intersection/exclusion, reset, null objects and slot-zero selection. The manual
 cross-primitive pixel comparisons. The final native verification is
 [run 35172754644](https://github.com/bitplane/pillow-wmf/actions/runs/35172754644).
 
-An additional 75 Windows PNGs cover all four paint calls, explicit and selected
+An additional 81 Windows PNGs cover all four paint calls, explicit and selected
 brushes, solid/null/hatch brushes, transparent/opaque backgrounds, XOR, clipping,
 nonuniform and reflected mappings, half-pixel boundaries, and zero, negative
 and oversized frame dimensions, phase isolation, continuous width atlases and
-cross-primitive hatch/ROP behavior. Rectangle's block fill simplifies
+collapsed gaps, fixed-point edge thresholds and cross-primitive hatch/ROP
+behavior. Rectangle's block fill simplifies
 brush-independent ROPs before hatch transparency; region/path fills retain the
 transparent pattern mask even for BLACK, WHITE and NOT. Brush realization
 handles that distinction; the pixel compositor and hatch definition are shared.
 
 The manual `probe-windows-region-paint.py`
 cross-checks further shapes, all 16 ROP2 modes, fractional mappings and state
-preservation directly against Windows. The ordinary push workflow continues
+preservation directly against Windows. The temporary native implementation
+inspection script/workflow was removed after research; its read-only job logs
+are linked above. The ordinary push workflow continues
 to render only missing PNGs; the larger matrix runs only on manual dispatch.
