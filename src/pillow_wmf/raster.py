@@ -14,7 +14,15 @@ from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
 from .mapping import Mapping
 from .paint import rop2
-from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outline, realize_pen, widen_segment
+from .stroke import (
+    cosmetic_line,
+    cosmetic_span,
+    dash_is_foreground,
+    frame_footprint,
+    join_outline,
+    realize_pen,
+    widen_segment,
+)
 from .trace import TraceContext
 
 
@@ -267,18 +275,16 @@ class RasterContext(TraceContext):
             if region is not None:
                 region = region.transformed(self._point)
                 if name == "frame_region":
-                    # Realize the rectangular support in 28.4, then quantize
-                    # to half-pixel body support (x inward, y outward).
-                    support = [
-                        abs(ceil(abs(size) * 16 / (window / viewport)))
-                        for size, window, viewport in zip(
-                            (a["width"], a["height"]),
-                            self.mapping.window_extent,
-                            self.mapping.viewport_extent,
-                            strict=True,
+                    region = region.frame(
+                        *frame_footprint(
+                            a["width"],
+                            a["height"],
+                            *(
+                                v / w
+                                for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent, strict=True)
+                            ),
                         )
-                    ]
-                    region = region.frame(Fraction((support[0] + 3) // 8, 2), Fraction((support[1] + 4) // 8, 2))
+                    )
                 brush = self._objects[a["brush"]] if "brush" in a else self._brush
                 for left, top, right, bottom in region.rectangles():
                     for y in range(max(0, top), min(self.image.height, bottom)):

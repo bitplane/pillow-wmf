@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from itertools import chain
 from math import ceil, floor, sqrt
+from struct import pack, unpack
 
 from .geometry import Point, Polygon, StrokeSegment, flatten_cubic
 
@@ -53,10 +54,10 @@ class PenGeometry:
     cosmetic: bool
 
 
-def realize_pen(width: int, scale_x=1, scale_y=1) -> PenGeometry:
+def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeometry:
     """Realize CreatePen width in device space, including the hairline rule."""
     device_width = floor(width * abs(scale_x) + 0.5)
-    cosmetic = device_width <= 1
+    cosmetic = not geometric and device_width <= 1
     if cosmetic or (abs(scale_x) == abs(scale_y) and device_width <= 6):
         half = [(x * 8, y * 8) for x, y in _SMALL_PENS[max(1, device_width)]]
     else:
@@ -73,6 +74,41 @@ def realize_pen(width: int, scale_x=1, scale_y=1) -> PenGeometry:
         # seam vertices. Native contour traversal visits those duplicates;
         # they matter when rounded body support differs from the pen vertex.
     return PenGeometry(tuple(half + [(-x, -y) for x, y in half]), cosmetic)
+
+
+def frame_footprint(width, height, scale_x, scale_y):
+    """Rectangular frame support realized through GDI's geometric pen."""
+    width, height = abs(width), abs(height)
+    if not width or not height:
+        return 0, 0
+
+    def single(value):
+        return unpack("f", pack("f", value))[0]
+
+    radius = max(width, height)
+    scale_x = single(single(width / radius) * single(scale_x))
+    scale_y = single(single(height / radius) * single(scale_y))
+    pen = realize_pen(2 * radius, scale_x, scale_y, geometric=True)
+    half = pen.vertices[: len(pen.vertices) // 2]
+    indices = (
+        0,
+        min(range(len(half)), key=lambda i: half[i][1])
+        if scale_x >= 0
+        else max(range(len(half)), key=lambda i: half[i][1]),
+    )
+    supports = []
+    for axis, index in enumerate(indices):
+        previous = (index - 1) % len(pen.vertices)
+        while pen.vertices[previous] == pen.vertices[index]:
+            previous = (previous - 1) % len(pen.vertices)
+        value = pen.vertices[index][axis]
+        delta = value - pen.vertices[previous][axis]
+        # The native normal/pen-edge intersection rounds its midpoint and
+        # interpolation separately. An odd positive edge delta consequently
+        # advances the endpoint by one fixed unit.
+        value = value - (delta >> 1) + (1 if delta >= 0 else -1) * ((abs(delta) + 1) // 2)
+        supports.append(Fraction(abs(_body(value, miter=axis == 0)), 16))
+    return tuple(supports)
 
 
 def _support_index(pen: PenGeometry, dx: int, dy: int) -> int:

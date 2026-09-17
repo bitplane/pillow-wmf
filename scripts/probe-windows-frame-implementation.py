@@ -4,6 +4,8 @@ import os
 import struct
 from pathlib import Path
 
+requested = set()
+
 
 def inspect(path):
     data = path.read_bytes()
@@ -23,6 +25,19 @@ def inspect(path):
                 return raw + rva - virtual
         raise ValueError(rva)
 
+    if path.name == "win32kfull.sys":
+        imports = offset(unpack("I", optional + 120)[0])
+        while unpack("I", imports + 12)[0]:
+            lookup, _, _, _, address = unpack("IIIII", imports)
+            index = 0
+            while entry := unpack("Q", offset(lookup) + index * 8)[0]:
+                if address + index * 8 == 0x3BD520:
+                    start = offset(entry) + 2
+                    requested.add(data[start : data.index(0, start)].decode("ascii"))
+                index += 1
+            imports += 20
+        print("requested", requested, flush=True)
+
     directory = unpack("I", optional + (112 if unpack("H", optional)[0] == 0x20B else 96))[0]
     if not directory:
         return
@@ -32,7 +47,7 @@ def inspect(path):
     for index in range(names_count):
         name_offset = offset(unpack("I", offset(names) + 4 * index)[0])
         name = data[name_offset : data.index(0, name_offset)].decode("ascii")
-        if "FrameRgn" in name or "FrameRegion" in name:
+        if "FrameRgn" in name or "FrameRegion" in name or name in requested:
             ordinal = unpack("H", offset(ordinals) + 2 * index)[0]
             rva = unpack("I", offset(functions) + 4 * ordinal)[0]
             entries.append((name, rva))
@@ -40,8 +55,8 @@ def inspect(path):
     for name, rva in entries:
         print(name, hex(rva), data[offset(rva) : offset(rva) + 2048].hex(), flush=True)
     if path.name == "win32kfull.sys":
-        for rva in (0x11B138,):
-            print("helper", hex(rva), data[offset(rva) : offset(rva) + 8192].hex(), flush=True)
+        for rva in (0x11DD10,):
+            print("helper", hex(rva), data[offset(rva) : offset(rva) + 512].hex(), flush=True)
 
 
 for filename in ("gdi32full.dll", "win32kfull.sys", "win32kbase.sys"):
