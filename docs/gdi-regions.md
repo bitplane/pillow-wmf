@@ -156,3 +156,9 @@ preservation directly against Windows. The temporary native implementation
 inspection script/workflow was removed after research; its read-only job logs
 are linked above. The ordinary push workflow continues
 to render only missing PNGs; the larger matrix runs only on manual dispatch.
+
+Final verification: [Windows run 35187780608](https://github.com/bitplane/pillow-wmf/actions/runs/35187780608)
+passed all 996 region-painting comparisons and the existing stroke, arc, edge,
+region-clip, inside-frame, RoundRect, Pie and Chord regressions. The local suite
+passes 1,088 tests, including 47 new region-algebra/painting unit tests;
+pre-commit passes. Pixel comparisons remain exact.
