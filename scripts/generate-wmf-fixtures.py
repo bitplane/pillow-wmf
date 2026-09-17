@@ -1321,7 +1321,7 @@ def flood_cases():
 def pat_blt_cases():
     matrix = runpy.run_path(str(Path(__file__).with_name("probe-windows-patblt.py")))["cases"]
     for index, recorder in matrix():
-        if index not in (2, 12, 16, 51, 401, 417, 423, 432):
+        if index not in (2, 12, 16, 51, 60, 65, 102, 140, 224, 303, 401, 417, 423, 432):
             continue
         yield f"patblt-matrix-{index}", recorder
         for kind in ("blits", "observers"):
