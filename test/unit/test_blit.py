@@ -2,7 +2,7 @@ from itertools import product
 
 import pytest
 
-from pillow_wmf import FormatError, RasterContext, UnsupportedOperation
+from pillow_wmf import FormatError, RasterContext
 from pillow_wmf.bitmap import RGBBitmap, encode_dib24, read_dib24
 from pillow_wmf.blit import BlitAxis, StretchAxis
 from pillow_wmf.wmf.objects import BitmapData
@@ -148,15 +148,15 @@ def test_wmf_device_transfer_rejects_short_packed_image_even_with_complete_band(
     assert set(context.image.get_flattened_data()) == {(255, 255, 255)}
 
 
-def test_unresolved_halftone_filter_clipping_is_rejected_before_commit():
+def test_fully_unavailable_halftone_source_is_a_recorded_noop():
     context = RasterContext(8, 8)
     context.set_window_extent(2, 2)
     context.set_viewport_extent(1, 1)
     context.set_stretch_mode(4)
     before = list(context.calls)
-    with pytest.raises(UnsupportedOperation, match="HALFTONE"):
-        context.dib_bit_blt(0, 0, 3, 3, -1, 0, 0xCC0020, encode_dib24(RGBBitmap(3, 3, bytes(27))))
-    assert context.calls == before
+    context.dib_bit_blt(0, 0, 3, 3, -4, -4, 0xCC0020, encode_dib24(RGBBitmap(3, 3, bytes(27))))
+    assert context.calls[:-1] == before
+    assert context.calls[-1].name == "dib_bit_blt"
     assert set(context.image.get_flattened_data()) == {(255, 255, 255)}
 
 

@@ -1,12 +1,12 @@
-# DIB stretching: integer modes and remaining HALFTONE research
+# DIB stretching: integer modes and native HALFTONE
 
 `dib_stretch_blt`, `stretch_dib`, and mapped/scaled `dib_bit_blt` share transfer
 preparation, scan selection and the existing brush/ROP3 compositor. Modes 1
 (BLACKONWHITE), 2 (WHITEONBLACK) and 3 (COLORONCOLOR) are implemented for the
 24-bit BI_RGB profile. Stretch mode defaults to 1 and is saved/restored with DC
 state. Mode 4 implements HALFTONE reduction, enlargement and mixed-axis transfers
-including reflected extents, large-image classification and replication-path
-source clipping. Source clipping on the filtered path still raises explicitly.
+including reflected extents, large-image classification and source clipping
+on both replication and filtered paths.
 
 ## Integer scan selection
 
@@ -134,7 +134,7 @@ weight = floor(right * 8192 / S) - floor(left * 8192 / S)
 Quantize the **cumulative boundaries**, then subtract; do not independently
 round overlap fractions or source colour contributions. This is the closed
 form of the native remainder-carrying scan accumulator. The weights sum to
-8192 for every output sample, preserving all constant colours exactly.
+8192 for every unclipped output sample, preserving all constant colours exactly.
 
 - Both axes shrink: horizontally area-average and round each channel to a byte
   with `(sum + 4096) >> 13`, then vertically area-average without discarding
@@ -274,9 +274,52 @@ unavailable output pixels are black. Ternary operations instead use native
 `EngStretchBltROP`'s downgrade to COLORONCOLOR, without changing the DC's stored
 stretch mode. The shared brush/ROP compositor remains in use.
 
-Still to characterize: clipping an out-of-bounds source when the classifier
-selects filtering, and combinations of that clipping with reflection. Those
-filtered source rectangles remain explicitly rejected rather than approximated.
+### Filtered source clipping
+
+Filtering retains the original source/destination extents and fractional phase;
+it does not rescale the available intersection. The native scan builders and
+their consumers determine which output cells exist and how their history is
+initialized:
+
+- Reduction starts at the first destination area cell touched by the available
+  source. Its leading missing contribution is prefilled from the first sample.
+  The builder appends a closing entry at the trailing source edge, including
+  when that edge is exactly on a destination-cell boundary. Horizontal reduction
+  closes with zero for the unavailable contribution; the vertical loader repeats
+  its final row. Sharpening clamps neighbours to this realized cell interval.
+- The colour-census eligibility decision also selects a buffered source reader.
+  A total-area decrease overrides replication, but does **not** disable that
+  reader. A partial first reduction cell preloads and then replays its first
+  scan. With only one available row, current is primed but previous is not, so
+  replay reads zero. For a 5-to-3 vertical reduction with only the last requested
+  row available, this leaves the 3276/8192 prefill contribution. This is a
+  scan-history rule, not a changed kernel or a special ratio. Isolated native
+  builder/reader/reducer calls reproduce it; the WMFs validate the full pipeline.
+- General tent enlargement stops advancing its source cursor when it reaches
+  the available edge, while fractional weights continue advancing. Thus it can
+  continue producing varying output beyond the nominal source intersection.
+  Unfilled history slots are zero; a single available sample still has its
+  primed lookahead. One virtual leading sample can be primed, but skipping more
+  than one starting sample makes the native builder return no transfer.
+- Fast-run enlargement instead clips the emitted run interval at rounded
+  source-to-destination boundaries and extends its raw edge samples before
+  sharpening. Unavailable output cells are black. A wholly unavailable source,
+  or a failed general-filter startup, leaves the destination untouched.
+
+Reflection reverses the finished filtered output, including these boundaries;
+it does not reverse or restart the filter weights.
+
+37 additional WMF/PNG pairs cover clipped reduction/mixed transfers, all extent
+signs, both DIB orientations and record types, fast/general large-image
+enlargement, reflected trailing clips, and one-to-three-scan slivers. References
+were generated in missing-only Windows runs:
+[clipped transfers](https://github.com/bitplane/pillow-wmf/actions/runs/35212500830),
+[large images](https://github.com/bitplane/pillow-wmf/actions/runs/35213271351),
+[edge cells/reflection](https://github.com/bitplane/pillow-wmf/actions/runs/35213594840),
+[vertical slivers](https://github.com/bitplane/pillow-wmf/actions/runs/35214679997),
+[horizontal/grid boundaries](https://github.com/bitplane/pillow-wmf/actions/runs/35215512931).
+All pixel comparisons run locally, with no tolerance or replacement of existing
+reference images.
 
 Additional depths, compression, palettes and legacy Bitmap16 remain outside
 this slice; fonts are still deferred.

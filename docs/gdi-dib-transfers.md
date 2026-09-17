@@ -43,8 +43,7 @@ the low opcode word, choose the Boolean operation.
 
 Mapped source-dependent transfers now also use the shared
 [stretch sampler](gdi-dib-stretching.md) for modes 1–3 and native fixed-point
-HALFTONE. Filtered HALFTONE source clipping is still rejected before committing
-the call; replication-path clipping is implemented.
+HALFTONE, including source clipping on replication and filtered paths.
 
 ## SetDIBitsToDevice bands
 
@@ -93,6 +92,6 @@ and [Wine WMF playback](https://github.com/wine-mirror/wine/blob/master/dlls/gdi
 Wine corroborates separate copy/ternary and band paths, but Windows remains
 the oracle. The implementation is not a transcription of Wine's source.
 
-Still unsupported: filtered HALFTONE source clipping, indexed and other pixel
-formats, additional headers, compression, palettes and legacy Bitmap16 blits.
+Still unsupported: indexed and other pixel formats, additional headers,
+compression, palettes and legacy Bitmap16 blits.
 Fonts remain deferred.

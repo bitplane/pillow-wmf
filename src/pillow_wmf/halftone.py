@@ -19,7 +19,12 @@ def replication_candidate(sw, sh, width, height):
     The +500 is literal: it is not half of the source dimension. A decrease
     in total pixel area overrides the small-image replication decision.
     """
-    return width * height >= sw * sh and (width * 1000 + 500) // sw > 667 and (height * 1000 + 500) // sh > 667
+    return width * height >= sw * sh and fixup_candidate(sw, sh, width, height)
+
+
+def fixup_candidate(sw, sh, width, height):
+    """Eligibility for the colour census and its buffered source reader."""
+    return (width * 1000 + 500) // sw > 667 and (height * 1000 + 500) // sh > 667
 
 
 def replication_content(bitmap, x, y, width, height):
@@ -60,11 +65,12 @@ def halftone_bitmap(bitmap, x, y, sw, sh, width, height):
         raise UnsupportedOperation("HALFTONE reflected extents")
     left, top = max(0, x), max(0, y)
     right, bottom = min(bitmap.width, x + sw), min(bitmap.height, y + sh)
-    if replication_candidate(sw, sh, width, height) and replication_content(
+    fixup = fixup_candidate(sw, sh, width, height) and replication_content(
         bitmap, left, top, max(0, right - left), max(0, bottom - top)
-    ):
+    )
+    if fixup and replication_candidate(sw, sh, width, height):
         return None
-    reduced = HalftoneReduction(bitmap, x, y, sw, sh, min(sw, width), min(sh, height))
+    reduced = HalftoneReduction(bitmap, x, y, sw, sh, min(sw, width), min(sh, height), fixup=fixup)
     if width <= sw and height <= sh:
         return reduced
     return HalftoneExpansion(reduced, width, height)
@@ -73,8 +79,9 @@ def halftone_bitmap(bitmap, x, y, sw, sh, width, height):
 class ExpansionAxis:
     """Integrate a power-adjusted discrete tent over source pixel cells."""
 
-    def __init__(self, source, destination):
+    def __init__(self, source, destination, available=None):
         self.source, self.destination = source, destination
+        self.available = source if available is None else available
         self.radius = (destination + source - 1) // source - 1
         taps = 2 * self.radius + 1
         if taps > MAX_FILTER_TAPS:
@@ -109,7 +116,12 @@ class ExpansionAxis:
             boundary = cumulative * SCALE // self.total
             result.append((max(0, min(self.source - 1, scan)), boundary - previous))
             previous = boundary
-        return tuple(result)
+        # BuildExpandAAInfo advances its fetch cursor only while another
+        # source scan is available. Fractional weights keep progressing even
+        # after that cursor stops. Negative slots denote the zero-initialized
+        # history of a window with fewer than four available samples.
+        shift = max(0, max(scan for scan, _ in result) - max(1, self.available - 1))
+        return tuple((min(self.available - 1, scan - shift), weight) for scan, weight in result)
 
 
 class RunExpansionAxis:
@@ -124,7 +136,9 @@ class RunExpansionAxis:
         ((13, 19, 0), (6, 25, 1), (3, 26, 3), (1, 25, 6), (0, 19, 13)),
     )
 
-    def __init__(self, source, destination):
+    def __init__(self, source, destination, available=None):
+        # Unlike the general builder, clipping does not alter run weights;
+        # the consumer clips the run interval and extends its endpoint samples.
         self.source, self.destination = source, destination
 
     def weights(self, index):
@@ -143,30 +157,55 @@ class HalftoneExpansion:
     def __init__(self, bitmap, width, height):
         self.bitmap = bitmap
         self.width, self.height = width, height
+        self.source_left = getattr(bitmap, "left", 0)
+        self.source_top = getattr(bitmap, "top", 0)
+        self.source_right = getattr(bitmap, "right", bitmap.width)
+        self.source_bottom = getattr(bitmap, "bottom", bitmap.height)
         self.fast = bitmap.width < width <= 5 * bitmap.width and bitmap.height < height <= 5 * bitmap.height
         axis = RunExpansionAxis if self.fast else ExpansionAxis
-        self.x_axis = axis(bitmap.width, width) if width > bitmap.width else None
-        self.y_axis = axis(bitmap.height, height) if height > bitmap.height else None
+        self.x_axis = axis(bitmap.width, width, self.source_right) if width > bitmap.width else None
+        self.y_axis = axis(bitmap.height, height, self.source_bottom) if height > bitmap.height else None
+        self.valid = getattr(bitmap, "valid", True) and (
+            self.fast or not (self.x_axis and self.source_left > 1 or self.y_axis and self.source_top > 1)
+        )
+        # The general builder can prime one virtual starting sample, but
+        # cannot skip further clipped-away scans. The fast run builder can
+        # skip complete runs. Preserve that distinction, including no-op.
+        self.left = (2 * self.source_left * width + bitmap.width) // (2 * bitmap.width) if self.fast else 0
+        self.top = (2 * self.source_top * height + bitmap.height) // (2 * bitmap.height) if self.fast else 0
+        self.right = (2 * self.source_right * width + bitmap.width) // (2 * bitmap.width) if self.fast else width
+        self.bottom = (2 * self.source_bottom * height + bitmap.height) // (2 * bitmap.height) if self.fast else height
+        if not self.x_axis:
+            self.left, self.right = self.source_left, self.source_right
+        if not self.y_axis:
+            self.top, self.bottom = self.source_top, self.source_bottom
         self.sharp = lru_cache(maxsize=2048)(self._sharp)
         self.horizontal = lru_cache(maxsize=2048)(self._horizontal)
         self.vertical = lru_cache(maxsize=2048)(self._vertical)
 
     def _sharp(self, x, y):
+        if x < 0 or (y < 0 and not self.fast):
+            # Unfilled history slots in the general filter's fetch window.
+            return (0, 0, 0)
         # FastExpAA extends raw rows before sharpening; a virtual boundary
         # row has different vertical neighbours from the actual edge row.
         # General tent expansion instead repeats the sharpened edge sample.
-        row = max(0, min(self.bitmap.height - 1, y))
-        center = self.bitmap.pixel(x, row)
+        row = max(self.source_top, min(self.source_bottom - 1, y))
+        column = max(self.source_left, min(self.source_right - 1, x))
+        center = self.bitmap.pixel(column, row)
         neighbours = []
         if self.x_axis:
             neighbours.extend(
-                (self.bitmap.pixel(max(0, x - 1), row), self.bitmap.pixel(min(self.bitmap.width - 1, x + 1), row))
+                (
+                    self.bitmap.pixel(max(self.source_left, x - 1), row),
+                    self.bitmap.pixel(min(self.source_right - 1, x + 1), row),
+                )
             )
         if self.y_axis:
             neighbours.extend(
                 (
-                    self.bitmap.pixel(x, max(0, min(self.bitmap.height - 1, y - 1))),
-                    self.bitmap.pixel(x, max(0, min(self.bitmap.height - 1, y + 1))),
+                    self.bitmap.pixel(column, max(self.source_top, min(self.source_bottom - 1, y - 1))),
+                    self.bitmap.pixel(column, max(self.source_top, min(self.source_bottom - 1, y + 1))),
                 )
             )
         coefficient, shift = (12, 3) if self.x_axis and self.y_axis else (6, 2)
@@ -187,13 +226,15 @@ class HalftoneExpansion:
     def pixel(self, x, y):
         if not (0 <= x < self.width and 0 <= y < self.height):
             raise IndexError("Bitmap pixel outside bounds")
+        if not (self.left <= x < self.right and self.top <= y < self.bottom):
+            return (0, 0, 0)
         if not self.y_axis:
             return self.horizontal(x, y)
         if self.fast:
             # The fast implementation materializes vertical results as bytes
             # first; general two-axis enlargement materializes horizontal ones.
             value = weighted(
-                (self.vertical(max(0, min(self.bitmap.width - 1, sx)), y), weight)
+                (self.vertical(max(self.source_left, min(self.source_right - 1, sx)), y), weight)
                 for sx, weight in self.x_axis.weights(x)
             )
         else:
@@ -233,23 +274,48 @@ class HalftoneReduction:
     samples consumed by the shared transfer compositor.
     """
 
-    def __init__(self, bitmap, x, y, source_width, source_height, width, height):
+    def __init__(self, bitmap, x, y, source_width, source_height, width, height, *, fixup=False):
         if not (0 < width <= source_width and 0 < height <= source_height):
             raise UnsupportedOperation("HALFTONE enlargement or reflected extents")
-        if x < 0 or y < 0 or x + source_width > bitmap.width or y + source_height > bitmap.height:
-            raise UnsupportedOperation("HALFTONE source clipping")
         self.bitmap = bitmap
         self.x, self.y = x, y
         self.source_width, self.source_height = source_width, source_height
         self.width, self.height = width, height
+        # Realized destination-cell interval. Neighbour sharpening clamps
+        # to this interval, not the unbounded destination.
+        self.left = max(0, -x * width // source_width)
+        self.top = max(0, -y * height // source_height)
+        # The scan builder appends a closing entry at the source clip edge,
+        # even when that edge lands exactly on a destination-cell boundary.
+        self.right = min(width, (bitmap.width - x) * width // source_width + int(width < source_width))
+        self.bottom = min(height, (bitmap.height - y) * height // source_height + int(height < source_height))
+        self.valid = self.left < self.right and self.top < self.bottom
         self.shrink_x, self.shrink_y = width < source_width, height < source_height
         self.both = self.shrink_x and self.shrink_y
+        first_scan = max(0, -y)
+        available_scans = min(source_height, bitmap.height - y) - first_scan
+        # A partial first area cell preloads then replays its first source
+        # scan. The fixup reader keeps current/previous row buffers. With
+        # only one available row it primes current, but not previous: replay
+        # therefore supplies zero. Area reduction can override replication
+        # without disabling this reader. Keep that source-buffer state
+        # separate from the area weights and sharpening arithmetic.
+        prefill = (first_scan * height % source_height) * SCALE // source_height
+        self.empty_replay = first_scan if fixup and available_scans == 1 and prefill else None
         self.horizontal = lru_cache(maxsize=2048)(self._horizontal)
         self.area = lru_cache(maxsize=2048)(self._area)
 
+    def _source(self, x, y):
+        return self.bitmap.pixel(
+            max(0, min(self.bitmap.width - 1, self.x + x)), max(0, min(self.bitmap.height - 1, self.y + y))
+        )
+
     def _horizontal(self, x, y):
+        # The native horizontal accumulator starts at zero and closes a
+        # trailing partial cell without filling its missing contribution.
+        # The vertical scan loader, in contrast, repeats its final row.
         value = weighted(
-            (self.bitmap.pixel(self.x + sx, self.y + y), weight)
+            ((0, 0, 0) if self.shrink_x and self.x + sx >= self.bitmap.width else self._source(sx, y), weight)
             for sx, weight in area_weights(self.source_width, self.width, x)
         )
         # Only the two-axis reducer materializes horizontal results as bytes.
@@ -260,7 +326,7 @@ class HalftoneReduction:
             return self.horizontal(x, y)
         return weighted(
             (
-                self.horizontal(x, sy) if self.both else self.bitmap.pixel(self.x + x, self.y + sy),
+                (0, 0, 0) if sy == self.empty_replay else self.horizontal(x, sy) if self.both else self._source(x, sy),
                 weight,
             )
             for sy, weight in area_weights(self.source_height, self.height, y)
@@ -269,12 +335,14 @@ class HalftoneReduction:
     def pixel(self, x, y):
         if not (0 <= x < self.width and 0 <= y < self.height):
             raise IndexError("Bitmap pixel outside bounds")
+        if not (self.left <= x < self.right and self.top <= y < self.bottom):
+            return (0, 0, 0)
         center = self.area(x, y)
         neighbours = []
         if self.shrink_x:
-            neighbours.extend((self.area(max(0, x - 1), y), self.area(min(self.width - 1, x + 1), y)))
+            neighbours.extend((self.area(max(self.left, x - 1), y), self.area(min(self.right - 1, x + 1), y)))
         if self.shrink_y:
-            neighbours.extend((self.area(x, max(0, y - 1)), self.area(x, min(self.height - 1, y + 1))))
+            neighbours.extend((self.area(x, max(self.top, y - 1)), self.area(x, min(self.bottom - 1, y + 1))))
         if not neighbours:
             return tuple(v >> 13 for v in center)
         # Gain 1/8 for the 2D Laplacian, 1/4 for its 1D counterpart. Preserve

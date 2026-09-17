@@ -46,10 +46,25 @@ def test_constants_survive_all_reduction_directions(width, height):
     assert all(view.pixel(x, y) == (17, 128, 255) for y in range(height) for x in range(width))
 
 
-@pytest.mark.parametrize("rectangle,size", (((-1, 0, 3, 3), (2, 2)), ((0, 0, 4, 3), (2, 2)), ((0, 0, 3, 3), (4, 2))))
-def test_uncharacterized_geometry_is_explicitly_rejected(rectangle, size):
+@pytest.mark.parametrize("size", ((4, 2), (2, 4), (0, 2)))
+def test_reduction_view_requires_positive_non_enlarging_dimensions(size):
     with pytest.raises(UnsupportedOperation, match="HALFTONE"):
-        HalftoneReduction(RGBBitmap(3, 3, bytes(27)), *rectangle, *size)
+        HalftoneReduction(RGBBitmap(3, 3, bytes(27)), 0, 0, 3, 3, *size)
+
+
+def test_source_clipping_retains_fractional_coverage_and_black_unavailable_cells():
+    view = HalftoneReduction(RGBBitmap(11, 9, bytes((17, 128, 255)) * 99), -3, -2, 11, 9, 5, 3)
+    assert (view.left, view.top, view.right, view.bottom) == (1, 0, 5, 3)
+    assert view.pixel(0, 0) == (0, 0, 0)
+    assert view.pixel(1, 0) == (17, 128, 255)
+
+
+def test_clipped_general_expansion_freezes_fetch_window_not_fractional_phase():
+    full = ExpansionAxis(11, 13)
+    clipped = ExpansionAxis(11, 13, 3)
+    assert clipped.weights(2) == ((2, 231), (1, 4843), (0, 3025), (-1, 93))
+    assert [w for _, w in clipped.weights(2)] == [w for _, w in full.weights(2)]
+    assert clipped.weights(3) != clipped.weights(2)
 
 
 def test_destination_clipping_retains_filter_phase_and_neighbours():
@@ -151,6 +166,34 @@ def test_replication_ties_and_reflection_are_output_addressed():
 def test_halftone_clipped_reduction_retains_last_available_scan_in_run():
     axis = StretchAxis.create(0, 7, 7, 9, 9)
     assert [tuple(axis.samples(i, 4)) for i in range(3)] == [(7,), (8,), ()]
+
+
+@pytest.mark.parametrize(
+    "source,destination,expected",
+    (
+        (3, 2, (0, 23, 47)),
+        (4, 3, (0, 17, 35)),
+        (5, 2, (0, 71, 142)),
+        (5, 3, (0, 28, 56)),
+        (6, 4, (0, 23, 47)),
+        (7, 4, (0, 71, 142)),
+        (7, 5, (0, 20, 40)),
+        (10000, 9999, (0, 71, 142)),  # Prefill quantizes to zero: no replay.
+    ),
+)
+def test_area_override_preserves_fixup_reader_replay_state(source, destination, expected):
+    bitmap = RGBBitmap(3, 7, bytes((0, 71, 142)) * 21)
+    view = halftone_bitmap(bitmap, 0, 1 - source, 3, source, 3, destination)
+    assert isinstance(view, HalftoneReduction)
+    assert view.pixel(0, destination - 1) == expected
+
+
+def test_vertical_closing_scan_emits_the_exact_boundary_cell():
+    bitmap = RGBBitmap(1, 7, bytes((y * 53 + c * 71) % 256 for y in range(7) for c in range(3)))
+    view = halftone_bitmap(bitmap, 0, 5, 1, 4, 1, 2)
+    assert (view.top, view.bottom) == (0, 2)
+    assert view.pixel(0, 0) == (28, 99, 170)
+    assert view.pixel(0, 1) == (68, 139, 210)
 
 
 def test_fast_run_stencils_partition_the_integer_replication_runs():
