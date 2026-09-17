@@ -1092,6 +1092,21 @@ def styled_pen_cases():
 
 
 def region_paint_cases():
+    for extent, size, index in (
+        ((96, 144), (1, 1), 40),
+        ((96, 144), (19, 23), 43),
+        ((43, 77), (5, 7), 62),
+        ((43, 77), (19, 23), 63),
+        ((96, 144), (-5, 7), 46),
+    ):
+        r = mapped()
+        brush = r.create_brush(0, 0x00663399, 0)
+        region = r.create_region(Region((5, 3, 67, 63), (Scan(3, 63, (5, 67)),)))
+        r.set_viewport_extent(*extent)
+        r.set_window_origin(index % 5 - 2, index % 7 - 3)
+        r.set_viewport_origin(7, 9)
+        r.frame_region(region, brush, *size)
+        yield f"region-frame-fraction-{index}", r
     for mode in (1, 6, 16):
         r = mapped()
         r.select_object(r.create_pen(5, 0, 0))
