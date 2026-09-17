@@ -13,6 +13,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf
 
 
 def cases():
+    yield from dib_stretch_cases()
     yield from dib_transfer_cases()
     yield from dib_brush_cases()
     yield from pat_blt_cases()
@@ -1630,6 +1631,38 @@ def dib_transfer_cases():
     for i, code in enumerate((0xCC0000, 0xCC0020, 0xCCFFFF, 0x40CC0020, 0x80CC0020)):
         r.dib_bit_blt(12 + i * 24, 12, -7, -7, 8, 7, code, encode_dib24(bitmap))
     yield "dib-blt-copy-code-bits", r
+
+
+def dib_stretch_cases():
+    bitmap = RGBBitmap(
+        11,
+        9,
+        bytes(c for y in range(9) for x in range(11) for c in (17 + x * 19, 13 + y * 27, (x * 31 + y * 43) % 256)),
+    )
+
+    def draw(r, operation, source, x, y, w, h, sx, sy, sw, sh, rop=0xCC0020):
+        args = (x, y, w, h, sx, sy, sw, sh, rop)
+        if operation == "dib":
+            r.stretch_dib(*args, 0, source)
+        else:
+            r.dib_stretch_blt(*args, source)
+
+    for operation, top_down, mode in product(("dib", "blt"), (False, True), (1, 2, 3, 4)):
+        source = encode_dib24(bitmap, top_down=top_down)
+        r = mapped()
+        r.set_stretch_mode(mode)
+        for i, (sw, dw) in enumerate(product((1, 2, 3, 7, 11), (1, 2, 5, 13, 21))):
+            draw(r, operation, source, 3 + i % 5 * 25, 3 + i // 5 * 25, dw, (1, 2, 5, 13, 21)[i // 5], 0, 0, sw, 9)
+        yield f"dib-stretch-ratios-{operation}-{int(top_down)}-{mode}", r
+
+    for operation, top_down, table in product(("dib", "blt"), (False, True), (0xCC, 0x96)):
+        source = encode_dib24(bitmap, top_down=top_down)
+        r = mapped()
+        r.set_stretch_mode(3)
+        r.select_object(r.create_brush(0, 0xA96C32, 0))
+        for i, (dw, dh, sw, sh) in enumerate(product((-13, 13), (-11, 11), (-7, 7), (-5, 5))):
+            draw(r, operation, source, 16 + i % 4 * 30, 16 + i // 4 * 30, dw, dh, 3, 2, sw, sh, table << 16)
+        yield f"dib-stretch-signs-{operation}-{int(top_down)}-{table:x}", r
 
 
 def main():
