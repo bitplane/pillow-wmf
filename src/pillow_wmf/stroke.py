@@ -66,12 +66,14 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
         sign = 1 if scale_x >= 0 else -1
         if geometric:
 
-            def half(value):
+            def half_fixed(value):
+                # Transform the full signed basis to 28.4 first, then halve
+                # away from zero. Scaling a positive radius is not equivalent.
                 fixed = floor(value + 0.5)
                 return (fixed + (fixed >= 0)) // 2
 
-            rx = half(width * scale_x * 16)
-            ry = sign * abs(half(-width * scale_y * 16))
+            rx = half_fixed(width * scale_x * 16)
+            ry = sign * abs(half_fixed(-width * scale_y * 16))
         else:
             rx = sign * ceil(width * abs(scale_x) * 8)
             ry = sign * ceil(width * abs(scale_y) * 8)
@@ -102,16 +104,19 @@ def frame_footprint(width, height, scale_x, scale_y):
     indices = (
         0,
         min(range(len(half)), key=lambda i: half[i][1])
-        if scale_x >= 0
+        if half[0][0] >= 0
         else max(range(len(half)), key=lambda i: half[i][1]),
     )
     supports = []
     for axis, index in enumerate(indices):
-        previous = (index + 1) % len(pen.vertices)
-        while pen.vertices[previous] == pen.vertices[index]:
-            previous = (previous + 1) % len(pen.vertices)
+        for step in range(1, len(pen.vertices)):
+            adjacent = (index + step) % len(pen.vertices)
+            if pen.vertices[adjacent] != pen.vertices[index]:
+                break
+        else:
+            return 0, 0
         value = pen.vertices[index][axis]
-        delta = value - pen.vertices[previous][axis]
+        delta = value - pen.vertices[adjacent][axis]
         # The native normal/pen-edge intersection rounds its midpoint and
         # interpolation separately. An odd positive edge delta consequently
         # advances the endpoint by one fixed unit.

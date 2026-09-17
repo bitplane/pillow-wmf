@@ -1092,6 +1092,17 @@ def styled_pen_cases():
 
 
 def region_paint_cases():
+    islands = (Scan(3, 23, (5, 17, 19, 31, 33, 45)), Scan(23, 37, (5, 45)), Scan(37, 63, (15, 21)))
+    ring = (Scan(3, 19, (5, 67)), Scan(19, 47, (5, 21, 43, 67)), Scan(47, 63, (5, 67)))
+    for name, extent, size, scans, index in (
+        ("small-mirror", (-64, 64), (1, 1), (Scan(3, 63, (5, 67)),), 20),
+        ("fraction-state", (43, 77), (19, 23), (Scan(3, 63, (5, 67)),), 63),
+        ("fraction-hole", (43, 77), (-5, -7), ring, 138),
+        ("fraction-islands-small", (43, 77), (2, 3), islands, 271),
+        ("fraction-islands", (43, 77), (5, 7), islands, 272),
+        ("fraction-islands-large", (43, 77), (19, 23), islands, 273),
+    ):
+        yield "region-frame-native-" + name, region_paint_probe_case("frame_region", 0, 13, extent, size, scans, index)
     for extent in (96, -96, 43):
         r = mapped()
         brush = r.create_brush(0, 0x00663399, 0)
@@ -1205,6 +1216,34 @@ def region_paint_cases():
         handle = r.create_region(shape)
         r.frame_region(handle, brush, width, height)
         yield f"region-frame-size-{width}-{height}", r
+
+
+def region_paint_probe_case(operation, style, mode, extent, size, scans, index):
+    """Shared recorder setup for native matrix cases and captured regressions."""
+    r = mapped()
+    r.select_object(r.create_pen(5, 0, 0))
+    r.select_object(r.create_brush(0, 0x0037598B, 0))
+    r.rectangle(0, 0, 128, 128)
+    brush = r.create_brush(style, 0x00A96C32, index % 6)
+    other = r.create_brush(2, 0x002194EF, 4)
+    r.select_object(other if operation in ("fill_region", "frame_region") else brush)
+    # Allocate brushes before a possibly failed region, avoiding slot reuse.
+    region = r.create_region(Region((0, 0, 1, 1), scans))
+    r.set_viewport_extent(*extent)
+    r.set_window_origin(index % 5 - 2, index % 7 - 3)
+    r.set_viewport_origin(96 if extent[0] < 0 else 7, 96 if extent[1] < 0 else 9)
+    r.set_background_color(0x005DB742)
+    r.set_background_mode(1 + index % 2)
+    r.set_rop2(mode)
+    if index % 3 == 0:
+        r.exclude_clip_rect(17, 13, 29, 51)
+    if operation in ("fill_region", "frame_region"):
+        getattr(r, operation)(region, brush, *(size if operation == "frame_region" else ()))
+    else:
+        getattr(r, operation)(region)
+    # Subsequent drawing observes state preservation without hiding the region.
+    r.rectangle(75, 3, 90, 16)
+    return r
 
 
 def main():

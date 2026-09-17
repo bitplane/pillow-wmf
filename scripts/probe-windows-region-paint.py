@@ -1,11 +1,15 @@
 """Native region paint/frame matrix, independent of committed PNG fixtures."""
 
+import runpy
 from itertools import product
+from pathlib import Path
 
 from windows_wmf_render import render_wmf
 
-from pillow_wmf import Metafile, RasterContext, Recorder, play
-from pillow_wmf.wmf.objects import Region, Scan
+from pillow_wmf import Metafile, RasterContext, play
+from pillow_wmf.wmf.objects import Scan
+
+record_case = runpy.run_path(str(Path(__file__).with_name("generate-wmf-fixtures.py")))["region_paint_probe_case"]
 
 
 def cases():
@@ -39,35 +43,7 @@ def cases():
 def verify():
     failures = 0
     for count, (operation, style, mode, extent, size, scans, index) in enumerate(cases(), 1):
-        r = Recorder()
-        r.set_map_mode(8)
-        r.set_window_extent(128, 128)
-        r.set_viewport_extent(128, 128)
-        r.select_object(r.create_pen(5, 0, 0))
-        r.select_object(r.create_brush(0, 0x0037598B, 0))
-        r.rectangle(0, 0, 128, 128)
-        brush = r.create_brush(style, 0x00A96C32, index % 6)
-        other = r.create_brush(2, 0x002194EF, 4)
-        r.select_object(other if operation in ("fill_region", "frame_region") else brush)
-        # Allocate brushes before a possibly failed region: no accidental
-        # object-slot reuse may obscure the paint operation being measured.
-        region = r.create_region(Region((0, 0, 1, 1), scans))
-        r.set_viewport_extent(*extent)
-        r.set_window_origin(index % 5 - 2, index % 7 - 3)
-        r.set_viewport_origin(96 if extent[0] < 0 else 7, 96 if extent[1] < 0 else 9)
-        r.set_background_color(0x005DB742)
-        r.set_background_mode(1 + index % 2)
-        r.set_rop2(mode)
-        if index % 3 == 0:
-            r.exclude_clip_rect(17, 13, 29, 51)
-        if operation in ("fill_region", "frame_region"):
-            getattr(r, operation)(region, brush, *(size if operation == "frame_region" else ()))
-        else:
-            getattr(r, operation)(region)
-        # A second operation observes that the first did not alter selected
-        # brush, ROP2, background state or clip. Keep it outside the region
-        # so it cannot cover up incorrect region painting.
-        r.rectangle(75, 3, 90, 16)
+        r = record_case(operation, style, mode, extent, size, scans, index)
         source = r.to_bytes()
         native = render_wmf(source, 128, 128)
         context = RasterContext(128, 128)

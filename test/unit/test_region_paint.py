@@ -7,6 +7,7 @@ import pytest
 
 from pillow_wmf import RasterContext
 from pillow_wmf.clip import RegionMask
+from pillow_wmf.stroke import frame_footprint
 from pillow_wmf.wmf.objects import Region, Scan
 
 
@@ -86,6 +87,28 @@ def test_frame_storage_depends_on_region_edges_not_surface_area():
     assert len(frame.bands) == 3
     assert frame.contains(-1000000, 0)
     assert not frame.contains(0, 0)
+
+
+@pytest.mark.parametrize(
+    "width,height,sx,sy,expected",
+    (
+        (1, 1, 0.75, 1, (0.5, 1)),
+        (3, 1, 0.75, 1, (2, 1)),
+        (5, 1, 0.75, 1, (4, 1)),
+        (5, 1, -0.75, 1, (3.5, 1)),
+        (17, 1, 43 / 128, 1, (6, 1)),
+        (5, 7, 43 / 128, 77 / 128, (1.5, 4.5)),
+        (5, 9, -0.75, 1.125, (3.5, 10)),
+        (5, 9, 0.75, 1.125, (4, 10)),
+    ),
+)
+def test_native_frame_footprint_quantization(width, height, sx, sy, expected):
+    assert frame_footprint(width, height, sx, sy) == expected
+    assert frame_footprint(-width, -height, sx, sy) == expected
+
+
+def test_collapsed_geometric_frame_terminates():
+    assert frame_footprint(1, 2, 1 / 32767, 1 / 32767) == (0, 0)
 
 
 @pytest.mark.parametrize("mode,color", ((1, (0, 0, 0)), (6, (238, 192, 126)), (16, (255, 255, 255))))

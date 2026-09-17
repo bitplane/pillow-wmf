@@ -85,23 +85,38 @@ intersecting it with the region handles holes, narrow arms, disconnected
 islands and concave corners without introducing scan-band seams. Region
 subtraction and dilation operate on bands, not bitmap-sized masks.
 
-Native probes establish the following device footprint realization:
+Native probes and inspection of the reference runner's frame/widening entry
+points establish the following device footprint realization:
 
 1. Map the region's rectangle edges using ordinary point mapping.
-2. Map the doubled logical frame dimensions as a vector, then take absolute
-   values. This produces the full integer rectangular footprint.
-3. Split that footprint about each boundary: ceil-half on left/top,
+2. Take absolute logical dimensions. Use twice the larger dimension as a
+   common geometric-pen width and normalize the shorter axis of its transform.
+   The normalization and transform multiplication use IEEE single precision.
+3. Transform the signed full pen bases to 28.4 fixed point, then halve away
+   from zero. Realize the pen with the shared polygonal-pen machinery.
+4. Intersect its edges with the axis normals. The native widener rounds the
+   edge midpoint and interpolation separately; for an odd positive edge
+   difference this can advance the intersection by one fixed unit. Contour
+   traversal order matters. Quantize x support inward and y support outward
+   on the half-pixel grid using the existing body-support rule.
+5. Split the resulting footprint: ceil-half on left/top,
    floor-half on right/bottom. An odd footprint is therefore asymmetric.
-4. Paint the resulting border with the explicit brush and existing ROP2/clip.
+6. Paint the resulting border with the explicit brush and existing ROP2/clip.
 
-A zero dimension paints nothing. Negative dimensions are supported; their
-sign participates in mapping before the device footprint is made positive.
-Mapping one half-width and simply doubling it is not equivalent: `(5,7)` at
-half scale gives a `(5,7)` full footprint and margins `(3,4)` / `(2,3)`.
-Reflected mappings also exercise the sign of rounding ties.
+A zero dimension paints nothing. Negative dimensions are made positive before
+normalization; a reflected mapping still affects signed basis conversion.
+Simply rounding the doubled mapped dimensions fits the initial half-scale
+examples but fails the continuous size atlases. In particular, under a 3/4
+horizontal scale with unit vertical scale, logical widths 1, 3 and 5 (height 1)
+produce full device widths 1, 4 and 8, rather than 2, 5 and 8. There is no
+width-specific adjustment: the same pen-edge arithmetic produces these values.
 
-This is an inferred raster contract, not a claim to possess Microsoft's
-implementation. Microsoft's [FrameRgn documentation](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-framergn)
+Our region-algebra implementation is not copied native code. The short,
+read-only research jobs inspected frame setup, geometric-pen conversion and
+normal interpolation; see [frame setup](https://github.com/bitplane/pillow-wmf/actions/runs/35185849295),
+[widening arithmetic](https://github.com/bitplane/pillow-wmf/actions/runs/35186113249)
+and [signed basis conversion](https://github.com/bitplane/pillow-wmf/actions/runs/35186514849).
+Microsoft's [FrameRgn documentation](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-framergn)
 establishes the logical-unit parameters. Wine's
 [painting fallbacks](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/painting.c)
 are useful for brush and ROP semantics, but its
@@ -118,10 +133,16 @@ intersection/exclusion, reset, null objects and slot-zero selection. The manual
 cross-primitive pixel comparisons. The final native verification is
 [run 35172754644](https://github.com/bitplane/pillow-wmf/actions/runs/35172754644).
 
-An additional 52 Windows PNGs cover all four paint calls, explicit and selected
+An additional 75 Windows PNGs cover all four paint calls, explicit and selected
 brushes, solid/null/hatch brushes, transparent/opaque backgrounds, XOR, clipping,
 nonuniform and reflected mappings, half-pixel boundaries, and zero, negative
-and oversized frame dimensions. The manual `probe-windows-region-paint.py`
+and oversized frame dimensions, phase isolation, continuous width atlases and
+cross-primitive hatch/ROP behavior. Rectangle's block fill simplifies
+brush-independent ROPs before hatch transparency; region/path fills retain the
+transparent pattern mask even for BLACK, WHITE and NOT. Brush realization
+handles that distinction; the pixel compositor and hatch definition are shared.
+
+The manual `probe-windows-region-paint.py`
 cross-checks further shapes, all 16 ROP2 modes, fractional mappings and state
 preservation directly against Windows. The ordinary push workflow continues
 to render only missing PNGs; the larger matrix runs only on manual dispatch.
