@@ -106,5 +106,45 @@ These are useful comparisons, not pixel-exact authorities. Neither inspected
 path implements cubic scaling, nor does that rule out a cubic component in
 Windows. The committed Windows outputs remain the oracle.
 
+#### Follow-up measurements
+
+Four more compact atlases are committed: `halftone-long-basis`,
+`halftone-two-dimensional`, `halftone-cross-axis-basis`, and
+`halftone-constant-levels`. They were generated in two missing-only Windows
+runs ([long scans/2D](https://github.com/bitplane/pillow-wmf/actions/runs/35205366725),
+[cross-axis/constants](https://github.com/bitplane/pillow-wmf/actions/runs/35206240518));
+all mathematical comparisons run locally.
+
+Run `.venv/bin/python scripts/analyze-halftone.py` to reproduce the reduction
+hypothesis comparison directly from the WMF inputs, without regenerating data.
+This is a read-only research tool, not another rendering path or a replacement
+for the exact compatibility tests. Currently:
+
+- The rational area/Laplacian candidate matches all 6,000 tested channel
+  samples in the five constant/ramp/impulse atlases' non-enlarging transfers.
+- The basis atlases expose 18 one-level differences out of 2,700 channel
+  samples; the nonseparable 2D atlas exposes 40 out of 1,200, and the original
+  colour-ratio atlas has two out of 66. All these differences are candidate
+  values one above Windows, but ordinary floating-point evaluation, fixed-point
+  truncation and fixed-point rounding experiments have **not** recovered the
+  complete rounding rule. Do not introduce an epsilon or subtract one to fit
+  these cases.
+- All 256 constant grey levels survive both 3x3-to-2x1 and 3x3-to-3x1
+  transfers exactly. A blanket colour-conversion bias cannot explain the
+  differences.
+- Long scans reveal curved responses and apparent slope changes around
+  half-pixel boundaries. This constrains the interpolation construction, but
+  does not establish a particular polynomial or filter family.
+- There is a dispatch boundary within mixed enlargement/reduction, not simply
+  “filter whenever either axis shrinks.” With identical source rows and a 1-row
+  destination, 3x2-to-17x1 and 3x2-to-61x1 replicate scans; 3x3 with either
+  destination width filters. A 9x2 source filters at width 17 but replicates at
+  width 61. For the measured filtered cases, increasing source height through
+  3, 5, 9 and 17 leaves the horizontal basis response unchanged.
+
+The dispatch rule, enlargement reconstruction and exact reduction quantization
+are still unresolved. Keep these as ordinary failing pixel tests rather than
+promoting a close mathematical model into production.
+
 Additional depths, compression, palettes and legacy Bitmap16 remain outside
 this slice; fonts are still deferred.
