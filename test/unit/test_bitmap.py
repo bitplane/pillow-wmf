@@ -101,10 +101,10 @@ def test_optional_colour_table_is_skipped_not_decoded_as_pixels():
         decode_dib(BitmapData("dib", bytes(data)))
 
 
-def test_palette_usage_and_legacy_bitmap_remain_unsupported():
+def test_unknown_palette_usage_and_legacy_bitmap_remain_unsupported():
     bitmap = encode_dib24(RGBBitmap(1, 1, bytes(3)))
     with pytest.raises(UnsupportedOperation):
-        decode_dib(bitmap, color_usage=1)
+        decode_dib(bitmap, color_usage=3)
     with pytest.raises(UnsupportedOperation):
         decode_dib(BitmapData("bitmap16", bytes(20)))
 

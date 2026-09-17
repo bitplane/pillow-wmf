@@ -29,8 +29,8 @@ class Recorder(TraceContext):
         arguments = call.kwargs
         for parameter, field in binding.references:
             handle = arguments.pop(parameter)
-            if call.name == "select_object" and handle is None:
-                raise ValueError("A null SelectObject call has no portable WMF object index")
+            if call.name in ("select_object", "select_palette") and handle is None:
+                raise ValueError("A null object selection has no portable WMF object index")
             if call.name == "select_clip_region":
                 if handle is None:
                     arguments[field] = 0

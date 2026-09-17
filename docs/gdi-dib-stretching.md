@@ -323,5 +323,5 @@ reference images.
 
 Additional depths and RLE compression are covered by the subsequent
 [DIB format slice](gdi-dib-formats.md), including source-scan fixup and
-format-dependent channel conversion. Logical palettes, legacy Bitmap16 and
-fonts are still deferred.
+format-dependent channel conversion. [Logical palettes](gdi-palettes.md) now
+resolve into the same transfer pipeline. Legacy Bitmap16 and fonts remain deferred.

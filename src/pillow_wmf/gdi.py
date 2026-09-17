@@ -91,7 +91,7 @@ class GDI:
     def select_object(self, handle: Handle | None) -> None:
         return self.invoke(Call.make("select_object", handle=handle))
 
-    def select_palette(self, handle: Handle) -> None:
+    def select_palette(self, handle: Handle | None) -> None:
         return self.invoke(Call.make("select_palette", handle=handle))
 
     def select_clip_region(self, region: Handle | None) -> None:

@@ -9,7 +9,7 @@ from math import ceil
 
 from PIL import Image
 
-from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, read_dib
+from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, DIBLayout, RGBBitmap, read_dib
 from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
 from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
@@ -27,6 +27,7 @@ from .halftone import (
 from .halftone_fixup import fixup_bitmap
 from .mapping import Mapping
 from .paint import pattern_rop2, rop2, rop3
+from .palette import LogicalPalette, PaletteIndex
 from .stroke import (
     cosmetic_line,
     cosmetic_span,
@@ -43,19 +44,23 @@ def rgb(colorref: int) -> tuple[int, int, int]:
     return colorref & 255, (colorref >> 8) & 255, (colorref >> 16) & 255
 
 
+def logical_color(colorref):
+    return PaletteIndex(colorref & 65535) if colorref >> 24 == 1 else rgb(colorref)
+
+
 @dataclass(frozen=True)
 class Pen:
-    color: tuple[int, int, int]
+    color: tuple[int, int, int] | PaletteIndex
     width: int = 1
     style: int = 0
 
 
 @dataclass(frozen=True)
 class Brush:
-    color: tuple[int, int, int]
+    color: tuple[int, int, int] | PaletteIndex
     style: int = 0
     hatch: int = 0
-    pattern: RGBBitmap | None = None
+    pattern: RGBBitmap | DIBLayout | None = None
     monochrome: bool = False
 
 
@@ -90,7 +95,8 @@ class RasterContext(TraceContext):
             raise ValueError("Bitmap pixel limit must be nonnegative")
         self.max_bitmap_pixels = max_bitmap_pixels
         self.image = Image.new("RGB", (width, height), background)
-        self._objects: dict[Handle, Pen | Brush | RegionMask | None] = {}
+        self._objects: dict[Handle, Pen | Brush | RegionMask | LogicalPalette | None] = {}
+        self._palette = LogicalPalette.default()
         self._pen = Pen((0, 0, 0), width=0)
         self._brush = Brush((255, 255, 255))
         self._position = (0, 0)
@@ -112,14 +118,21 @@ class RasterContext(TraceContext):
                 int,
                 int,
                 int,
-                tuple[int, int, int],
-                tuple[int, int, int],
+                tuple[int, int, int] | PaletteIndex,
+                tuple[int, int, int] | PaletteIndex,
                 int,
+                LogicalPalette,
             ]
         ] = []
 
     def _point(self, x: int, y: int) -> tuple[int, int]:
         return self.mapping.device_point(x, y)
+
+    @staticmethod
+    def _accepts_dib(layout):
+        # The native reference surface is a 32-bit RGB DIB. PAL_INDICES avoids
+        # colour translation and requires matching source/device pixel depths.
+        return layout.header_size != 12 and (layout.color_usage != 2 or layout.depth == 32)
 
     def is_null_object(self, handle: Handle) -> bool:
         return handle.owner is self and handle in self._objects and self._objects[handle] is None
@@ -135,7 +148,14 @@ class RasterContext(TraceContext):
         call = self._prepare(call)
         name = call.name
         a = call.kwargs
-        if name == "set_map_mode":
+        if name in ("create_palette", "set_palette_entries", "animate_palette"):
+            a["palette"].to_bytes()
+            if name == "create_palette" and a["palette"].start != 0x300:
+                raise ValueError("New palettes require version 0x0300")
+        elif name == "resize_palette":
+            if not 0 <= a["count"] <= 65535:
+                raise ValueError("Palette size outside WORD range")
+        elif name == "set_map_mode":
             if a["mode"] not in range(1, 9):
                 raise UnsupportedOperation(f"Map mode {a['mode']}")
         elif name == "set_polygon_fill_mode":
@@ -167,13 +187,24 @@ class RasterContext(TraceContext):
                 color_usage=0 if a["style"] == 3 else a["color_usage"],
                 max_pixels=self.max_bitmap_pixels,
             )
+            if layout.color_usage == 1 and layout.complete:
+                # Packed brush storage DWORD-aligns the WORD palette table.
+                # The allocation's tail is zero-filled, unlike the separate
+                # header/bits pointers used by transfer records.
+                padding = -layout.offset % 4
+                layout = replace(layout, offset=layout.offset + padding, data=layout.data + bytes(padding))
             pattern = (
                 None
-                if layout.header_size == 12
+                if not self._accepts_dib(layout)
                 or layout.compression in (1, 2)
                 or (layout.header_size > 40 and layout.compression == 3)
-                else layout.decode()
+                else layout.decode(palette=self._palette.colors())
             )
+            if pattern is not None and layout.color_usage == 1 and layout.depth <= 8:
+                # Validate the packed samples now, but retain their palette
+                # references. Pattern colours are realized against the drawing
+                # DC, including subsequent palette edits and selections.
+                pattern = layout
             if a["style"] == 3 and pattern is not None:
                 # The legacy record path realizes a monochrome DDB in a
                 # compatible memory DC. Its bitmap creation rejects top-down
@@ -191,7 +222,7 @@ class RasterContext(TraceContext):
             # WMF requires a complete packed DIB even when only cLines rows
             # are consumed. Short buffers are rejected regardless of SizeImage.
             if (
-                layout.header_size != 12
+                self._accepts_dib(layout)
                 and layout.complete
                 and width > 0
                 and height > 0
@@ -202,7 +233,7 @@ class RasterContext(TraceContext):
                     start, count = 0, layout.height
                 if not layout.top_down:
                     count = min(count, layout.height - start)
-                bitmap = layout.decode(min(count, layout.height), preserve_gaps=True)
+                bitmap = layout.decode(min(count, layout.height), preserve_gaps=True, palette=self._palette.colors())
                 x, y = self._point(x, y)
                 horizontal = BlitAxis(x, sx, width)
                 vertical = BlitAxis(y, start + count - sy - height, height)
@@ -227,6 +258,8 @@ class RasterContext(TraceContext):
                 else None
             )
         elif name not in {
+            "select_palette",
+            "realize_palette",
             "pat_blt",
             "flood_fill",
             "fill_region",
@@ -272,7 +305,16 @@ class RasterContext(TraceContext):
             target = level if level > 0 else len(self._saved) + level + 1
             snapshot = self._saved[target - 1]
         result = self._commit(call)
-        if name == "set_map_mode":
+        if name == "create_palette":
+            self._objects[result] = LogicalPalette(a["palette"].entries) if a["palette"].entries else None
+        elif name == "select_palette":
+            if a["handle"] is not None and self._objects[a["handle"]] is not None:
+                self._palette = self._objects[a["handle"]]
+        elif name in ("set_palette_entries", "animate_palette"):
+            self._palette.update(a["palette"].start, a["palette"].entries, animate=name == "animate_palette")
+        elif name == "resize_palette":
+            self._palette.resize(a["count"])
+        elif name == "set_map_mode":
             self.mapping.set_mode(a["mode"])
         elif name == "set_polygon_fill_mode":
             self._polygon_fill_mode = a["mode"]
@@ -283,9 +325,9 @@ class RasterContext(TraceContext):
         elif name == "set_background_mode":
             self._background_mode = a["mode"]
         elif name == "set_background_color":
-            self._background_color = rgb(a["color"])
+            self._background_color = logical_color(a["color"])
         elif name == "set_text_color":
-            self._text_color = rgb(a["color"])
+            self._text_color = logical_color(a["color"])
         elif name == "set_window_origin":
             self.mapping.window_origin = a["x"], a["y"]
         elif name == "set_viewport_origin":
@@ -309,9 +351,9 @@ class RasterContext(TraceContext):
                 yd=a["y_denominator"],
             )
         elif name == "create_pen":
-            self._objects[result] = Pen(rgb(a["color"]), a["width"], a["style"])
+            self._objects[result] = Pen(logical_color(a["color"]), a["width"], a["style"])
         elif name == "create_brush":
-            self._objects[result] = Brush(rgb(a["color"]), a["style"], a["hatch"])
+            self._objects[result] = Brush(logical_color(a["color"]), a["style"], a["hatch"])
         elif name == "create_dib_pattern_brush":
             self._objects[result] = (
                 Brush((0, 0, 0), style=3, pattern=pattern, monochrome=a["style"] == 3) if pattern is not None else None
@@ -344,7 +386,7 @@ class RasterContext(TraceContext):
             paths = tuple(self._mapped_path(points) for points in polygons)
             self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))
         elif name == "set_pixel":
-            self._pixel(*self._point(a["x"], a["y"]), rgb(a["color"]))
+            self._pixel(*self._point(a["x"], a["y"]), logical_color(a["color"]))
         elif name == "pat_blt":
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
         elif name in ("dib_bit_blt", "set_dib_to_device", "dib_stretch_blt", "stretch_dib"):
@@ -359,7 +401,9 @@ class RasterContext(TraceContext):
             elif transfer is TransferAction.PATTERN:
                 self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
         elif name in ("flood_fill", "ext_flood_fill"):
-            self._flood_fill(self._point(a["x"], a["y"]), rgb(a["color"]), a.get("mode", 0))
+            self._flood_fill(
+                self._point(a["x"], a["y"]), self._palette.colorref(logical_color(a["color"])), a.get("mode", 0)
+            )
         elif name == "save_dc":
             self._saved.append(
                 (
@@ -374,6 +418,7 @@ class RasterContext(TraceContext):
                     self._background_color,
                     self._text_color,
                     self._stretch_mode,
+                    self._palette,
                 )
             )
         elif name == "restore_dc":
@@ -389,6 +434,7 @@ class RasterContext(TraceContext):
                 self._background_color,
                 self._text_color,
                 self._stretch_mode,
+                self._palette,
             ) = snapshot
             del self._saved[target - 1 :]
         elif name in ("intersect_clip_rect", "exclude_clip_rect"):
@@ -520,7 +566,7 @@ class RasterContext(TraceContext):
         if a["source"] is None:
             return TransferAction.NOOP
         layout = read_dib(a["source"], color_usage=a.get("color_usage", 0), max_pixels=self.max_bitmap_pixels)
-        if layout.header_size == 12:
+        if not self._accepts_dib(layout):
             return TransferAction.NOOP
         x, y = self._point(a["x"], a["y"])
         right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
@@ -536,9 +582,13 @@ class RasterContext(TraceContext):
         # colours; STRETCHDIB keeps an explicit RGB table instead.
         monochrome = name != "stretch_dib" and layout.depth == 1 and layout.colors == ((0, 0, 0), (255, 255, 255))
         if monochrome:
-            layout = replace(layout, colors=(self._text_color, self._background_color))
+            layout = replace(
+                layout, colors=tuple(self._palette.colorref(c) for c in (self._text_color, self._background_color))
+            )
         halftone = self._stretch_mode == 4 and copy and not (monochrome and name == "dib_bit_blt" and not scaled)
-        bitmap = layout.decode(replicate_channels=not (self._stretch_mode == 4 and copy))
+        bitmap = layout.decode(
+            replicate_channels=not (self._stretch_mode == 4 and copy), palette=self._palette.colors()
+        )
         sy = a["src_y"]
         # STRETCHDIB exposes DIB-origin coordinates; DIB[STRETCH]BITBLT
         # adapts the source to top-left. The native ternary path also retains
@@ -663,6 +713,7 @@ class RasterContext(TraceContext):
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
         if 0 <= x < self.image.width and 0 <= y < self.image.height and self._clip.contains(x, y):
+            color = self._palette.colorref(color)
             destination = self.image.getpixel((x, y))
             self.image.putpixel((x, y), rop2(self._rop2 if operation is None else operation, color, destination))
 
@@ -800,13 +851,17 @@ class RasterContext(TraceContext):
     ) -> tuple[int, int, int] | None:
         brush = self._brush if brush is None else brush
         if brush.style == 0:
-            return brush.color
+            return self._palette.colorref(brush.color)
         if brush.style == 1:
             return None
         if brush.pattern is not None:
-            color = brush.pattern.pixel(x % brush.pattern.width, y % brush.pattern.height)
+            px, py = x % brush.pattern.width, y % brush.pattern.height
+            if isinstance(brush.pattern, DIBLayout):
+                color = self._palette.color(brush.pattern.color(brush.pattern.index(px, py)))
+            else:
+                color = brush.pattern.pixel(px, py)
             if brush.monochrome:
-                return self._background_color if color == (255, 255, 255) else self._text_color
+                return self._palette.colorref(self._background_color if color == (255, 255, 255) else self._text_color)
             return color
         # The six GDI hatches tile in device space. These phase offsets are
         # shared by all shapes, mapping modes and brush selections.
@@ -816,5 +871,5 @@ class RasterContext(TraceContext):
         backward = (x + y) % 8 == 7
         mark = (horizontal, vertical, forward, backward, horizontal or vertical, forward or backward)[brush.hatch]
         if mark:
-            return brush.color
-        return self._background_color if opaque or self._background_mode == 2 else None
+            return self._palette.colorref(brush.color)
+        return self._palette.colorref(self._background_color) if opaque or self._background_mode == 2 else None

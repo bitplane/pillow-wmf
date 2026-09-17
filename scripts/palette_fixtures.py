@@ -1,5 +1,6 @@
 """Logical-palette oracle cases on the RGB reference device."""
 
+from itertools import product
 from struct import pack
 
 from pillow_wmf import Recorder
@@ -203,7 +204,7 @@ def holdouts():
     r = Recorder()
     r.select_palette(r.create_palette(Palette(entries=ENTRIES)))
     r.set_stretch_mode(3)
-    for i, (depth, usage) in enumerate(((d, u) for d in (16, 24, 32) for u in (1, 2))):
+    for i, (depth, usage) in enumerate(product((16, 24, 32), (1, 2))):
         dib = encode_dib(8, 4, (0x7351,) * 32, depth=depth)
         draw(r, dib, usage, 2 + i * 20)
     yield "palette-direct-depth-usage", r

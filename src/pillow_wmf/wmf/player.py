@@ -84,7 +84,7 @@ def play(
                 if value >= len(slots) or value < 0 or slots[value] is empty:
                     raise PlaybackError(f"Record {index}: invalid object index {value}")
                 if slots[value] is unallocated:
-                    if name not in {"select_clip_region", "select_object"}:
+                    if name not in {"select_clip_region", "select_object", "select_palette"}:
                         raise PlaybackError(f"Record {index}: invalid object index {value}")
                     arguments[parameter] = None
                     continue

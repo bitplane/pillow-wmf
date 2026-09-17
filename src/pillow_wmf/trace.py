@@ -51,7 +51,7 @@ class TraceContext(GDI):
         arguments = {name: value for name, value in bound.arguments.items() if name != "self"}
         for name, kinds in REFERENCES.get(call.name, {}).items():
             handle = arguments[name]
-            if call.name in {"select_clip_region", "select_object"} and handle is None:
+            if call.name in {"select_clip_region", "select_object", "select_palette"} and handle is None:
                 continue
             if not isinstance(handle, Handle) or handle.owner is not self or self._live.get(handle.serial) != handle:
                 raise ValueError(f"Invalid or deleted handle: {name}")

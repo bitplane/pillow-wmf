@@ -102,8 +102,9 @@ The final cross-depth holdouts came from
 [35223499019](https://github.com/bitplane/pillow-wmf/actions/runs/35223499019).
 Existing WMF/PNG pairs were not rewritten to accommodate the implementation.
 
-Still outside this format slice: logical-palette references (DIB_PAL_COLORS and
-DIB_PAL_INDICES), Bitmap16, JPEG/PNG/CMYK payloads, linked/embedded profiles and
+The subsequent [logical palette slice](gdi-palettes.md) adds DIB_PAL_COLORS and
+DIB_PAL_INDICES layout handling and native RGB-device realization.
+Still outside these slices: Bitmap16, JPEG/PNG/CMYK payloads, linked/embedded profiles and
 ICM colour management. V4/V5 header acceptance is not a claim of ICM support.
 Linked/embedded profiles are rejected explicitly and never followed as paths.
 

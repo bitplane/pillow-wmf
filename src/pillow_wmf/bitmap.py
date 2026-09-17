@@ -1,6 +1,6 @@
 """Packed DIB codecs, separate from WMF record framing and brush sampling."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from struct import pack, pack_into, unpack_from
 
 from .gdi import UnsupportedOperation
@@ -63,11 +63,15 @@ def encode_dib24(bitmap: RGBBitmap, *, top_down: bool = False) -> BitmapData:
     return BitmapData("dib", bytes(data))
 
 
-def encode_dib(width, height, samples, *, depth, colors=(), masks=None, header_size=40, top_down=False, rle=False):
+def encode_dib(
+    width, height, samples, *, depth, colors=(), masks=None, header_size=40, top_down=False, rle=False, color_usage=0
+):
     """Record exact integer pixels, without quantization or palette selection.
 
     Indexed samples are table indexes; direct-colour samples are packed words
     in the requested RGB/mask layout. Samples are supplied top-to-bottom.
+    For DIB_PAL_COLORS, colors contains WORD logical-palette indexes instead
+    of RGB triples. DIB_PAL_INDICES has no table.
     """
     samples = tuple(samples)
     if width <= 0 or height <= 0 or len(samples) != width * height:
@@ -78,9 +82,17 @@ def encode_dib(width, height, samples, *, depth, colors=(), masks=None, header_s
         raise ValueError("Invalid DIB header size")
     if header_size == 12 and (top_down or masks or rle or depth not in (1, 4, 8, 24) or max(width, height) > 65535):
         raise ValueError("Unsupported Core DIB representation")
-    if depth <= 8 and (not 0 < len(colors) <= 1 << depth or any(s >= len(colors) for s in samples)):
+    if color_usage not in (0, 1, 2) or (color_usage and depth > 8) or (color_usage == 2 and colors):
+        raise ValueError("Invalid DIB colour usage")
+    if (
+        depth <= 8
+        and color_usage != 2
+        and (not 0 < len(colors) <= 1 << depth or any(s >= len(colors) for s in samples))
+    ):
         raise ValueError("DIB sample outside colour table")
-    if any(len(c) != 3 or any(not 0 <= v <= 255 for v in c) for c in colors):
+    if color_usage == 1 and any(not isinstance(c, int) or not 0 <= c <= 65535 for c in colors):
+        raise ValueError("Invalid DIB logical-palette index")
+    if color_usage == 0 and any(len(c) != 3 or any(not 0 <= v <= 255 for v in c) for c in colors):
         raise ValueError("Invalid DIB colour table")
     if masks is not None and (depth not in (16, 32) or len(masks) != 3):
         raise ValueError("Bitfields require three masks and 16/32-bit pixels")
@@ -118,8 +130,15 @@ def encode_dib(width, height, samples, *, depth, colors=(), masks=None, header_s
         payload.extend((0, 1))
     if header_size == 12:
         header = pack("<IHHHH", 12, width, height, 1, depth)
-        table = tuple(colors) + ((0, 0, 0),) * ((1 << depth) - len(colors)) if depth <= 8 else tuple(colors)
-        return BitmapData("dib", header + bytes(v for r, g, b in table for v in (b, g, r)) + payload)
+        table = tuple(colors)
+        if depth <= 8 and color_usage != 2:
+            table += ((0,) if color_usage == 1 else ((0, 0, 0),)) * ((1 << depth) - len(colors))
+        packed_table = (
+            pack("<" + "H" * len(table), *table)
+            if color_usage == 1
+            else bytes(v for r, g, b in table for v in (b, g, r))
+        )
+        return BitmapData("dib", header + packed_table + payload)
     header = bytearray(header_size)
     pack_into(
         "<IiiHHIIiiII",
@@ -144,7 +163,12 @@ def encode_dib(width, height, samples, *, depth, colors=(), masks=None, header_s
             header.extend(pack("<III", *masks))
         else:
             pack_into("<III", header, 40, *masks)
-    return BitmapData("dib", bytes(header) + bytes(v for r, g, b in colors for v in (b, g, r, 0)) + payload)
+    table = (
+        pack("<" + "H" * len(colors), *colors)
+        if color_usage == 1
+        else bytes(v for r, g, b in colors for v in (b, g, r, 0))
+    )
+    return BitmapData("dib", bytes(header) + table + payload)
 
 
 @dataclass(frozen=True)
@@ -162,6 +186,7 @@ class DIBLayout:
     colors: tuple
     masks: tuple
     header_size: int
+    color_usage: int = 0
 
     @property
     def stride(self):
@@ -173,8 +198,20 @@ class DIBLayout:
         size = self.image_size if self.compression in (1, 2) else self.stride * self.height
         return len(self.data) >= self.offset + size
 
-    def decode(self, rows: int | None = None, *, replicate_channels=True, preserve_gaps=False) -> RGBBitmap:
+    def decode(
+        self, rows: int | None = None, *, replicate_channels=True, preserve_gaps=False, palette=None
+    ) -> RGBBitmap:
         """Decode rows from the beginning of the pixel buffer, not a row offset."""
+        if self.color_usage and self.depth <= 8:
+            if palette is None:
+                raise UnsupportedOperation("DIB palette resolution requires a logical palette")
+            if not palette:
+                raise FormatError("Empty DIB logical palette")
+            indexes = self.colors if self.color_usage == 1 else range(1 << self.depth)
+            colors = tuple(palette[i % len(palette)] for i in indexes)
+            return replace(self, colors=colors, color_usage=0).decode(
+                rows, replicate_channels=replicate_channels, preserve_gaps=preserve_gaps
+            )
         rows = self.height if rows is None else rows
         if not 0 < rows <= self.height:
             raise ValueError("DIB row count outside image")
@@ -213,9 +250,7 @@ class DIBLayout:
                 row = bytearray()
                 for x in range(self.width):
                     if self.depth <= 8:
-                        index = (self.data[start + x * self.depth // 8] >> (8 - self.depth - x * self.depth % 8)) & (
-                            (1 << self.depth) - 1
-                        )
+                        index = self.index(x, y, rows=rows)
                         row.extend(self.color(index))
                     else:
                         value = int.from_bytes(
@@ -224,6 +259,19 @@ class DIBLayout:
                         row.extend(field_color(value, mask, replicate=replicate_channels) for mask in self.masks)
             pixels[y * self.width * 3 : (y + 1) * self.width * 3] = row
         return RGBBitmap(self.width, rows, bytes(pixels))
+
+    def index(self, x, y, *, rows=None):
+        """Read an uncompressed indexed sample in top-down coordinates."""
+        if self.depth > 8 or self.compression in (1, 2):
+            raise ValueError("Random indexed access requires an uncompressed indexed DIB")
+        rows = self.height if rows is None else rows
+        if not (0 <= x < self.width and 0 <= y < rows):
+            raise IndexError("DIB sample outside bounds")
+        source_y = y if self.top_down else rows - 1 - y
+        offset = self.offset + source_y * self.stride + x * self.depth // 8
+        if offset >= len(self.data):
+            raise FormatError("Truncated DIB pixel array")
+        return (self.data[offset] >> (8 - self.depth - x * self.depth % 8)) & ((1 << self.depth) - 1)
 
     def color(self, index):
         if index >= len(self.colors):
@@ -262,13 +310,13 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
     """Validate the supported packed DIB layout without allocating pixels.
 
     Core/Info/V4/V5, RGB tables, direct RGB, bitfields and RLE4/RLE8.
-    Logical-palette references and embedded image codecs remain unsupported.
+    Logical-palette references remain unresolved until decoding.
     The decoder checks the required pixel extent; bands may omit other rows.
     """
     if max_pixels < 0:
         raise ValueError("Bitmap pixel limit must be nonnegative")
-    if bitmap.format != "dib" or color_usage != 0:
-        raise UnsupportedOperation("Only RGB-colour packed DIBs are supported")
+    if bitmap.format != "dib" or color_usage not in (0, 1, 2):
+        raise UnsupportedOperation("Unsupported packed DIB format or colour usage")
     data = bitmap.data
     if len(data) < 4:
         raise FormatError("Truncated DIB header size")
@@ -315,16 +363,32 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
         if colors > 1 << depth:
             raise FormatError("DIB colour table exceeds bit depth")
         colors = colors or 1 << depth
-    entry_size = 3 if header_size == 12 else 4
+    entry_size = (3 if header_size == 12 else 4) if color_usage == 0 else 2 if color_usage == 1 else 0
     table_start = offset
     offset += colors * entry_size
     # biSizeImage may be zero for BI_RGB. Compute the required extent rather
     # than trusting it as an allocation size or assuming a BMP file header.
     if offset > len(data):
         raise FormatError("Truncated DIB colour table")
-    table = tuple(tuple(data[i : i + 3][::-1]) for i in range(table_start, offset, entry_size)) if depth <= 8 else ()
+    table = ()
+    if depth <= 8 and entry_size:
+        table = tuple(
+            tuple(data[i : i + 3][::-1]) if color_usage == 0 else unpack_from("<H", data, i)[0]
+            for i in range(table_start, offset, entry_size)
+        )
     return DIBLayout(
-        width, height, signed_height < 0, data, offset, depth, compression, image_size, table, masks, header_size
+        width,
+        height,
+        signed_height < 0,
+        data,
+        offset,
+        depth,
+        compression,
+        image_size,
+        table,
+        masks,
+        header_size,
+        color_usage,
     )
 
 
@@ -332,6 +396,8 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
 read_dib24 = read_dib
 
 
-def decode_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFAULT_MAX_BITMAP_PIXELS) -> RGBBitmap:
+def decode_dib(
+    bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFAULT_MAX_BITMAP_PIXELS, palette=None
+) -> RGBBitmap:
     """Decode a complete packed DIB into immutable top-down RGB pixels."""
-    return read_dib(bitmap, color_usage=color_usage, max_pixels=max_pixels).decode()
+    return read_dib(bitmap, color_usage=color_usage, max_pixels=max_pixels).decode(palette=palette)
