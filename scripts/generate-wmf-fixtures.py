@@ -1,9 +1,10 @@
 """Regenerate the small, deterministic WMF compatibility inputs."""
 
+import runpy
 from itertools import product
 from pathlib import Path
 
-from pillow_wmf import Recorder
+from pillow_wmf import Metafile, Recorder, play
 from pillow_wmf.wmf.objects import Region, Scan
 
 FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
@@ -1318,6 +1319,20 @@ def flood_cases():
 
 
 def pat_blt_cases():
+    matrix = runpy.run_path(str(Path(__file__).with_name("probe-windows-patblt.py")))["cases"]
+    for index, recorder in matrix():
+        if index not in (2, 12, 16, 51, 401, 417, 423, 432):
+            continue
+        yield f"patblt-matrix-{index}", recorder
+        for kind in ("blits", "observers"):
+            records = (
+                recorder.records[:-4]
+                if kind == "blits"
+                else [record for record in recorder.records if record.operation != "pat_blt"]
+            )
+            filtered = Recorder()
+            play(Metafile.build(records), filtered, strict=True)
+            yield f"patblt-matrix-{index}-{kind}", filtered
     # One tile per truth table. Source-dependent operations must not silently
     # acquire an invented source colour. Noncanonical low words probe decoding.
     for style, hatch, background in ((0, 0, 2), (1, 0, 2), *product((2,), range(6), (1, 2))):

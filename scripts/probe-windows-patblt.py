@@ -2,8 +2,6 @@
 
 from random import Random
 
-from windows_wmf_render import render_wmf
-
 from pillow_wmf import Metafile, RasterContext, Recorder, play
 from pillow_wmf.wmf.objects import Region, Scan
 
@@ -53,6 +51,8 @@ def cases():
 
 
 def verify():
+    from windows_wmf_render import render_wmf
+
     failures = 0
     for index, recorder in cases():
         source = recorder.to_bytes()
