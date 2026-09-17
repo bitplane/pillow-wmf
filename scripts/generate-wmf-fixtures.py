@@ -1830,6 +1830,28 @@ def halftone_boundary_cases():
         for i, (sx, sy) in enumerate(product((-3, 0, 8), (-2, 0, 7))):
             getattr(r, operation)(3 + i % 3 * 40, 3 + i // 3 * 40, 23, 7, sx, sy, 11, 9, 0xCC0020, **source_args)
         yield f"halftone-source-clip-{operation}-{int(top_down)}", r
+        for profile, (dw, dh) in enumerate(((5, 3), (13, 3), (3, 13))):
+            r = mapped()
+            r.set_stretch_mode(4)
+            for i, (corner, signs) in enumerate(
+                product(((-3, -2), (8, 7), (-20, -20), (0, 0)), product((1, -1), repeat=4))
+            ):
+                sx, sy = corner
+                dxsign, dysign, sxsign, sysign = signs
+                x, y = 1 + i % 8 * 16, 1 + i // 8 * 16
+                getattr(r, operation)(
+                    x + (dw - 1 if dxsign < 0 else 0),
+                    y + (dh - 1 if dysign < 0 else 0),
+                    dw * dxsign,
+                    dh * dysign,
+                    sx + (10 if sxsign < 0 else 0),
+                    sy + (8 if sysign < 0 else 0),
+                    11 * sxsign,
+                    9 * sysign,
+                    0xCC0020,
+                    **source_args,
+                )
+            yield f"halftone-filter-clip-{operation}-{int(top_down)}-{profile}", r
 
     r = mapped()
     r.set_stretch_mode(4)
