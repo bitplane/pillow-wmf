@@ -1,7 +1,29 @@
 import pytest
 
 from pillow_wmf import Metafile, RasterContext, Recorder, play
+from pillow_wmf.clip import ClipRegion, RegionMask
 from pillow_wmf.wmf.objects import Region, Scan
+
+
+def test_band_union_and_half_open_edges():
+    rectangles = ((-10, -4, 8, 8), (0, 0, 12, 12), (12, 0, 20, 12), (3, 3, 3, 7))
+    mask = RegionMask.from_rectangles(rectangles)
+    assert mask.bands == ((-4, 0, (-10, 8)), (0, 8, (-10, 20)), (8, 12, (0, 20)))
+    for x in range(-12, 23):
+        for y in range(-6, 15):
+            assert mask.contains(x, y) == any(
+                left <= x < right and top <= y < bottom for left, top, right, bottom in rectangles
+            )
+
+
+def test_region_clip_preserves_off_surface_data_and_constraints():
+    clip = ClipRegion(mask=RegionMask.from_rectangles(((-100, -100, -20, -20),)))
+    clip = clip.exclude((-90, -90, -80, -80)).intersect((-95, -95, -40, -40))
+    moved = clip.offset(100, 100)
+    assert moved.contains(5, 5)
+    assert not moved.contains(10, 10)
+    assert not moved.contains(60, 60)
+    assert clip.contains(-95, -95)
 
 
 def test_clip_selection_is_device_space_and_survives_object_deletion():
@@ -19,7 +41,7 @@ def test_clip_selection_is_device_space_and_survives_object_deletion():
 
 def test_empty_clip_and_no_clip_are_distinct():
     context = RasterContext(8, 8)
-    handle = context.create_region(Region((0, 0, 0, 0), ()))
+    handle = context.create_region(Region((0, 0, 0, 0), (Scan(0, 0, (0, 0)),)))
     context.select_clip_region(handle)
     context.set_pixel(1, 1, 0)
     assert context.image.getpixel((1, 1)) == (255, 255, 255)
@@ -43,3 +65,22 @@ def test_recorder_does_not_silently_encode_slot_zero_as_clip_reset():
     with pytest.raises(ValueError, match="slot zero"):
         recorder.select_clip_region(handle)
     recorder.select_object(handle)
+
+
+def test_zero_scan_wmf_region_is_a_null_object_not_an_empty_region():
+    context = RasterContext(8, 8)
+    context.exclude_clip_rect(0, 0, 8, 8)
+    handle = context.create_region(Region((0, 0, 0, 0), ()))
+    context.select_object(handle)
+    assert not context._clip.contains(1, 1)
+    context.select_clip_region(handle)
+    assert context._clip.contains(1, 1)
+
+
+@pytest.mark.parametrize(
+    "delta,expected", (((7, -9), (11, -5)), ((-7, 9), (-11, 5)), ((1, 1), (2, 1)), ((-1, -1), (-2, -1)))
+)
+def test_clip_offset_half_ties_are_symmetric(delta, expected):
+    context = RasterContext(128, 128)
+    context.set_viewport_extent(192, 64)
+    assert context.mapping.clip_displacement(*delta) == expected

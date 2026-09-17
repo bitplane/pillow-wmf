@@ -51,6 +51,15 @@ class Mapping:
             rounded(y * self.viewport_extent[1] / self.window_extent[1]),
         )
 
+    def clip_displacement(self, x: int, y: int) -> tuple[int, int]:
+        """OffsetClipRgn rounds transformed distances symmetrically at ties."""
+        result = []
+        for value, viewport, window in zip((x, y), self.viewport_extent, self.window_extent, strict=True):
+            numerator = value * viewport
+            magnitude = (2 * abs(numerator) + abs(window)) // (2 * abs(window))
+            result.append(-magnitude if numerator * window < 0 else magnitude)
+        return tuple(result)
+
     def set_mode(self, mode: int) -> None:
         self.mode = mode
         if mode == 1:

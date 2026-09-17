@@ -48,7 +48,7 @@ class RasterContext(TraceContext):
         if width <= 0 or height <= 0:
             raise ValueError("Image dimensions must be positive")
         self.image = Image.new("RGB", (width, height), background)
-        self._objects: dict[Handle, Pen | Brush | RegionMask] = {}
+        self._objects: dict[Handle, Pen | Brush | RegionMask | None] = {}
         self._pen = Pen((0, 0, 0), width=0)
         self._brush = Brush((255, 255, 255))
         self._position = (0, 0)
@@ -97,8 +97,23 @@ class RasterContext(TraceContext):
         elif name == "select_object":
             if a["handle"].kind not in {"pen", "brush", "region"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
+        elif name == "create_region":
+
+            def signed(value):
+                return (value + 32768) % 65536 - 32768
+
+            # Zero-scan WMF creation fails, leaving a null object in its slot.
+            # A nonzero scan count with zero area is a valid empty region.
+            region_mask = (
+                RegionMask.from_rectangles(
+                    (signed(left), signed(scan.top), signed(right), signed(scan.bottom))
+                    for scan in a["region"].scans
+                    for left, right in zip(scan.endpoints[::2], scan.endpoints[1::2], strict=True)
+                )
+                if a["region"].scans
+                else None
+            )
         elif name not in {
-            "create_region",
             "select_clip_region",
             "set_window_origin",
             "set_viewport_origin",
@@ -174,15 +189,7 @@ class RasterContext(TraceContext):
         elif name == "create_brush":
             self._objects[result] = Brush(rgb(a["color"]), a["style"], a["hatch"])
         elif name == "create_region":
-
-            def signed(value):
-                return (value + 32768) % 65536 - 32768
-
-            self._objects[result] = RegionMask.from_rectangles(
-                (signed(left), signed(scan.top), signed(right), signed(scan.bottom))
-                for scan in a["region"].scans
-                for left, right in zip(scan.endpoints[::2], scan.endpoints[1::2], strict=True)
-            )
+            self._objects[result] = region_mask
         elif name == "select_clip_region":
             self._clip = ClipRegion(mask=self._objects[a["region"]] if a["region"] is not None else None)
         elif name == "select_object":
@@ -191,6 +198,8 @@ class RasterContext(TraceContext):
                 self._pen = obj
             elif isinstance(obj, RegionMask):
                 self._clip = ClipRegion(mask=obj)
+            elif obj is None:
+                pass  # Selecting a null object fails without changing state.
             else:
                 self._brush = obj
         elif name == "delete_object":
@@ -244,7 +253,7 @@ class RasterContext(TraceContext):
             else:
                 self._clip = self._clip.exclude(rectangle)
         elif name == "offset_clip_region":
-            dx, dy = self.mapping.vector(a["x"], a["y"])
+            dx, dy = self.mapping.clip_displacement(a["x"], a["y"])
             self._clip = self._clip.offset(dx, dy)
         elif name in {"rectangle", "ellipse", "arc", "chord", "pie", "round_rect"}:
             left, top = self._point(a["left"], a["top"])

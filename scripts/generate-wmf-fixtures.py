@@ -63,6 +63,21 @@ def cases():
 
 def region_clip_cases():
     ring = Region((8, 12, 112, 108), (Scan(12, 32, (8, 112)), Scan(32, 88, (8, 32, 88, 112)), Scan(88, 108, (8, 112))))
+    recorder = mapped()
+    handle = recorder.create_region(ring)
+    recorder.select_object(handle)
+    recorder.select_object(recorder.create_pen(5, 1, 0))
+    recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    yield "region-clip-slot-zero-object", recorder
+    recorder = mapped()
+    recorder.select_object(recorder.create_pen(5, 1, 0))
+    handle = recorder.create_region(Region((0, 0, 0, 0), ()))
+    recorder.intersect_clip_rect(32, 32, 64, 64)
+    recorder.select_object(handle)
+    recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+    recorder.rectangle(0, 0, 128, 128)
+    yield "region-clip-null-object", recorder
     for name, region in (
         ("ring", ring),
         ("empty", Region((0, 0, 0, 0), ())),
