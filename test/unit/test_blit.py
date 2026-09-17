@@ -5,6 +5,7 @@ import pytest
 from pillow_wmf import FormatError, RasterContext
 from pillow_wmf.bitmap import RGBBitmap, encode_dib24, read_dib24
 from pillow_wmf.blit import BlitAxis, StretchAxis
+from pillow_wmf.raster import SourceTransfer, TransferAction
 from pillow_wmf.wmf.objects import BitmapData
 
 
@@ -88,6 +89,66 @@ def test_missing_dib_is_patblt_not_a_self_copy():
     context.dib_bit_blt(0, 0, 1, 1, 99, 99, 0xF00021)
     context.dib_bit_blt(1, 0, 1, 1, 0, 0, 0xCC0020)
     assert list(context.image.get_flattened_data()) == [(17, 34, 51), (255, 255, 255), (255, 255, 255)]
+
+
+@pytest.mark.parametrize(
+    "changes,expected",
+    (
+        ({"source": None}, TransferAction.NOOP),
+        ({"source": None, "rop": 0xF00021}, TransferAction.PATTERN),
+        ({"rop": 0xF00021}, TransferAction.PATTERN),
+        ({"width": 0}, TransferAction.NOOP),
+        ({"src_x": 2}, TransferAction.NOOP),
+    ),
+)
+def test_transfer_preparation_distinguishes_pattern_from_noop(changes, expected):
+    context = RasterContext(3, 3)
+    context.set_stretch_mode(4)
+    args = {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1,
+        "src_x": 0,
+        "src_y": 0,
+        "src_width": 2,
+        "src_height": 2,
+        "rop": 0xCC0020,
+        "source": encode_dib24(RGBBitmap(2, 2, bytes(12))),
+    }
+    assert context._prepare_transfer("dib_stretch_blt", args | changes) is expected
+
+
+def test_replication_prepares_a_source_transfer_not_a_noop():
+    context = RasterContext(3, 3)
+    context.set_stretch_mode(4)
+    args = {
+        "x": 0,
+        "y": 0,
+        "width": 3,
+        "height": 3,
+        "src_x": 0,
+        "src_y": 0,
+        "src_width": 2,
+        "src_height": 2,
+        "rop": 0xCC0020,
+        "source": encode_dib24(RGBBitmap(2, 2, bytes(12))),
+    }
+    transfer = context._prepare_transfer("dib_stretch_blt", args)
+    assert isinstance(transfer, SourceTransfer)
+    assert isinstance(transfer.bitmap, RGBBitmap)
+    assert isinstance(transfer.horizontal, StretchAxis)
+
+
+def test_source_noop_does_not_fall_through_to_pattern_renderer(monkeypatch):
+    context = RasterContext(3, 3)
+
+    def unexpected_pattern(*args, **kwargs):
+        pytest.fail("Source no-op dispatched to PatBlt")
+
+    monkeypatch.setattr(context, "_pat_blt", unexpected_pattern)
+    context.dib_bit_blt(0, 0, 1, 1, 0, 0, 0xCC0020)
+    assert context.calls[-1].name == "dib_bit_blt"
 
 
 @pytest.mark.parametrize("top_down", (False, True))

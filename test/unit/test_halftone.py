@@ -8,6 +8,7 @@ from pillow_wmf.blit import StretchAxis
 from pillow_wmf.halftone import (
     ExpansionAxis,
     HalftoneExpansion,
+    HalftoneMode,
     HalftoneReduction,
     RunExpansionAxis,
     area_weights,
@@ -61,7 +62,7 @@ def test_source_clipping_retains_fractional_coverage_and_black_unavailable_cells
 
 
 @pytest.mark.parametrize("x,y", ((1, 0), (0, 1), (-2, 0), (0, -2), (9, 9)))
-@pytest.mark.parametrize("width,height", ((1, 1), (2, 2), (3, 3), (1, 3), (13, 13)))
+@pytest.mark.parametrize("width,height", ((1, 1), (2, 2), (3, 3), (1, 3), (13, 13), (1_000_000_000, 1)))
 def test_factory_rejects_unavailable_source_before_classification(x, y, width, height):
     class UnreadableBitmap:
         width = height = 1
@@ -70,10 +71,7 @@ def test_factory_rejects_unavailable_source_before_classification(x, y, width, h
             pytest.fail("An unavailable source must not be sampled or classified")
 
     view = halftone_bitmap(UnreadableBitmap(), x, y, 2, 2, width, height)
-    assert view is not None  # Empty input must not select replication.
-    assert not view.valid
-    assert (view.width, view.height) == (width, height)
-    assert view.pixel(0, 0) == (0, 0, 0)
+    assert view is HalftoneMode.NOOP
 
 
 def test_reduction_closing_cell_does_not_imply_physical_source_availability():
@@ -185,7 +183,7 @@ def test_source_sharpening_saturates_before_expansion():
 
 def test_large_constant_image_is_classified_for_replication():
     bitmap = RGBBitmap(49, 49, bytes(49 * 49 * 3))
-    assert halftone_bitmap(bitmap, 0, 0, 49, 49, 50, 50) is None
+    assert halftone_bitmap(bitmap, 0, 0, 49, 49, 50, 50) is HalftoneMode.REPLICATE
 
 
 @pytest.mark.parametrize("colours,replicate", ((19, True), (20, False), (21, False)))

@@ -4,6 +4,7 @@ See docs/gdi-dib-stretching.md for the arithmetic and Windows measurements.
 Includes the native colour census and fast replication-run enlargement filter.
 """
 
+from enum import Enum, auto
 from functools import lru_cache
 
 from .gdi import UnsupportedOperation
@@ -12,6 +13,11 @@ from .halftone_scan import ExpansionSamples, ExpansionWindow, ReductionScanReade
 
 SCALE = 8192
 MAX_FILTER_TAPS = 65536
+
+
+class HalftoneMode(Enum):
+    NOOP = auto()
+    REPLICATE = auto()
 
 
 def replication_candidate(sw, sh, width, height):
@@ -61,18 +67,21 @@ def replication_content(bitmap, x, y, width, height):
 
 
 def halftone_bitmap(bitmap, x, y, sw, sh, width, height):
-    """Return a filtered bitmap view, or None to use existing scan replication."""
+    """Return a filtered view, no-op, or explicit request for scan replication.
+
+    A view with valid=False means no output, never replication.
+    """
     if min(sw, sh, width, height) <= 0:
         raise UnsupportedOperation("HALFTONE reflected extents")
+    if not has_source(bitmap, x, y, sw, sh):
+        return HalftoneMode.NOOP
     left, top = max(0, x), max(0, y)
     right, bottom = min(bitmap.width, x + sw), min(bitmap.height, y + sh)
-    fixup = (
-        has_source(bitmap, x, y, sw, sh)
-        and fixup_candidate(sw, sh, width, height)
-        and replication_content(bitmap, left, top, right - left, bottom - top)
+    fixup = fixup_candidate(sw, sh, width, height) and replication_content(
+        bitmap, left, top, right - left, bottom - top
     )
     if fixup and replication_candidate(sw, sh, width, height):
-        return None
+        return HalftoneMode.REPLICATE
     reduced = HalftoneReduction(bitmap, x, y, sw, sh, min(sw, width), min(sh, height), fixup=fixup)
     if width <= sw and height <= sh:
         return reduced

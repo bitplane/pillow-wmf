@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import Enum, auto
 from fractions import Fraction
 from math import ceil
 from struct import unpack_from
@@ -16,7 +17,7 @@ from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
-from .halftone import halftone_bitmap
+from .halftone import HalftoneExpansion, HalftoneMode, HalftoneReduction, halftone_bitmap
 from .mapping import Mapping
 from .paint import pattern_rop2, rop2, rop3
 from .stroke import (
@@ -49,6 +50,20 @@ class Brush:
     hatch: int = 0
     pattern: RGBBitmap | None = None
     monochrome: bool = False
+
+
+class TransferAction(Enum):
+    NOOP = auto()
+    PATTERN = auto()
+
+
+@dataclass(frozen=True)
+class SourceTransfer:
+    bitmap: RGBBitmap | HalftoneReduction | HalftoneExpansion
+    horizontal: BlitAxis | StretchAxis
+    vertical: BlitAxis | StretchAxis
+    operation: int
+    pad_bounds: tuple[int, int, int, int] | None = None
 
 
 class RasterContext(TraceContext):
@@ -126,7 +141,7 @@ class RasterContext(TraceContext):
             if a["mode"] not in (1, 2, 3, 4):
                 raise UnsupportedOperation(f"Stretch mode {a['mode']}")
         elif name in ("dib_bit_blt", "dib_stretch_blt", "stretch_dib"):
-            bitmap, horizontal, vertical, pad_bounds = self._prepare_transfer(name, a)
+            transfer = self._prepare_transfer(name, a)
         elif name == "set_background_mode":
             if a["mode"] not in (1, 2):
                 raise UnsupportedOperation(f"Background mode {a['mode']}")
@@ -152,7 +167,7 @@ class RasterContext(TraceContext):
                 pattern = None if unpack_from("<i", a["bitmap"].data, 8)[0] < 0 else pattern.monochrome()
         elif name == "set_dib_to_device":
             layout = read_dib24(a["source"], color_usage=a["color_usage"], max_pixels=self.max_bitmap_pixels)
-            bitmap = None
+            transfer = TransferAction.NOOP
             # WMF stores WORDs here but playback sign-extends coordinates and
             # extents. Scan indexes/counts remain unsigned.
             x, y, width, height, sx, sy = (
@@ -168,6 +183,7 @@ class RasterContext(TraceContext):
                 x, y = self._point(x, y)
                 horizontal = BlitAxis(x, sx, width)
                 vertical = BlitAxis(y, start + count - sy - height, height)
+                transfer = SourceTransfer(bitmap, horizontal, vertical, 0xCC0020)
         elif name == "select_object":
             if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
@@ -309,15 +325,15 @@ class RasterContext(TraceContext):
         elif name == "pat_blt":
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
         elif name in ("dib_bit_blt", "set_dib_to_device", "dib_stretch_blt", "stretch_dib"):
-            if bitmap is not None:
+            if isinstance(transfer, SourceTransfer):
                 self._source_blt(
-                    bitmap,
-                    horizontal,
-                    vertical,
-                    a.get("rop", 0xCC0020),
-                    pad_bounds=pad_bounds if name != "set_dib_to_device" else None,
+                    transfer.bitmap,
+                    transfer.horizontal,
+                    transfer.vertical,
+                    transfer.operation,
+                    pad_bounds=transfer.pad_bounds,
                 )
-            elif name != "set_dib_to_device":
+            elif transfer is TransferAction.PATTERN:
                 self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
         elif name in ("flood_fill", "ext_flood_fill"):
             self._flood_fill(self._point(a["x"], a["y"]), rgb(a["color"]), a.get("mode", 0))
@@ -475,16 +491,18 @@ class RasterContext(TraceContext):
                     self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
         return result
 
-    def _prepare_transfer(self, name, a):
-        if a["source"] is None or pattern_rop2(a["rop"]) is not None:
-            return None, None, None, None
+    def _prepare_transfer(self, name, a) -> SourceTransfer | TransferAction:
+        if pattern_rop2(a["rop"]) is not None:
+            return TransferAction.PATTERN
+        if a["source"] is None:
+            return TransferAction.NOOP
         layout = read_dib24(a["source"], color_usage=a.get("color_usage", 0), max_pixels=self.max_bitmap_pixels)
         x, y = self._point(a["x"], a["y"])
         right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
         sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         dw, dh = right - x, bottom - y
         if not all((sw, sh, dw, dh)):
-            return None, None, None, None
+            return TransferAction.NOOP
         scaled = abs(dw) != abs(sw) or abs(dh) != abs(sh)
         bitmap = layout.decode()
         mirrored = (dw < 0) != (sw < 0) or (dh < 0) != (sh < 0)
@@ -499,14 +517,16 @@ class RasterContext(TraceContext):
             hx = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
             hy = StretchAxis.create(y, dh, sy, sh, bitmap.height)
             filtered = halftone_bitmap(bitmap, hx.source, hy.source, abs(sw), abs(sh), abs(dw), abs(dh))
-            if filtered is not None:
+            if filtered is HalftoneMode.NOOP:
+                return TransferAction.NOOP
+            if filtered is not HalftoneMode.REPLICATE:
                 if not filtered.valid:
-                    return None, None, None, None
-                return (
+                    return TransferAction.NOOP
+                return SourceTransfer(
                     filtered,
                     BlitAxis(hx.destination, abs(dw) - 1 if hx.mirrored else 0, abs(dw), -1 if hx.mirrored else 1),
                     BlitAxis(hy.destination, abs(dh) - 1 if hy.mirrored else 0, abs(dh), -1 if hy.mirrored else 1),
-                    None,
+                    a["rop"],
                 )
         if scaled:
             horizontal = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
@@ -518,7 +538,7 @@ class RasterContext(TraceContext):
         if (scaled or mirrored) and (not copy or (scaled and self._stretch_mode == 4)):
             left, top = x + min(0, dw + 1), y + min(0, dh + 1)
             pad_bounds = (left, top, left + abs(dw), top + abs(dh))
-        return bitmap, horizontal, vertical, pad_bounds
+        return SourceTransfer(bitmap, horizontal, vertical, a["rop"], pad_bounds)
 
     def _source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
         table = (operation >> 16) & 255
