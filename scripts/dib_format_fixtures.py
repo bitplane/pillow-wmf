@@ -164,6 +164,32 @@ def conversion_cases():
 
 
 def fixup_holdouts():
+    # Identical RGB edges at different source depths distinguish format dispatch
+    # from the shared scan filter. Larger images cross the colour-census gate.
+    for size in (7, 49):
+        r = Recorder()
+        colors = ((19, 59, 97), (90, 96, 210))
+        variants = product((1, 4, 8, 24), (0, 1)) if size == 7 else product((1, 4, 8, 24), (0,))
+        for i, (depth, diagonal) in enumerate(variants):
+            samples = tuple(int(x == y) if diagonal else (x + y) % 2 for y in range(size) for x in range(size))
+            if depth == 24:
+                samples = tuple(colors[v][0] << 16 | colors[v][1] << 8 | colors[v][2] for v in samples)
+            source = encode_dib(size, size, samples, depth=depth, colors=colors if depth <= 8 else ())
+            r.set_stretch_mode(4)
+            r.dib_stretch_blt(
+                i % 2 * 64,
+                i // 2 * 30 if size == 7 else i // 2 * 64,
+                size + 2,
+                size + 2,
+                0,
+                0,
+                size,
+                size,
+                0xCC0020,
+                source,
+            )
+        yield f"dib-format-fixup-depths-{size}", r
+
     r = Recorder()
     palettes = (
         ((0, 0, 0), (255, 255, 255)),
