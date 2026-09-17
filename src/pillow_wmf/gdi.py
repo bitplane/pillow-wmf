@@ -85,7 +85,7 @@ class GDI:
     def select_palette(self, handle: Handle) -> None:
         return self.invoke(Call.make("select_palette", handle=handle))
 
-    def select_clip_region(self, region: Handle) -> None:
+    def select_clip_region(self, region: Handle | None) -> None:
         return self.invoke(Call.make("select_clip_region", region=region))
 
     def paint_region(self, region: Handle) -> None:

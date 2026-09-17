@@ -8,7 +8,7 @@ from math import ceil
 
 from PIL import Image
 
-from .clip import ClipRegion
+from .clip import ClipRegion, RegionMask
 from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
@@ -48,7 +48,7 @@ class RasterContext(TraceContext):
         if width <= 0 or height <= 0:
             raise ValueError("Image dimensions must be positive")
         self.image = Image.new("RGB", (width, height), background)
-        self._objects: dict[Handle, Pen | Brush] = {}
+        self._objects: dict[Handle, Pen | Brush | RegionMask] = {}
         self._pen = Pen((0, 0, 0), width=0)
         self._brush = Brush((255, 255, 255))
         self._position = (0, 0)
@@ -95,9 +95,11 @@ class RasterContext(TraceContext):
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
         elif name == "select_object":
-            if a["handle"].kind not in {"pen", "brush"}:
+            if a["handle"].kind not in {"pen", "brush", "region"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
         elif name not in {
+            "create_region",
+            "select_clip_region",
             "set_window_origin",
             "set_viewport_origin",
             "set_window_extent",
@@ -171,10 +173,24 @@ class RasterContext(TraceContext):
             self._objects[result] = Pen(rgb(a["color"]), a["width"], a["style"])
         elif name == "create_brush":
             self._objects[result] = Brush(rgb(a["color"]), a["style"], a["hatch"])
+        elif name == "create_region":
+
+            def signed(value):
+                return (value + 32768) % 65536 - 32768
+
+            self._objects[result] = RegionMask.from_rectangles(
+                (signed(left), signed(scan.top), signed(right), signed(scan.bottom))
+                for scan in a["region"].scans
+                for left, right in zip(scan.endpoints[::2], scan.endpoints[1::2], strict=True)
+            )
+        elif name == "select_clip_region":
+            self._clip = ClipRegion(mask=self._objects[a["region"]] if a["region"] is not None else None)
         elif name == "select_object":
             obj = self._objects[a["handle"]]
             if isinstance(obj, Pen):
                 self._pen = obj
+            elif isinstance(obj, RegionMask):
+                self._clip = ClipRegion(mask=obj)
             else:
                 self._brush = obj
         elif name == "delete_object":

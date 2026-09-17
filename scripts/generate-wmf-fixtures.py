@@ -4,7 +4,6 @@ from itertools import product
 from pathlib import Path
 
 from pillow_wmf import Recorder
-from pillow_wmf.wmf.fixed import SelectClipRegion
 from pillow_wmf.wmf.objects import Region, Scan
 
 FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
@@ -67,6 +66,7 @@ def region_clip_cases():
     for name, region in (
         ("ring", ring),
         ("empty", Region((0, 0, 0, 0), ())),
+        ("empty-scan", Region((8, 8, 8, 16), (Scan(8, 16, (8, 8)),))),
         ("negative", Region((-16, -8, 64, 64), (Scan(65528, 64, (65520, 64)),))),
         ("overlap", Region((8, 8, 96, 96), (Scan(8, 64, (8, 64)), Scan(32, 96, (32, 96))))),
         ("bounds", Region((0, 0, 1, 1), ring.scans)),
@@ -97,7 +97,7 @@ def region_clip_cases():
             recorder.exclude_clip_rect(0, 0, 128, 128)
             recorder.restore_dc(-1)
         elif operation == "clear":
-            recorder.records.append(SelectClipRegion(0))
+            recorder.select_clip_region(None)
         elif operation == "select-object":
             recorder.select_object(handle)
         elif operation == "intersect":

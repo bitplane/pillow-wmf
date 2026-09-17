@@ -71,6 +71,9 @@ def play(
         for parameter in binding.parameters:
             value = getattr(record, references.get(parameter, parameter))
             if parameter in references:
+                if name == "select_clip_region" and value == 0:
+                    arguments[parameter] = None
+                    continue
                 if value >= len(slots) or value < 0 or slots[value] is empty:
                     raise PlaybackError(f"Record {index}: invalid object index {value}")
                 if slots[value] is unavailable:

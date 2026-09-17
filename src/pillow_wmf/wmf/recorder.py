@@ -28,7 +28,14 @@ class Recorder(TraceContext):
         binding = BINDINGS[call.name]
         arguments = call.kwargs
         for parameter, field in binding.references:
-            arguments[field] = self._indexes[arguments.pop(parameter)]
+            handle = arguments.pop(parameter)
+            if call.name == "select_clip_region":
+                if handle is None:
+                    arguments[field] = 0
+                    continue
+                if self._indexes[handle] == 0:
+                    raise ValueError("WMF clip region slot zero means reset; use select_object for this region")
+            arguments[field] = self._indexes[handle]
         if call.name == "create_pen":
             arguments["unused_y"] = 0
         if call.name == "set_layout":

@@ -55,6 +55,9 @@ jobs:
         run: python scripts/probe-windows-edge-cases.py
       - name: Render missing reference images
         run: python scripts/update-goldens.py
+      - name: Verify native regions
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/probe-windows-regions.py
       - name: Probe native inside-frame paths
         if: github.event_name == 'workflow_dispatch'
         run: python scripts/probe-windows-insideframe.py
