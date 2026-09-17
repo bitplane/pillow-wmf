@@ -5,12 +5,14 @@ from itertools import product
 from pathlib import Path
 
 from pillow_wmf import Metafile, Recorder, play
+from pillow_wmf.bitmap import RGBBitmap, encode_dib24
 from pillow_wmf.wmf.objects import Region, Scan
 
 FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
 
 
 def cases():
+    yield from dib_brush_cases()
     yield from pat_blt_cases()
     yield from flood_cases()
     yield from region_paint_cases()
@@ -1366,6 +1368,81 @@ def pat_blt_cases():
         for index, rop in enumerate((0x00000042, 0x00550009, 0x00F00021, 0x005A0049, 0x00FF0062)):
             r.pat_blt(4 + index * 24, 4, 20, 100, rop | flags)
         yield f"patblt-code-bits-{flags:x}", r
+
+
+def dib_brush_cases():
+    def bitmap(width, height):
+        return RGBBitmap(
+            width,
+            height,
+            bytes(
+                channel
+                for y in range(height)
+                for x in range(width)
+                for channel in ((x * 47 + y * 19) % 256, (x * 13 + y * 71) % 256, (x * 97 + y * 31) % 256)
+            ),
+        )
+
+    for width, height in ((1, 1), (1, 5), (2, 3), (3, 2), (4, 3), (5, 7), (8, 8), (11, 9)):
+        for top_down in (False, True):
+            r = mapped()
+            brush = r.create_dib_pattern_brush(5, 0, encode_dib24(bitmap(width, height), top_down=top_down))
+            r.select_object(brush)
+            r.pat_blt(3, 5, 117, 113, 0xF00021)
+            yield f"dib-brush-size-{width}-{height}-{int(top_down)}", r
+    for shape, background in product(("patblt", "rectangle", "ellipse", "polygon", "region", "flood"), (1, 2)):
+        r = mapped()
+        r.select_object(r.create_pen(5, 0, 0))
+        r.select_object(r.create_brush(0, 0x37598B, 0))
+        r.rectangle(0, 0, 128, 128)
+        brush = r.create_dib_pattern_brush(5, 0, encode_dib24(bitmap(5, 7)))
+        r.select_object(brush)
+        r.set_background_mode(background)
+        r.set_background_color(0xCC1188)
+        for index in range(16):
+            x, y = (index % 4) * 32 + 1, (index // 4) * 32 + 1
+            r.set_rop2(index + 1)
+            if shape == "patblt":
+                table = (index & 3) * 5 | ((index & 12) * 20)
+                r.pat_blt(x, y, 29, 29, table << 16)
+            elif shape in ("rectangle", "ellipse"):
+                getattr(r, shape)(x, y, x + 29, y + 29)
+            elif shape == "polygon":
+                r.polygon(((x, y), (x + 29, y + 9), (x + 7, y + 29)))
+            elif shape == "region":
+                region = r.create_region(Region((x, y, x + 29, y + 29), (Scan(y, y + 29, (x, x + 29)),)))
+                r.paint_region(region)
+                r.delete_object(region)
+            else:
+                r.save_dc()
+                r.intersect_clip_rect(x, y, x + 29, y + 29)
+                r.ext_flood_fill(x + 2, y + 2, 0x37598B, 1)
+                r.restore_dc(-1)
+        yield f"dib-brush-rop-{shape}-{background}", r
+    for state in ("mapped", "reflected", "clip", "restore", "deleted"):
+        r = mapped()
+        r.select_object(r.create_pen(5, 0, 0))
+        brush = r.create_dib_pattern_brush(5, 0, encode_dib24(bitmap(11, 9)))
+        r.select_object(brush)
+        if state in ("mapped", "reflected"):
+            r.set_window_origin(3, -5)
+            r.set_viewport_extent(-77 if state == "reflected" else 77, 143)
+            r.set_viewport_origin(119 if state == "reflected" else 7, 11)
+        if state == "clip":
+            r.exclude_clip_rect(19, 27, 79, 67)
+        if state in ("restore", "deleted"):
+            r.save_dc()
+            r.select_object(r.create_brush(0, 0xFFFFFF, 0))
+            if state == "deleted":
+                r.delete_object(brush)
+            r.restore_dc(-1)
+        r.rectangle(13, 7, 111, 109)
+        yield f"dib-brush-state-{state}", r
+    for style in (0, 1, 2, 3, 6, 8):
+        r = mapped()
+        r.select_object(r.create_dib_pattern_brush(style, 0, encode_dib24(bitmap(3, 2))))
+        r.pat_blt(0, 0, 128, 128, 0xF00021)
+        yield f"dib-brush-style-{style}", r
 
 
 def main():
