@@ -37,6 +37,7 @@ def draw(r, dib, usage, y, operation="stretch_dib"):
 
 
 def cases():
+    yield from holdouts()
     for flags in (0, 1, 2, 4):
         r = Recorder()
         r.set_stretch_mode(3)
@@ -125,3 +126,51 @@ def cases():
     r.select_object(brush)
     r.pat_blt(2, 50, 112, 12, 0xF00021)
     yield "palette-brush-realization", r
+
+
+def holdouts():
+    r = Recorder()
+    r.set_stretch_mode(3)
+    # The default logical palette, including wraparound and high WORD indexes.
+    for i in range(8):
+        draw(r, source(indices=tuple(range(i * 4, i * 4 + 4))), 1, i * 15)
+    yield "palette-default-table", r
+
+    r = Recorder()
+    r.set_stretch_mode(3)
+    r.select_palette(r.create_palette(Palette(entries=ENTRIES)))
+    for i, (depth, count, top) in enumerate(((1, 2, False), (1, 2, True), (4, 3, False), (8, 3, True))):
+        dib = encode_dib(
+            7,
+            3,
+            tuple(j % count for j in range(21)),
+            depth=depth,
+            colors=((0, 0, 0),) * count,
+            top_down=top,
+        )
+        dib = BitmapData(
+            "dib", dib.data[:40] + pack("<" + "H" * count, *reversed(range(count))) + dib.data[40 + 4 * count :]
+        )
+        r.stretch_dib(2, i * 30, 56, 24, 0, 0, 7, 3, 0xCC0020, 1, dib)
+        r.select_object(r.create_dib_pattern_brush(5, 1, dib))
+        r.pat_blt(64, i * 30, 56, 24, 0xF00021)
+    yield "palette-dib-packing", r
+
+    r = Recorder()
+    r.select_palette(r.create_palette(Palette(entries=ENTRIES)))
+    r.set_stretch_mode(3)
+    for i, (depth, usage) in enumerate(((d, u) for d in (16, 24, 32) for u in (1, 2))):
+        dib = encode_dib(8, 4, (0x7351,) * 32, depth=depth)
+        draw(r, dib, usage, 2 + i * 20)
+    yield "palette-direct-depth-usage", r
+
+    # COLORREF palette indexes are separate from DIB colour-table indexes.
+    r = Recorder()
+    r.select_palette(r.create_palette(Palette(entries=ENTRIES)))
+    for row, flag in enumerate((0x01000000, 0x02000000)):
+        for i in range(8):
+            value = flag | (i if row == 0 else 0x5DAB21 + i * 0x10101)
+            r.set_pixel(2 + i * 14, row * 32, value)
+            r.select_object(r.create_brush(0, value, 0))
+            r.pat_blt(2 + i * 14, row * 32 + 2, 12, 12, 0xF00021)
+    yield "palette-colorrefs", r
