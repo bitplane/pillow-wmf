@@ -1,4 +1,4 @@
-"""Immutable application clipping in device coordinates.
+"""Immutable region algebra and application clipping.
 
 The bitmap bounds are applied when pixels are written. They must not trim an
 application clip: a later OffsetClipRgn can move an off-surface clip into view.
@@ -104,6 +104,8 @@ class RegionMask:
 
         Dilating the complement includes holes and concave corners, without
         exposing the artificial boundaries between a region's scan bands.
+        Half-integral device thickness represents an odd full footprint;
+        the extra pixel belongs to the left/top side of the inner border.
         """
         if not self.bands or not width or not height:
             return RegionMask()

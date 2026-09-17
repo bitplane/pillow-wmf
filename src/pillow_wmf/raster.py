@@ -267,6 +267,9 @@ class RasterContext(TraceContext):
             if region is not None:
                 region = region.transformed(self._point)
                 if name == "frame_region":
+                    # Native framing realizes the full rectangular footprint
+                    # before splitting it about the boundary. Mapping each
+                    # half separately loses odd-width and reflection ties.
                     dx, dy = self.mapping.vector(2 * a["width"], 2 * a["height"])
                     region = region.frame(Fraction(abs(dx), 2), Fraction(abs(dy), 2))
                 brush = self._objects[a["brush"]] if "brush" in a else self._brush

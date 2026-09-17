@@ -1,9 +1,10 @@
-# WMF region creation and clipping
+# WMF regions: creation, clipping and painting
 
 The first region slice implements `CreateRegion`, `SelectClipRegion`, region
 selection through `SelectObject`, and composition with existing rectangular
-clipping, offsets and SaveDC/RestoreDC. Region painting and framing remain the
-next slice; text and bitmap support are not prerequisites for this one.
+clipping, offsets and SaveDC/RestoreDC. `FillRegion`, `PaintRegion`,
+`InvertRegion` and `FrameRegion` now paint through the same clip and brush
+compositing machinery.
 
 ## Coordinate and object contracts
 
@@ -68,6 +69,45 @@ empty clipping. Off-surface coordinates are retained so offsetting can move
 them into view. Every drawing primitive uses the existing final pixel clip;
 there are no per-primitive region rendering branches.
 
+## Painting and frame realization
+
+Unlike clip selection, painting maps region coordinates into device space at
+the time of the paint call. The region object itself remains unchanged.
+`PaintRegion` uses the selected brush; `FillRegion` and `FrameRegion` use their
+explicit brush without changing the selection. These three operations use
+ROP2 and the shared device-space hatch/background rules. `InvertRegion`
+complements destination RGB irrespective of the selected brush and ROP2,
+without modifying either state. All four obey the application clip.
+
+The frame is an **inner rectangular morphological border**, not the outlines
+of the individual scan rectangles. Dilating the region's complement and
+intersecting it with the region handles holes, narrow arms, disconnected
+islands and concave corners without introducing scan-band seams. Region
+subtraction and dilation operate on bands, not bitmap-sized masks.
+
+Native probes establish the following device footprint realization:
+
+1. Map the region's rectangle edges using ordinary point mapping.
+2. Map the doubled logical frame dimensions as a vector, then take absolute
+   values. This produces the full integer rectangular footprint.
+3. Split that footprint about each boundary: ceil-half on left/top,
+   floor-half on right/bottom. An odd footprint is therefore asymmetric.
+4. Paint the resulting border with the explicit brush and existing ROP2/clip.
+
+A zero dimension paints nothing. Negative dimensions are supported; their
+sign participates in mapping before the device footprint is made positive.
+Mapping one half-width and simply doubling it is not equivalent: `(5,7)` at
+half scale gives a `(5,7)` full footprint and margins `(3,4)` / `(2,3)`.
+Reflected mappings also exercise the sign of rounding ties.
+
+This is an inferred raster contract, not a claim to possess Microsoft's
+implementation. Microsoft's [FrameRgn documentation](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-framergn)
+establishes the logical-unit parameters. Wine's
+[painting fallbacks](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/painting.c)
+are useful for brush and ROP semantics, but its
+[region framing](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/region.c)
+explicitly notes a difference from Windows and is not our framing oracle.
+
 ## Verification
 
 Twenty-one committed Windows references cover rings/holes, overlap, negative coordinates,
@@ -77,3 +117,11 @@ intersection/exclusion, reset, null objects and slot-zero selection. The manual
 15 displacement cases, native allocation after a failed creation, and 324 exact
 cross-primitive pixel comparisons. The final native verification is
 [run 35172754644](https://github.com/bitplane/pillow-wmf/actions/runs/35172754644).
+
+An additional 52 Windows PNGs cover all four paint calls, explicit and selected
+brushes, solid/null/hatch brushes, transparent/opaque backgrounds, XOR, clipping,
+nonuniform and reflected mappings, half-pixel boundaries, and zero, negative
+and oversized frame dimensions. The manual `probe-windows-region-paint.py`
+cross-checks further shapes, all 16 ROP2 modes, fractional mappings and state
+preservation directly against Windows. The ordinary push workflow continues
+to render only missing PNGs; the larger matrix runs only on manual dispatch.
