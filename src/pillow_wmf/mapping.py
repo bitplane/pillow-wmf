@@ -8,6 +8,12 @@ def rounded(value: float) -> int:
     return floor(value + 0.5)
 
 
+def fixed(value: float) -> int:
+    """Convert to signed 28.4; exact half-unit ties go away from zero."""
+    magnitude = floor(abs(value) * 16 + 0.5)
+    return -magnitude if value < 0 else magnitude
+
+
 def scaled(value: int, numerator: int, denominator: int) -> int:
     if denominator == 0:
         raise ValueError("Zero extent divisor")
@@ -64,8 +70,7 @@ class Mapping:
         ``point`` retains the separate LPtoDP-style integer conversion.
         """
         return tuple(
-            (rounded(value * viewport / window * 16) + rounded((origin - window_origin * viewport / window) * 16) + 8)
-            // 16
+            (fixed(value * viewport / window) + fixed(origin - window_origin * viewport / window) + 8) // 16
             for value, origin, window_origin, viewport, window in zip(
                 (x, y), self.viewport_origin, self.window_origin, self.viewport_extent, self.window_extent, strict=True
             )

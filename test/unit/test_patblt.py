@@ -1,7 +1,22 @@
 import pytest
 
 from pillow_wmf import RasterContext
-from pillow_wmf.mapping import Mapping
+from pillow_wmf.mapping import Mapping, fixed
+
+
+@pytest.mark.parametrize("value,expected", ((0.03125, 1), (-0.03125, -1), (1.03125, 17), (-1.03125, -17)))
+def test_fixed_point_half_unit_ties_are_away_from_zero(value, expected):
+    assert fixed(value) == expected
+
+
+def test_negative_fixed_tie_precedes_positive_pixel_tie_rounding():
+    mapping = Mapping(
+        window_extent=(64, 192), viewport_extent=(-77, -192), window_origin=(-3, -3), viewport_origin=(64, 64)
+    )
+    # X product -40.90625 -> -40.9375, translation 60.390625 -> 60.375.
+    # Their sum 19.4375 rounds down. Rounding the negative fixed tie upwards
+    # instead would produce 19.5, and incorrectly select pixel 20.
+    assert mapping.device_point(34, 0) == (19, 61)
 
 
 def test_driver_translation_is_quantized_before_point_conversion():
