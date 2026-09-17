@@ -2,6 +2,7 @@
 
 from pillow_wmf import Recorder
 from pillow_wmf.bitmap import RGBBitmap, encode_dib24
+from pillow_wmf.wmf.objects import Region, Scan
 
 
 def marks(r):
@@ -18,6 +19,40 @@ def marks(r):
 
 
 def cases():
+    for vx in (48, 96, -96):
+        for width in (0, 3):
+            r = Recorder()
+            r.set_layout(1)
+            r.set_window_extent(64, 128)
+            r.set_viewport_extent(vx, 128)
+            r.set_viewport_origin(96 if vx < 0 else 5, 0)
+            r.set_window_origin(3, 0)
+            r.select_object(r.create_pen(0, width, 0x0000FF))
+            r.select_object(r.create_brush(0, 0x317519, 0))
+            r.rectangle(7, 4, 34, 21)
+            r.ellipse(7, 28, 34, 45)
+            r.round_rect(7, 52, 34, 69, 12, 8)
+            r.arc(7, 76, 34, 93, 40, 70, 3, 101)
+            r.pie(7, 100, 34, 117, 40, 94, 3, 125)
+            yield f"layout-shapes-scale{vx}-pen{width}", r
+
+    for flags in (0, 1, 9):
+        r = Recorder()
+        r.set_layout(flags)
+        r.select_object(r.create_brush(2, 0x317519, 4))
+        r.pat_blt(4, 3, 35, 24, 0xF00021)
+        dib = encode_dib24(RGBBitmap(5, 3, bytes(c for y in range(3) for x in range(5) for c in (x * 47, y * 89, 53))))
+        r.select_object(r.create_dib_pattern_brush(5, 0, dib))
+        r.pat_blt(4, 34, 35, 24, 0xF00021)
+        r.bit_blt(50, 3, 35, 24, 4, 3, 0xCC0020)
+        r.stretch_blt(50, 34, 56, 30, 4, 34, 35, 24, 0xCC0020)
+        region = r.create_region(Region((4, 72, 39, 100), (Scan(72, 100, (4, 39)),)))
+        r.paint_region(region)
+        r.select_object(region)
+        r.set_layout(0)
+        r.pat_blt(0, 64, 128, 64, 0x550009)
+        yield f"layout-patterns-regions-selfcopy-{flags}", r
+
     for flags in (0, 1, 8, 9):
         r = Recorder()
         r.set_layout(flags)
