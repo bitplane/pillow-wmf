@@ -10,6 +10,19 @@ using a GDI driver.
 PNGs are committed as compatibility inputs. Delete a PNG to have the Windows
 workflow recreate it. Compatibility tests compare rendered pixels with these PNGs.
 
+Unit and compatibility CI run on Linux. The reference workflow checks for
+missing PNGs on Linux before allocating a Windows runner; ordinary pushes never
+run native probe matrices. Manual dispatch defaults to no probes. To investigate
+one area, select its probe explicitly, for example:
+
+```sh
+gh workflow run update-goldens.yml -f probe=patblt
+```
+
+The `all` choice runs every native probe and should only be used deliberately,
+with explicit approval when an agent is doing the work. This keeps runner costs
+down for forks as well as the main repository.
+
 - [Implementation contracts and coverage](docs/wmf-implementation.md)
 - [Format research and scope](docs/wmf-format-research.md)
 - [Complete record inventory](docs/wmf-record-inventory.md)

@@ -2,31 +2,70 @@ name: Update Windows reference images
 
 on:
   workflow_dispatch:
+    inputs:
+      probe:
+        description: "Optional native probe (all is expensive; explicit approval required)"
+        type: choice
+        default: none
+        options:
+          - none
+          - mapping
+          - patblt
+          - paths
+          - strokes
+          - arcs
+          - edge-cases
+          - regions
+          - region-paint
+          - insideframe
+          - roundrects
+          - pies
+          - chords
+          - all
   push:
     branches: [master]
     paths:
       - "test/compatibility/wmf/*.wmf"
       - "test/compatibility/wmf/*.png"
-      - "scripts/generate-wmf-fixtures.py"
-      - "scripts/probe-windows-mapping.py"
-      - "scripts/probe-windows-paths.py"
-      - "scripts/probe-windows-strokes.py"
-      - "scripts/probe-windows-arcs.py"
-      - "scripts/windows_wmf_render.py"
-      - "scripts/update-goldens.py"
-      - ".github/workflows/update-goldens.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: update-windows-reference-images-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  update:
+  preflight:
     if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      missing: ${{ steps.references.outputs.missing }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for missing reference images
+        id: references
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          root = Path("test/compatibility/wmf")
+          missing = [p for p in root.glob("*.wmf") if not p.with_suffix(".png").is_file()]
+          print(f"{len(missing)} missing Windows reference images")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"missing={str(bool(missing)).lower()}\n")
+
+  update:
+    needs: preflight
+    if: >-
+      needs.preflight.outputs.missing == 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.probe != 'none')
     runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -40,43 +79,46 @@ jobs:
       - name: Install project
         run: python -m pip install .
       - name: Report native coordinate mapping
+        if: inputs.probe == 'mapping' || inputs.probe == 'all'
         run: python scripts/probe-windows-mapping.py
       - name: Verify native PatBlt
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'patblt' || inputs.probe == 'all'
         run: python scripts/probe-windows-patblt.py
       - name: Report native drawing paths
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'paths' || inputs.probe == 'all'
         run: python scripts/probe-windows-paths.py
       - name: Verify native stroke matrix
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'strokes' || inputs.probe == 'all'
         run: python scripts/probe-windows-strokes.py
       - name: Probe native Arc paths
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'arcs' || inputs.probe == 'all'
         run: python scripts/probe-windows-arcs.py
       - name: Verify native edge cases
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'edge-cases' || inputs.probe == 'all'
         run: python scripts/probe-windows-edge-cases.py
       - name: Render missing reference images
+        if: needs.preflight.outputs.missing == 'true'
         run: python scripts/update-goldens.py
       - name: Verify native regions
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'regions' || inputs.probe == 'all'
         run: python scripts/probe-windows-regions.py
       - name: Verify native region painting
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'region-paint' || inputs.probe == 'all'
         run: python scripts/probe-windows-region-paint.py
       - name: Probe native inside-frame paths
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'insideframe' || inputs.probe == 'all'
         run: python scripts/probe-windows-insideframe.py
       - name: Probe native RoundRect paths
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'roundrects' || inputs.probe == 'all'
         run: python scripts/probe-windows-roundrects.py
       - name: Probe native Pie paths
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'pies' || inputs.probe == 'all'
         run: python scripts/probe-windows-pies.py
       - name: Probe native Chord paths
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.probe == 'chords' || inputs.probe == 'all'
         run: python scripts/probe-windows-chords.py
       - name: Commit reference images
+        if: needs.preflight.outputs.missing == 'true'
         shell: bash
         run: |
           git add -- 'test/compatibility/wmf/*.png'
