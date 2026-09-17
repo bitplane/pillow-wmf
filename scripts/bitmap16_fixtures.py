@@ -4,6 +4,7 @@ from itertools import product
 from struct import pack
 
 from pillow_wmf import Metafile, Recorder
+from pillow_wmf.bitmap import RGBBitmap, encode_dib24
 from pillow_wmf.wmf.objects import BitmapData, Palette
 
 
@@ -24,6 +25,7 @@ def source(depth, width=13, height=7, *, pattern=False, native=False, extra_stri
 
 
 def cases():
+    yield from self_copy_cases()
     for operation in ("bit_blt", "stretch_blt"):
         r = Recorder()
         r.select_object(r.create_brush(0, 0x713519, 0))
@@ -132,6 +134,58 @@ def cases():
                     r.stretch_blt(28 + i * 30, 46, -27, 21, 2, 1, 9, 5, 0x660046, dib)
                     r.stretch_blt(2 + i * 30, 76, 27, 21, -2, -1, 13, 7, 0xCC0020, dib)
         yield f"bitmap16-{depth}-{operation}", r
+
+
+def self_copy_cases():
+    """Independent source/destination mapping, clipping and overlap holdouts."""
+    seed = encode_dib24(
+        RGBBitmap(
+            128,
+            128,
+            bytes(
+                c
+                for y in range(128)
+                for x in range(128)
+                for c in ((x * 17 + y * 3) % 256, (y * 29 + x * 5) % 256, (x ^ y) * 2)
+            ),
+        )
+    )
+    profiles = (
+        ("identity", 0, 64),
+        ("fractional", 0, 96),
+        ("negative", 0, -96),
+        ("rtl", 1, 64),
+        ("rtl-fractional", 1, 96),
+    )
+    for (profile, flags, extent), (operation, mode), scenario in product(
+        profiles,
+        (("bit_blt", 3), ("stretch_blt", 3), ("stretch_blt", 4)),
+        ("overlap", "clip", "signed"),
+    ):
+        r = Recorder()
+        r.dib_bit_blt(0, 0, 128, 128, 0, 0, 0xCC0020, seed)
+        r.set_layout(flags)
+        r.set_window_extent(64, 64)
+        r.set_viewport_extent(extent, 80 if "fractional" in profile else 64)
+        r.set_window_origin(3, 2)
+        r.set_viewport_origin(110 if extent < 0 else 7, 5)
+        r.set_stretch_mode(mode)
+        r.select_object(r.create_brush(0, 0x713519, 0))
+        if scenario == "clip":
+            r.intersect_clip_rect(12, 8, 55, 65)
+            r.exclude_clip_rect(23, 17, 29, 54)
+        for index, rop in enumerate((0xCC0020, 0x660046)):
+            y = 10 + index * 38
+            sx, sy = (2, y - 5) if scenario == "clip" else (12, y)
+            x, dy = 17, y + 3
+            width, height = 24, 19
+            if scenario == "signed":
+                x, dy, width, height = 48, y + 23, -24, -19
+            if operation == "bit_blt":
+                r.bit_blt(x, dy, width, height, sx, sy, rop)
+            else:
+                r.stretch_blt(x, dy, width, height, sx, sy, 17, 13, rop)
+        yield f"bitmap16-selfcopy-{profile}-{operation}-mode{mode}-{scenario}", r
 
 
 class LegacyRecorder(Recorder):
