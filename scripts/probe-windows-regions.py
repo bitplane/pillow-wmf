@@ -109,6 +109,31 @@ def main():
             finally:
                 gdi.DeleteMetaFile(metafile)
         assert observations == [(False, False, 0), (True, True, 8), (True, True, 8)]
+        recorder = Recorder()
+        recorder.create_pen(5, 1, 0)
+        recorder.create_region(Region((0, 0, 0, 0), ()))
+        brush = recorder.create_brush(0, 0x00CC8844, 0)
+        recorder.select_object(brush)
+        data = recorder.to_bytes()
+        buffer = ctypes.create_string_buffer(data)
+        metafile = check(gdi.SetMetaFileBitsEx(len(data), buffer), "SetMetaFileBitsEx")
+
+        @callback_type
+        def allocation_callback(hdc, handles, record, count, _param):
+            result = gdi.PlayMetaFileRecord(hdc, handles, record, count)
+            function = ctypes.cast(record, ctypes.POINTER(ctypes.c_ushort))[2]
+            print(
+                "region-allocation",
+                hex(function),
+                bool(result),
+                tuple(gdi.GetObjectType(handles[i]) for i in range(count)),
+            )
+            return 1
+
+        try:
+            check(gdi.EnumMetaFile(dc, metafile, allocation_callback, 0), "EnumMetaFile")
+        finally:
+            gdi.DeleteMetaFile(metafile)
         region = check(gdi.CreateRectRgn(32, 32, 64, 64), "CreateRectRgn")
         try:
             for extent in ((192, 64), (-192, -64), (80, 80)):
