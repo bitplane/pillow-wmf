@@ -10,6 +10,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf
 
 
 def cases():
+    yield from flood_cases()
     yield from region_paint_cases()
     blank = Recorder()
     blank.set_map_mode(8)
@@ -1246,6 +1247,73 @@ def region_paint_probe_case(operation, style, mode, extent, size, scans, index):
     # Subsequent drawing observes state preservation without hiding the region.
     r.rectangle(75, 3, 90, 16)
     return r
+
+
+def flood_cases():
+    """Flood topology and brush/ROP atlases, using only established setup calls."""
+    for mode in (0, 1):
+        for state in ("solid", "null", "opaque", "transparent"):
+            for operation in range(1, 17):
+                r = mapped()
+                r.select_object(r.create_pen(5, 0, 0))
+                r.select_object(r.create_brush(0, 0x37598B, 0))
+                r.rectangle(4, 4, 124, 124)
+                # Different-coloured island: surface excludes it, border crosses it.
+                r.select_object(r.create_brush(0, 0x123456, 0))
+                r.rectangle(45, 35, 65, 75)
+                r.select_object(r.create_brush(1 if state == "null" else 2 if state != "solid" else 0, 0xA96C32, 5))
+                r.set_background_color(0x5DB742)
+                r.set_background_mode(1 if state == "transparent" else 2)
+                r.set_rop2(operation)
+                r.ext_flood_fill(12, 12, 0xFFFFFF if mode == 0 else 0x37598B, mode)
+                yield f"flood-state-{mode}-{state}-{operation}", r
+        for topology in (
+            "diagonal",
+            "gap",
+            "clip-wall",
+            "clip-hole",
+            "clip-islands",
+            "outside",
+            "wrong",
+            "unbounded",
+            "mapped",
+            "reflected",
+            "same",
+        ):
+            r = mapped()
+            r.select_object(r.create_pen(5, 0, 0))
+            r.select_object(r.create_brush(0, 0, 0))
+            r.rectangle(0, 0, 128, 128)
+            r.select_object(r.create_brush(0, 0xFFFFFF, 0))
+            r.rectangle(8, 8, 60, 60)
+            r.rectangle(60, 60, 112, 112)
+            if topology == "gap":
+                r.set_pixel(59, 60, 0xFFFFFF)
+            if topology == "clip-wall":
+                r.exclude_clip_rect(30, 0, 31, 128)
+            if topology == "clip-hole":
+                r.exclude_clip_rect(30, 20, 40, 40)
+            if topology == "clip-islands":
+                r.select_clip_region(r.create_region(Region((8, 8, 60, 60), (Scan(8, 60, (8, 25, 35, 60)),))))
+            seed = (12, 12)
+            if topology == "outside":
+                seed = (-1, 12)
+            if topology == "wrong":
+                seed = (0, 0)
+            if topology == "unbounded":
+                seed = (0, 0)
+            if topology in ("mapped", "reflected"):
+                r.set_viewport_extent(-64 if topology == "reflected" else 64, 192)
+                r.set_viewport_origin(32 if topology == "reflected" else 0, 0)
+                seed = (24, 8)
+            r.select_object(r.create_brush(0, 0xFFFFFF if topology == "same" else 0x22CC77, 0))
+            color = (0x123456 if mode == 0 else 0) if topology == "unbounded" else (0 if mode == 0 else 0xFFFFFF)
+            r.ext_flood_fill(*seed, color, mode)
+            yield f"flood-topology-{mode}-{topology}", r
+    r = mapped()
+    r.select_object(r.create_brush(0, 0xCC7733, 0))
+    r.flood_fill(64, 64, 0)
+    yield "flood-legacy", r
 
 
 def main():
