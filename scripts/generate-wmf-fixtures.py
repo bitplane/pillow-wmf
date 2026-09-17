@@ -1739,6 +1739,23 @@ def halftone_cases():
         r.dib_stretch_blt(2 + i % 7 * 18, 2 + i // 7 * 18, dw, dh, 0, 0, 9, 9, 0xCC0020, source)
     yield "halftone-two-dimensional", r
 
+    r = mapped()
+    r.set_stretch_mode(4)
+    for i, (sw, sh, dw) in enumerate(product((3, 9), (1, 2, 3, 5, 9, 17), (17, 61))):
+        source = encode_dib24(
+            RGBBitmap(sw, sh, bytes(64 + 128 * (x == c) for y in range(sh) for x in range(sw) for c in range(3)))
+        )
+        r.dib_stretch_blt(2 + i % 2 * 64, 2 + i // 2 * 10, dw, 1, 0, 0, sw, sh, 0xCC0020, source)
+    yield "halftone-cross-axis-basis", r
+
+    r = mapped()
+    r.set_stretch_mode(4)
+    for value in range(256):
+        source = encode_dib24(RGBBitmap(3, 3, bytes((value, value, value)) * 9))
+        r.dib_stretch_blt(value % 16 * 8, value // 16 * 8, 2, 1, 0, 0, 3, 3, 0xCC0020, source)
+        r.dib_stretch_blt(value % 16 * 8 + 3, value // 16 * 8, 3, 1, 0, 0, 3, 3, 0xCC0020, source)
+    yield "halftone-constant-levels", r
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
