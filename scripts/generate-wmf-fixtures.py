@@ -12,6 +12,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf
 
 
 def cases():
+    yield from dib_transfer_cases()
     yield from dib_brush_cases()
     yield from pat_blt_cases()
     yield from flood_cases()
@@ -1483,6 +1484,84 @@ def dib_brush_cases():
         r.restore_dc(-1)
         r.pat_blt(0, 96, 128, 32, 0xF00021)
         yield f"dib-brush-live-colors-{style}-{mode}", r
+
+
+def dib_transfer_cases():
+    """Asymmetric source pixels make cropping, orientation and banding observable."""
+    bitmap = RGBBitmap(
+        11,
+        9,
+        bytes(c for y in range(9) for x in range(11) for c in (17 + x * 19, 13 + y * 27, (x * 31 + y * 43) % 256)),
+    )
+    for top_down, operation in product((False, True), ("blt", "device")):
+        source = encode_dib24(bitmap, top_down=top_down)
+        for setup in ("plain", "translated", "clipped", "reflected"):
+            r = mapped()
+            r.set_rop2(7)  # Neither transfer uses the DC's ROP2.
+            if setup == "translated":
+                r.set_window_origin(3, 5)
+                r.set_viewport_origin(7, 9)
+            elif setup == "reflected":
+                r.set_viewport_origin(127, 127)
+                r.set_viewport_extent(-128, -128)
+            elif setup == "clipped":
+                r.intersect_clip_rect(8, 7, 120, 117)
+                r.exclude_clip_rect(32, 0, 39, 128)
+            for i, (sx, sy) in enumerate(product((-3, 0, 2, 8, 12), (-2, 0, 3, 8, 10))):
+                x, y = 4 + i % 5 * 24, 4 + i // 5 * 24
+                if operation == "blt":
+                    r.dib_bit_blt(x, y, 9, 7, sx, sy, 0xCC0020, source)
+                else:
+                    r.set_dib_to_device(x, y, 9, 7, sx & 65535, sy & 65535, 0, 9, 0, source)
+            yield f"dib-{operation}-crop-{int(top_down)}-{setup}", r
+
+        r = mapped()
+        for i, (w, h) in enumerate(product((-7, -1, 0, 1, 7), repeat=2)):
+            x, y = 12 + i % 5 * 24, 12 + i // 5 * 24
+            if operation == "blt":
+                r.dib_bit_blt(x, y, w, h, 8, 7, 0xCC0020, source)
+            else:
+                r.set_dib_to_device(x, y, w & 65535, h & 65535, 2, 1, 0, 9, 0, source)
+        yield f"dib-{operation}-extents-{int(top_down)}", r
+
+    for top_down in (False, True):
+        source = encode_dib24(bitmap, top_down=top_down)
+        r = mapped()
+        for i, (start, count) in enumerate(product((0, 1, 4, 8, 9), (0, 1, 3, 9))):
+            r.set_dib_to_device(4 + i % 5 * 24, 4 + i // 5 * 28, 11, 9, 0, 0, start, count, 0, source)
+        yield f"dib-device-bands-{int(top_down)}", r
+        r = mapped()
+        r.set_window_origin(3, 5)
+        r.set_viewport_origin(7, 9)
+        r.set_viewport_extent(77, 193)
+        for i, (sx, sy) in enumerate(product((0, 2, 8), (0, 3, 8))):
+            r.set_dib_to_device(8 + i % 3 * 48, 8 + i // 3 * 24, 9, 7, sx, sy, 0, 9, 0, source)
+        yield f"dib-device-mapping-{int(top_down)}", r
+
+    for brush in ("solid", "null", "hatch-opaque", "hatch-transparent", "pattern", "absent-source"):
+        r = mapped()
+        r.select_object(r.create_brush(0, 0x37598B, 0))
+        r.pat_blt(0, 0, 128, 128, 0xF00021)
+        if brush == "pattern":
+            r.select_object(r.create_dib_pattern_brush(5, 0, encode_dib24(bitmap)))
+        else:
+            style = 1 if brush == "null" else 2 if brush.startswith("hatch") else 0
+            r.select_object(r.create_brush(style, 0xA96C32, 5))
+        r.set_background_color(0x5DB742)
+        r.set_background_mode(1 if brush == "hatch-transparent" else 2)
+        r.set_rop2(7)
+        for table in range(256):
+            r.dib_bit_blt(
+                table % 16 * 8,
+                table // 16 * 8,
+                8,
+                8,
+                1,
+                1,
+                table << 16,
+                None if brush == "absent-source" else encode_dib24(bitmap),
+            )
+        yield f"dib-blt-tables-{brush}", r
 
 
 def main():
