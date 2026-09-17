@@ -10,6 +10,7 @@ from PIL import Image
 
 from .clip import ClipRegion, RegionMask
 from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
+from .flood import flood_spans
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
 from .mapping import Mapping
@@ -99,6 +100,9 @@ class RasterContext(TraceContext):
         elif name == "set_background_mode":
             if a["mode"] not in (1, 2):
                 raise UnsupportedOperation(f"Background mode {a['mode']}")
+        elif name == "ext_flood_fill":
+            if a["mode"] not in (0, 1):
+                raise UnsupportedOperation(f"Flood fill mode {a['mode']}")
         elif name == "create_pen":
             if a["style"] not in range(7) or a["width"] < 0:
                 raise UnsupportedOperation("Only solid, dashed, dotted, null and inside-frame pens are supported")
@@ -125,6 +129,7 @@ class RasterContext(TraceContext):
                 else None
             )
         elif name not in {
+            "flood_fill",
             "fill_region",
             "paint_region",
             "invert_region",
@@ -232,6 +237,8 @@ class RasterContext(TraceContext):
             self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))
         elif name == "set_pixel":
             self._pixel(*self._point(a["x"], a["y"]), rgb(a["color"]))
+        elif name in ("flood_fill", "ext_flood_fill"):
+            self._flood_fill(self._point(a["x"], a["y"]), rgb(a["color"]), a.get("mode", 0))
         elif name == "save_dc":
             self._saved.append(
                 (
@@ -381,6 +388,23 @@ class RasterContext(TraceContext):
                         brush = replace(brush, style=0)
                     self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
         return result
+
+    def _flood_fill(self, seed, color, mode):
+        if self._brush.style == 1:
+            return
+        pixels = self.image.load()
+
+        def eligible(x, y):
+            return self._clip.contains(x, y) and ((pixels[x, y] == color) == (mode == 1))
+
+        # Finish discovery before applying the brush/ROP: neither transparent
+        # gaps nor a result equal to the source may affect connectivity.
+        spans = flood_spans(self.image.width, self.image.height, seed, eligible)
+        for y, left, right in spans:
+            for x in range(left, right):
+                paint = self._brush_color_at(x, y)
+                if paint is not None:
+                    self._pixel(x, y, paint)
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
         if 0 <= x < self.image.width and 0 <= y < self.image.height and self._clip.contains(x, y):
