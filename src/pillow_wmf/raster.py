@@ -65,6 +65,9 @@ class RasterContext(TraceContext):
     def _point(self, x: int, y: int) -> tuple[int, int]:
         return self.mapping.point(x, y)
 
+    def is_null_object(self, handle: Handle) -> bool:
+        return handle.owner is self and handle in self._objects and self._objects[handle] is None
+
     def _mapped_path(self, points) -> Polygon:
         path = []
         for logical_x, logical_y in points:
@@ -95,7 +98,7 @@ class RasterContext(TraceContext):
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
         elif name == "select_object":
-            if a["handle"].kind not in {"pen", "brush", "region"}:
+            if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
         elif name == "create_region":
 
@@ -193,7 +196,7 @@ class RasterContext(TraceContext):
         elif name == "select_clip_region":
             self._clip = ClipRegion(mask=self._objects[a["region"]] if a["region"] is not None else None)
         elif name == "select_object":
-            obj = self._objects[a["handle"]]
+            obj = self._objects[a["handle"]] if a["handle"] is not None else None
             if isinstance(obj, Pen):
                 self._pen = obj
             elif isinstance(obj, RegionMask):

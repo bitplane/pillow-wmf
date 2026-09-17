@@ -2,6 +2,7 @@ import pytest
 
 from pillow_wmf import Metafile, RasterContext, Recorder, play
 from pillow_wmf.clip import ClipRegion, RegionMask
+from pillow_wmf.wmf import fixed, variable
 from pillow_wmf.wmf.objects import Region, Scan
 
 
@@ -75,6 +76,22 @@ def test_zero_scan_wmf_region_is_a_null_object_not_an_empty_region():
     assert not context._clip.contains(1, 1)
     context.select_clip_region(handle)
     assert context._clip.contains(1, 1)
+
+
+def test_failed_region_creation_does_not_occupy_native_file_slot():
+    file = Metafile.build(
+        [
+            fixed.CreatePenIndirect(5, 1, 0, 0),
+            fixed.SelectObject(0),
+            variable.CreateRegion(Region((0, 0, 0, 0), ())),
+            fixed.CreateBrushIndirect(0, 0x00CC8844, 0),
+            fixed.SelectObject(1),
+            fixed.Rectangle(1, 1, 7, 7),
+        ]
+    )
+    context = RasterContext(8, 8)
+    assert play(file, context, strict=True) == ()
+    assert context.image.getpixel((3, 3)) == (68, 136, 204)
 
 
 @pytest.mark.parametrize(

@@ -43,6 +43,15 @@ class Call:
 class GDI:
     """Override invoke to implement a backend. Arguments are immutable values."""
 
+    def is_null_object(self, handle: Handle) -> bool:
+        """Whether a creation produced a native null object rather than a resource.
+
+        Logical handles still identify failed creations for subsequent calls.
+        WMF playback uses this result to preserve native file-slot allocation.
+        Non-emulating backends may retain the default successful-creation model.
+        """
+        return False
+
     def invoke(self, call: Call) -> Handle | int | None:
         raise UnsupportedOperation(call.name)
 
@@ -79,7 +88,7 @@ class GDI:
     def delete_object(self, handle: Handle) -> None:
         return self.invoke(Call.make("delete_object", handle=handle))
 
-    def select_object(self, handle: Handle) -> None:
+    def select_object(self, handle: Handle | None) -> None:
         return self.invoke(Call.make("select_object", handle=handle))
 
     def select_palette(self, handle: Handle) -> None:

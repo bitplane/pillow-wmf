@@ -117,11 +117,13 @@ def main():
         data = recorder.to_bytes()
         buffer = ctypes.create_string_buffer(data)
         metafile = check(gdi.SetMetaFileBitsEx(len(data), buffer), "SetMetaFileBitsEx")
+        allocations = []
 
         @callback_type
         def allocation_callback(hdc, handles, record, count, _param):
             result = gdi.PlayMetaFileRecord(hdc, handles, record, count)
             function = ctypes.cast(record, ctypes.POINTER(ctypes.c_ushort))[2]
+            allocations.append((function, bool(result), tuple(gdi.GetObjectType(handles[i]) for i in range(count))))
             print(
                 "region-allocation",
                 hex(function),
@@ -134,6 +136,12 @@ def main():
             check(gdi.EnumMetaFile(dc, metafile, allocation_callback, 0), "EnumMetaFile")
         finally:
             gdi.DeleteMetaFile(metafile)
+        assert allocations == [
+            (0x2FA, True, (1, 0, 0)),
+            (0x6FF, False, (1, 0, 0)),
+            (0x2FC, True, (1, 2, 0)),
+            (0x12D, False, (1, 2, 0)),
+        ]
         region = check(gdi.CreateRectRgn(32, 32, 64, 64), "CreateRectRgn")
         try:
             for extent in ((192, 64), (-192, -64), (80, 80)):
