@@ -70,5 +70,41 @@ and [current Wine sampling primitives](https://github.com/wine-mirror/wine/blob/
 Wine's HALFTONE implementation uses bilinear interpolation; it does not explain
 the native overshoot and has not been transcribed into this renderer.
 
+### HALFTONE characterization and implementation cross-check
+
+Eight further missing-only references isolate constants, horizontal/vertical
+ramps and impulses (`halftone-kernel-*`), and independent RGB basis vectors
+(`halftone-basis-*`). The basis vectors use a nonzero baseline so negative
+weights remain measurable without clipping at black. These remain exact
+compatibility tests; the renderer still explicitly rejects scaled HALFTONE.
+
+Local rational-arithmetic experiments reproduce the non-enlarging ramp and
+impulse cases with area averaging followed by a small sharpening stencil.
+The candidate uses a gain of 1/8 when both axes shrink and 1/4 when only one
+shrinks, with horizontal intermediate rounding in the two-axis case. This is
+**not yet an established general algorithm**: two-dimensional colour patterns,
+intermediate clipping and mixed enlargement/reduction still need validation.
+The apparent enlargement curve alone is insufficient evidence for cubic
+interpolation. Investigate scan accumulators, fixed-point quantization and
+small separable passes before selecting a fitted reconstruction kernel.
+
+The source cross-check does not supply the missing Windows algorithm:
+
+- Wine's `calc_halftone_params` uses 32.32 fixed-point increments;
+  `bilinear_interpolate` performs nested, rounded linear interpolation.
+  Interior interpolation cannot produce the measured negative impulse lobes.
+- libwmf's [GD bitmap drawing path](https://github.com/caolanm/libwmf/blob/master/src/ipa/xgd/bmp.h)
+  uses endpoint-aligned floating-point coordinates and calls
+  [`wmf_ipa_bmp_interpolate`](https://github.com/caolanm/libwmf/blob/master/src/ipa/ipa/bmp.h),
+  which combines four pixels with bilinear weights and truncates/clamps the
+  result. The drawing path does not select a HALFTONE-specific kernel and
+  explicitly describes its extra destination-size increment as a fudge factor.
+  Its boundary coordinate adjustments can extrapolate, but they do not explain
+  our negative lobes around an interior impulse.
+
+These are useful comparisons, not pixel-exact authorities. Neither inspected
+path implements cubic scaling, nor does that rule out a cubic component in
+Windows. The committed Windows outputs remain the oracle.
+
 Additional depths, compression, palettes and legacy Bitmap16 remain outside
 this slice; fonts are still deferred.

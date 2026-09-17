@@ -1713,6 +1713,32 @@ def halftone_cases():
             r.dib_stretch_blt(2 + i % 7 * 18, 2 + i // 7 * 32, dw, dh, 0, 0, 9, 9, 0xCC0020, source)
         yield f"halftone-basis-{base}", r
 
+    # Long scans distinguish linear phase ramps from curved reconstruction;
+    # a nonzero baseline exposes negative lobes without clipping at black.
+    r = mapped()
+    r.set_stretch_mode(4)
+    for i, (sw, dw) in enumerate(product((2, 3, 5, 9), (31, 61, 113))):
+        source = encode_dib24(
+            RGBBitmap(sw, 3, bytes(64 + 128 * (x == c) for y in range(3) for x in range(sw) for c in range(3)))
+        )
+        r.dib_stretch_blt(2, 2 + i * 10, dw, 1, 0, 0, sw, 3, 0xCC0020, source)
+    yield "halftone-long-basis", r
+
+    # Nonseparable colours expose intermediate rounding and diagonal stencil
+    # terms that constant-across-one-axis ramps cannot distinguish.
+    r = mapped()
+    r.set_stretch_mode(4)
+    source = encode_dib24(
+        RGBBitmap(
+            9,
+            9,
+            bytes((x * 37 + y * 53 + x * y * 11 + c * 71) % 256 for y in range(9) for x in range(9) for c in range(3)),
+        )
+    )
+    for i, (dw, dh) in enumerate(product((1, 2, 3, 5, 9, 13, 17), repeat=2)):
+        r.dib_stretch_blt(2 + i % 7 * 18, 2 + i // 7 * 18, dw, dh, 0, 0, 9, 9, 0xCC0020, source)
+    yield "halftone-two-dimensional", r
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
