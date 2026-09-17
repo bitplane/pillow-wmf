@@ -1783,6 +1783,13 @@ def halftone_boundary_cases():
             destination = (size * 5 + 3) // 4
             r.dib_stretch_blt(2, 2, destination, destination, 0, 0, size, size, 0xCC0020, source)
             yield f"halftone-classify-{size}-{pattern}", r
+            if size == 49 and pattern == "noise":
+                for run in (3, 4, 5, 6):
+                    r = mapped()
+                    r.set_stretch_mode(4)
+                    destination = size * run - 24
+                    r.dib_stretch_blt(2, 2, destination, destination, 0, 0, size, size, 0xCC0020, source)
+                    yield f"halftone-enlarge-runs-{run}", r
 
     bitmap = RGBBitmap(
         11,
