@@ -1664,6 +1664,23 @@ def dib_stretch_cases():
             draw(r, operation, source, 16 + i % 4 * 30, 16 + i // 4 * 30, dw, dh, 3, 2, sw, sh, table << 16)
         yield f"dib-stretch-signs-{operation}-{int(top_down)}-{table:x}", r
 
+    for mode in (1, 2, 3):
+        r = mapped()
+        r.set_stretch_mode(mode)
+        r.select_object(r.create_brush(0, 0xA96C32, 0))
+        for table in range(256):
+            r.dib_stretch_blt(table % 16 * 8, table // 16 * 8, 5, 5, 1, 1, 9, 7, table << 16, encode_dib24(bitmap))
+        yield f"dib-stretch-tables-{mode}", r
+        r = mapped()
+        r.set_stretch_mode(mode)
+        r.set_window_origin(3, 5)
+        r.set_viewport_origin(112, 3)
+        r.set_viewport_extent(-77, 83)
+        r.exclude_clip_rect(40, 0, 55, 128)
+        for i, (sx, sy) in enumerate(product((-3, 0, 8), (-2, 0, 7))):
+            r.dib_bit_blt(8 + i % 3 * 48, 8 + i // 3 * 48, 11, 9, sx, sy, 0xCC0020, encode_dib24(bitmap))
+        yield f"dib-stretch-mapped-{mode}", r
+
 
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
