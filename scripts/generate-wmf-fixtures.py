@@ -1092,6 +1092,30 @@ def styled_pen_cases():
 
 
 def region_paint_cases():
+    for operation, extent in product(
+        ("fill_region", "paint_region", "invert_region", "frame_region"),
+        ((64, 64), (-64, 64), (64, -64)),
+    ):
+        r = mapped()
+        brush = r.create_brush(0, 0x00663399, 0)
+        r.select_object(brush)
+        handle = r.create_region(
+            Region(
+                (1, 1, 111, 111),
+                (
+                    Scan(1, 31, (1, 111)),
+                    Scan(31, 79, (1, 31, 79, 111)),
+                    Scan(79, 111, (1, 111)),
+                ),
+            )
+        )
+        r.set_viewport_extent(*extent)
+        r.set_viewport_origin(80 if extent[0] < 0 else 7, 80 if extent[1] < 0 else 7)
+        if operation in ("fill_region", "frame_region"):
+            getattr(r, operation)(handle, brush, *((5, 7) if operation == "frame_region" else ()))
+        else:
+            getattr(r, operation)(handle)
+        yield f"region-paint-halves-{operation}-{extent[0]}-{extent[1]}", r
     # A ring with a narrow arm and disconnected islands: internal scan-band
     # boundaries must not become frame edges.
     shape = Region(
