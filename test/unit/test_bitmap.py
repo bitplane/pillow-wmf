@@ -65,13 +65,19 @@ def test_invalid_header_fields(offset, fmt, value):
         decode_dib(BitmapData("dib", bytes(data)))
 
 
-@pytest.mark.parametrize(
-    "offset,fmt,value", ((0, "I", 12), (0, "I", 108), (14, "H", 8), (14, "H", 32), (16, "I", 1), (16, "I", 3))
-)
+@pytest.mark.parametrize("offset,fmt,value", ((0, "I", 64), (14, "H", 2), (16, "I", 4), (16, "I", 5)))
 def test_unimplemented_representations_are_not_approximated(offset, fmt, value):
     data = bytearray(encode_dib24(RGBBitmap(1, 1, bytes(3))).data)
     pack_into("<" + fmt, data, offset, value)
     with pytest.raises(UnsupportedOperation):
+        decode_dib(BitmapData("dib", bytes(data)))
+
+
+@pytest.mark.parametrize("offset,fmt,value", ((0, "I", 12), (0, "I", 108), (14, "H", 8), (16, "I", 1), (16, "I", 3)))
+def test_header_mutations_without_required_format_data_are_malformed(offset, fmt, value):
+    data = bytearray(encode_dib24(RGBBitmap(1, 1, bytes(3))).data)
+    pack_into("<" + fmt, data, offset, value)
+    with pytest.raises(FormatError):
         decode_dib(BitmapData("dib", bytes(data)))
 
 

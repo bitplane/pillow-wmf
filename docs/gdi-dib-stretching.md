@@ -321,5 +321,7 @@ were generated in missing-only Windows runs:
 All pixel comparisons run locally, with no tolerance or replacement of existing
 reference images.
 
-Additional depths, compression, palettes and legacy Bitmap16 remain outside
-this slice; fonts are still deferred.
+Additional depths and RLE compression are covered by the subsequent
+[DIB format slice](gdi-dib-formats.md), including source-scan fixup and
+format-dependent channel conversion. Logical palettes, legacy Bitmap16 and
+fonts are still deferred.

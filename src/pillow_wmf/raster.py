@@ -6,18 +6,25 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 from fractions import Fraction
 from math import ceil
-from struct import unpack_from
 
 from PIL import Image
 
-from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, decode_dib, read_dib24
+from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, read_dib
 from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
 from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
-from .halftone import HalftoneExpansion, HalftoneMode, HalftoneReduction, halftone_bitmap
+from .halftone import (
+    HalftoneExpansion,
+    HalftoneMode,
+    HalftoneReduction,
+    classify_content,
+    fixup_candidate,
+    halftone_bitmap,
+)
+from .halftone_fixup import fixup_bitmap
 from .mapping import Mapping
 from .paint import pattern_rop2, rop2, rop3
 from .stroke import (
@@ -155,18 +162,25 @@ class RasterContext(TraceContext):
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
         elif name == "create_dib_pattern_brush":
-            pattern = decode_dib(
+            layout = read_dib(
                 a["bitmap"],
                 color_usage=0 if a["style"] == 3 else a["color_usage"],
                 max_pixels=self.max_bitmap_pixels,
             )
-            if a["style"] == 3:
+            pattern = (
+                None
+                if layout.header_size == 12
+                or layout.compression in (1, 2)
+                or (layout.header_size > 40 and layout.compression == 3)
+                else layout.decode()
+            )
+            if a["style"] == 3 and pattern is not None:
                 # The legacy record path realizes a monochrome DDB in a
                 # compatible memory DC. Its bitmap creation rejects top-down
                 # dimensions; failed selection preserves the previous brush.
-                pattern = None if unpack_from("<i", a["bitmap"].data, 8)[0] < 0 else pattern.monochrome()
+                pattern = None if layout.top_down else pattern.monochrome()
         elif name == "set_dib_to_device":
-            layout = read_dib24(a["source"], color_usage=a["color_usage"], max_pixels=self.max_bitmap_pixels)
+            layout = read_dib(a["source"], color_usage=a["color_usage"], max_pixels=self.max_bitmap_pixels)
             transfer = TransferAction.NOOP
             # WMF stores WORDs here but playback sign-extends coordinates and
             # extents. Scan indexes/counts remain unsigned.
@@ -176,10 +190,19 @@ class RasterContext(TraceContext):
             start, count = a["start_scan"], a["scan_count"]
             # WMF requires a complete packed DIB even when only cLines rows
             # are consumed. Short buffers are rejected regardless of SizeImage.
-            if layout.complete and width > 0 and height > 0 and count and start < layout.height:
+            if (
+                layout.header_size != 12
+                and layout.complete
+                and width > 0
+                and height > 0
+                and count
+                and start < layout.height
+            ):
+                if layout.compression in (1, 2):
+                    start, count = 0, layout.height
                 if not layout.top_down:
                     count = min(count, layout.height - start)
-                bitmap = layout.decode(min(count, layout.height))
+                bitmap = layout.decode(min(count, layout.height), preserve_gaps=True)
                 x, y = self._point(x, y)
                 horizontal = BlitAxis(x, sx, width)
                 vertical = BlitAxis(y, start + count - sy - height, height)
@@ -496,7 +519,9 @@ class RasterContext(TraceContext):
             return TransferAction.PATTERN
         if a["source"] is None:
             return TransferAction.NOOP
-        layout = read_dib24(a["source"], color_usage=a.get("color_usage", 0), max_pixels=self.max_bitmap_pixels)
+        layout = read_dib(a["source"], color_usage=a.get("color_usage", 0), max_pixels=self.max_bitmap_pixels)
+        if layout.header_size == 12:
+            return TransferAction.NOOP
         x, y = self._point(a["x"], a["y"])
         right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
         sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
@@ -504,19 +529,38 @@ class RasterContext(TraceContext):
         if not all((sw, sh, dw, dh)):
             return TransferAction.NOOP
         scaled = abs(dw) != abs(sw) or abs(dh) != abs(sh)
-        bitmap = layout.decode()
         mirrored = (dw < 0) != (sw < 0) or (dh < 0) != (sh < 0)
         copy = (a["rop"] >> 16) & 255 == 0xCC
+        # DIB[STRETCH]BITBLT realizes a canonical black/white table as a
+        # monochrome bitmap. Its bits use the destination DC's text/background
+        # colours; STRETCHDIB keeps an explicit RGB table instead.
+        monochrome = name != "stretch_dib" and layout.depth == 1 and layout.colors == ((0, 0, 0), (255, 255, 255))
+        if monochrome:
+            layout = replace(layout, colors=(self._text_color, self._background_color))
+        halftone = self._stretch_mode == 4 and copy and not (monochrome and name == "dib_bit_blt" and not scaled)
+        bitmap = layout.decode(replicate_channels=not (self._stretch_mode == 4 and copy))
         sy = a["src_y"]
         # STRETCHDIB exposes DIB-origin coordinates; DIB[STRETCH]BITBLT
         # adapts the source to top-left. The native ternary path also retains
         # the top-down storage distinction documented in gdi-dib-transfers.md.
         if (name == "stretch_dib") != (layout.top_down and not copy):
             sy = layout.height - sy - sh
-        if scaled and self._stretch_mode == 4 and copy:
+        if halftone:
             hx = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
             hy = StretchAxis.create(y, dh, sy, sh, bitmap.height)
-            filtered = halftone_bitmap(bitmap, hx.source, hy.source, abs(sw), abs(sh), abs(dw), abs(dh))
+            left, top = max(0, hx.source), max(0, hy.source)
+            right, bottom = min(bitmap.width, hx.source + abs(sw)), min(bitmap.height, hy.source + abs(sh))
+            if left >= right or top >= bottom:
+                return TransferAction.NOOP
+            # Classify the original source once: filtering introduces colours
+            # which must not change CheckBMPNeedFixup's dispatch decision.
+            content = classify_content(bitmap, left, top, right - left, bottom - top, depth=layout.depth)
+            if content.fixup and fixup_candidate(abs(sw), abs(sh), abs(dw), abs(dh)):
+                bitmap = fixup_bitmap(bitmap, left, top, right, bottom)
+        if scaled and halftone:
+            filtered = halftone_bitmap(
+                bitmap, hx.source, hy.source, abs(sw), abs(sh), abs(dw), abs(dh), content=content
+            )
             if filtered is HalftoneMode.NOOP:
                 return TransferAction.NOOP
             if filtered is not HalftoneMode.REPLICATE:
@@ -541,6 +585,7 @@ class RasterContext(TraceContext):
         return SourceTransfer(bitmap, horizontal, vertical, a["rop"], pad_bounds)
 
     def _source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
+        coverage = getattr(bitmap, "coverage", None)
         table = (operation >> 16) & 255
         # EngStretchBltROP downgrades HALFTONE for ternary operations. Keep
         # this per-transfer; the saved DC stretch mode must remain unchanged.
@@ -560,7 +605,9 @@ class RasterContext(TraceContext):
                     bitmap.pixel(sx, sy)
                     for sy in vertical.samples(y, mode)
                     for sx in horizontal.samples(x, mode)
-                    if 0 <= sx < bitmap.width and 0 <= sy < bitmap.height
+                    if 0 <= sx < bitmap.width
+                    and 0 <= sy < bitmap.height
+                    and (coverage is None or coverage[sy * bitmap.width + sx])
                 )
                 source = next(samples, None)
                 if source is not None:

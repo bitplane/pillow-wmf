@@ -1,9 +1,12 @@
-from struct import pack
+from struct import pack, pack_into
 
 import pytest
 
-from pillow_wmf import FormatError
-from pillow_wmf.bitmap import RGBBitmap, decode_dib, encode_dib
+from pillow_wmf import FormatError, RasterContext
+from pillow_wmf.bitmap import RGBBitmap, decode_dib, encode_dib, field_color, read_dib
+from pillow_wmf.dib_rle import decode_rle
+from pillow_wmf.halftone import HalftoneContent, classify_content
+from pillow_wmf.halftone_fixup import fixup_bitmap
 from pillow_wmf.wmf.objects import BitmapData
 
 
@@ -49,3 +52,132 @@ def test_short_indexed_table_rejects_out_of_range_pixels():
     source = encode_dib(1, 1, (0,), depth=8, colors=((1, 2, 3),))
     with pytest.raises(FormatError, match="index"):
         decode_dib(BitmapData("dib", source.data[:-4] + bytes((1, 0, 0, 0))))
+
+
+@pytest.mark.parametrize("bits", (1, 2, 3, 4, 5, 6, 7, 8, 10))
+def test_bitfields_repeat_source_bits_not_linear_scale(bits):
+    mask = (1 << bits) - 1
+    for value in range(1 << bits):
+        repeated = (format(value, f"0{bits}b") * 8)[:8]
+        assert field_color(value << 3, mask << 3) == int(repeated, 2)
+        assert field_color(value << 3, mask << 3, replicate=False) == (value << 8) >> bits
+
+
+@pytest.mark.parametrize("masks", ((0, 0x7E0, 31), (0xF800, 0x7E0, 0x7E0), (0xF801, 0x7E0, 30), (0x10000, 0x7E0, 31)))
+def test_invalid_bitfields_are_rejected(masks):
+    source = bytearray(encode_dib(1, 1, (0,), depth=16, masks=(0xF800, 0x7E0, 31)).data)
+    pack_into("<III", source, 40, *masks)
+    with pytest.raises(FormatError, match="mask"):
+        decode_dib(BitmapData("dib", bytes(source)))
+
+
+@pytest.mark.parametrize("depth", (4, 8))
+def test_rle_command_stream_and_coverage_have_independent_expected_values(depth):
+    data = (
+        bytes((3, 2, 0, 5, 1, 3, 5, 7, 9, 0, 0, 0, 0, 2, 2, 1, 4, 6, 0, 1))
+        if depth == 8
+        else bytes((3, 0x23, 0, 5, 0x13, 0x57, 0x90, 0, 0, 0, 0, 2, 2, 1, 4, 0x68, 0, 1))
+    )
+    indexes, coverage = decode_rle(data, 13, 7, depth)
+    assert indexes[:13] == bytes((2, 2 if depth == 8 else 3, 2, 1, 3, 5, 7, 9, 0, 0, 0, 0, 0))
+    assert indexes[26:39] == bytes((0, 0, 6, 6 if depth == 8 else 8, 6, 6 if depth == 8 else 8, 0, 0, 0, 0, 0, 0, 0))
+    assert coverage == b"\1" * 8 + bytes(20) + b"\1" * 4 + bytes(59)
+
+
+@pytest.mark.parametrize("depth", (4, 8))
+@pytest.mark.parametrize("width", (1, 3, 7, 256, 513))
+def test_rle_writer_roundtrip_runs_cross_255_boundary(depth, width):
+    colors = tuple((i * 11, i * 7, i * 5) for i in range(16))
+    values = (3,) * width + tuple(x % 16 for x in range(width))
+    source = encode_dib(width, 2, values, depth=depth, colors=colors, rle=True)
+    assert decode_dib(source).pixels == bytes(v for i in values for v in colors[i])
+
+
+@pytest.mark.parametrize("data", (b"", b"\1", b"\0\2\1", b"\0\5\1", b"\4\2\0\1", b"\0\2\4\0", b"\0\0\1\0", b"\1\2"))
+def test_rle_truncation_and_bounds_are_rejected(data):
+    with pytest.raises(FormatError):
+        decode_rle(data, 3, 1, 8)
+
+
+def test_rle_size_is_bounded_by_payload_not_an_allocation_request():
+    data = bytearray(encode_dib(3, 1, (0, 1, 0), depth=4, colors=((0, 0, 0), (255, 255, 255)), rle=True).data)
+    pack_into("<I", data, 20, 0xFFFFFFFF)
+    with pytest.raises(FormatError, match="Truncated"):
+        decode_dib(BitmapData("dib", bytes(data)))
+
+
+@pytest.mark.parametrize("depth", (1, 4, 8, 16, 24, 32))
+def test_all_depths_preserve_partial_band_storage_order(depth):
+    colors = ((11, 22, 33), (44, 55, 66)) if depth <= 8 else ()
+    source = encode_dib(1, 4, (0, 1, 0, 1), depth=depth, colors=colors)
+    layout = read_dib(source)
+    full = layout.decode()
+    assert layout.decode(2).pixels == full.pixels[-6:]
+
+
+@pytest.mark.parametrize("header", (12, 40, 108, 124))
+def test_all_headers_check_pixel_budget_before_allocation(header):
+    source = encode_dib(3, 2, (0,) * 6, depth=4, colors=((0, 0, 0),), header_size=header)
+    with pytest.raises(FormatError, match="limit"):
+        decode_dib(source, max_pixels=5)
+
+
+def test_rle_device_transfer_preserves_gaps_but_bitmap_realization_fills_them():
+    colors = ((11, 22, 33), (44, 55, 66))
+    header = pack("<IiiHHIIiiII", 40, 3, 2, 1, 8, 1, 4, 0, 0, 2, 0)
+    source = BitmapData("dib", header + bytes((33, 22, 11, 0, 66, 55, 44, 0, 1, 1, 0, 1)))
+    context = RasterContext(6, 2, background=(0, 0, 255))
+    context.set_dib_to_device(0, 0, 3, 2, 0, 0, 1, 1, 0, source)
+    context.dib_bit_blt(3, 0, 3, 2, 0, 0, 0xCC0020, source)
+    assert context.image.getpixel((0, 0)) == (0, 0, 255)
+    assert context.image.getpixel((0, 1)) == colors[1]
+    assert context.image.getpixel((1, 1)) == (0, 0, 255)
+    assert context.image.getpixel((3, 0)) == colors[0]
+    assert context.image.getpixel((3, 1)) == colors[1]
+    assert context.image.getpixel((4, 1)) == colors[0]
+
+
+def test_fixup_scan_order_and_reflected_boundary_values_match_native_diagonal():
+    bitmap = RGBBitmap(13, 7, bytes(v for y in range(7) for x in range(13) for v in (255 if x == y else 0,) * 3))
+    result = fixup_bitmap(bitmap)
+    assert [result.pixel(i, i)[0] for i in range(7)] == [191, 167, 143, 143, 143, 159, 191]
+    assert all(result.pixel(x, y) == (0, 0, 0) for y in range(7) for x in range(13) if x != y)
+    assert bitmap.pixel(0, 0) == (255, 255, 255)  # Original decision samples are immutable.
+
+
+@pytest.mark.parametrize("width,height", ((1, 1), (1, 7), (7, 1)))
+def test_fixup_does_not_invent_diagonals_in_one_dimensional_sources(width, height):
+    bitmap = RGBBitmap(width, height, bytes((17, 31, 73)) * width * height)
+    assert fixup_bitmap(bitmap) == bitmap
+
+
+@pytest.mark.parametrize("operation", ("dib_bit_blt", "dib_stretch_blt", "stretch_dib"))
+@pytest.mark.parametrize("canonical", (False, True))
+def test_monochrome_realization_and_copy_dispatch_match_native(operation, canonical):
+    colors = ((0, 0, 0), (255, 255, 255)) if canonical else ((1, 1, 1), (254, 254, 254))
+    source = encode_dib(3, 3, (0, 1, 0, 1, 0, 1, 0, 1, 0), depth=1, colors=colors)
+    context = RasterContext(3, 3)
+    context.set_text_color(0x371953)
+    context.set_background_color(0xB7D3E1)
+    context.set_stretch_mode(4)
+    if operation == "dib_bit_blt":
+        context.dib_bit_blt(0, 0, 3, 3, 0, 0, 0xCC0020, source)
+    else:
+        args = {"source": source} | ({"color_usage": 0} if operation == "stretch_dib" else {})
+        getattr(context, operation)(0, 0, 3, 3, 0, 0, 3, 3, 0xCC0020, **args)
+    if canonical and operation == "dib_bit_blt":
+        assert context.image.getpixel((0, 0)) == (83, 25, 55)
+        assert context.image.getpixel((1, 0)) == (225, 211, 183)
+    else:
+        expected = (154, 118, 119) if canonical and operation == "dib_stretch_blt" else (128, 128, 128)
+        assert set(context.image.get_flattened_data()) == {expected}
+
+
+@pytest.mark.parametrize("depth", (1, 4, 8, 24))
+@pytest.mark.parametrize("size", (7, 49))
+def test_source_fixup_and_replication_are_separate_native_decisions(depth, size):
+    colors = ((19, 59, 97), (90, 96, 210))
+    bitmap = RGBBitmap(size, size, bytes(c for y in range(size) for x in range(size) for c in colors[(x + y) % 2]))
+    assert classify_content(bitmap, 0, 0, size, size, depth=depth) == HalftoneContent(
+        fixup=depth in (1, 4) or size == 7, replicate=True
+    )

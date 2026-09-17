@@ -15,9 +15,9 @@ device metrics, rounding boundaries, and the next native compatibility probes.
 | Variable records | 19 record classes, including all six bitmap transfer envelopes | Native probes for ambiguous layouts |
 | Text | Raw strings, word padding, optional rectangle and raw advances | Charset/glyph interpretation, layout and drawing |
 | Objects | Pen/brush record fields, font, palette, region/scan structures | Native object realization and selected/saved-object quirks |
-| Bitmap payloads | Explicit `BitmapData` values; Bitmap16/DIB/legacy-pattern distinction; bounded 24-bit BI_RGB BITMAPINFOHEADER decoder and writer | Other headers/depths, compression, palette resolution, legacy Bitmap16 decoding |
+| Bitmap payloads | Explicit `BitmapData` values; Core/Info/V4/V5 DIB codecs, RGB tables, 1/4/8/16/24/32-bit RGB, bitfields and RLE4/RLE8; deterministic writers | Logical palette resolution, colour management, embedded image codecs, legacy Bitmap16 decoding |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including 24-bit DIB patterns, text-colour state, ROP2/ROP3, PatBlt, 24-bit DIB transfers including integer stretching and HALFTONE, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Other bitmap formats, palette behavior and text drawing; remaining pen/state behavior |
+| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including DIB patterns, text-colour state, ROP2/ROP3, PatBlt, indexed/direct-colour DIB transfers including integer stretching and HALFTONE, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Legacy bitmaps, palette behavior and text drawing; remaining pen/state behavior |
 | Playback | File-slot mapping, lowest-free allocation, references, unsupported-operation diagnostics | Native behavioral validation and device-state emulation |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
@@ -35,6 +35,8 @@ with [unscaled DIB source transfers](gdi-dib-transfers.md).
 [DIB stretching](gdi-dib-stretching.md) adds modes 1–3 and native fixed-point
 HALFTONE reduction/enlargement, content classification, reflected transfers and
 source clipping on replication and filtered paths.
+[DIB formats](gdi-dib-formats.md) extends that shared pipeline with indexed
+tables, bitfields, RLE coverage and native HALFTONE source-scan fixup.
 
 The structural reader parses fields without realizing graphics objects. A valid
 envelope containing `BitmapData` is not certification that the bitmap itself is

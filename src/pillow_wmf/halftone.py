@@ -4,6 +4,7 @@ See docs/gdi-dib-stretching.md for the arithmetic and Windows measurements.
 Includes the native colour census and fast replication-run enlargement filter.
 """
 
+from dataclasses import dataclass
 from enum import Enum, auto
 from functools import lru_cache
 
@@ -34,7 +35,13 @@ def fixup_candidate(sw, sh, width, height):
     return (width * 1000 + 500) // sw > 667 and (height * 1000 + 500) // sh > 667
 
 
-def replication_content(bitmap, x, y, width, height):
+@dataclass(frozen=True)
+class HalftoneContent:
+    fixup: bool
+    replicate: bool
+
+
+def classify_content(bitmap, x, y, width, height, *, depth=24):
     """CheckBMPNeedFixup's bounded colour census of the source rectangle.
 
     Small images bypass the census. Medium images discount rows introducing
@@ -42,11 +49,12 @@ def replication_content(bitmap, x, y, width, height):
     The native key coarsens channels when red equals blue (not just greys).
     """
     remaining = width * height
-    if remaining <= 2304:
-        return True
+    if depth in (1, 4) or remaining <= 2304:
+        return HalftoneContent(True, True)
     stride = 6 if remaining > 16384 else 1
     limit = 20 if stride == 6 else remaining >> 3
     colours = set()
+    replicate = False
     for sy in range(y, y + height, stride):
         before = len(colours)
         for sx in range(x, x + width):
@@ -59,14 +67,20 @@ def replication_content(bitmap, x, y, width, height):
         if limit != 20 and len(colours) == before:
             remaining -= width
             if remaining <= 2304:
-                return True
+                replicate = True
+                break
             limit = remaining >> 4
         if len(colours) > limit:
             break
-    return len(colours) < 20
+    count = len(colours)
+    return HalftoneContent(count <= 20 and (limit == 20 or count > limit), replicate or count < 20)
 
 
-def halftone_bitmap(bitmap, x, y, sw, sh, width, height):
+def replication_content(bitmap, x, y, width, height):
+    return classify_content(bitmap, x, y, width, height).replicate
+
+
+def halftone_bitmap(bitmap, x, y, sw, sh, width, height, *, content=None):
     """Return a filtered view, no-op, or explicit request for scan replication.
 
     A view with valid=False means no output, never replication.
@@ -77,10 +91,9 @@ def halftone_bitmap(bitmap, x, y, sw, sh, width, height):
         return HalftoneMode.NOOP
     left, top = max(0, x), max(0, y)
     right, bottom = min(bitmap.width, x + sw), min(bitmap.height, y + sh)
-    fixup = fixup_candidate(sw, sh, width, height) and replication_content(
-        bitmap, left, top, right - left, bottom - top
-    )
-    if fixup and replication_candidate(sw, sh, width, height):
+    content = content or classify_content(bitmap, left, top, right - left, bottom - top)
+    fixup = fixup_candidate(sw, sh, width, height) and content.fixup
+    if content.replicate and replication_candidate(sw, sh, width, height):
         return HalftoneMode.REPLICATE
     reduced = HalftoneReduction(bitmap, x, y, sw, sh, min(sw, width), min(sh, height), fixup=fixup)
     if width <= sw and height <= sh:
