@@ -10,6 +10,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf
 
 
 def cases():
+    yield from pat_blt_cases()
     yield from flood_cases()
     yield from region_paint_cases()
     blank = Recorder()
@@ -1314,6 +1315,42 @@ def flood_cases():
     r.select_object(r.create_brush(0, 0xCC7733, 0))
     r.flood_fill(64, 64, 0)
     yield "flood-legacy", r
+
+
+def pat_blt_cases():
+    # One tile per truth table. Source-dependent operations must not silently
+    # acquire an invented source colour. Noncanonical low words probe decoding.
+    for style, hatch, background in ((0, 0, 2), (1, 0, 2), *product((2,), range(6), (1, 2))):
+        r = mapped()
+        r.select_object(r.create_pen(5, 0, 0))
+        r.select_object(r.create_brush(0, 0x37598B, 0))
+        r.rectangle(0, 0, 128, 128)
+        r.select_object(r.create_brush(style, 0xA96C32, hatch))
+        r.set_background_mode(background)
+        r.set_background_color(0x5DB742)
+        r.set_rop2(7)  # PatBlt must use its explicit ROP, not DC ROP2.
+        for table in range(256):
+            r.pat_blt((table % 16) * 8, (table // 16) * 8, 8, 8, table << 16)
+        yield f"patblt-tables-{style}-{hatch}-{background}", r
+    for extent in ((128, 128), (64, 192), (-64, 192), (64, -192), (-128, -128), (43, 77), (127, 129)):
+        for clipped in (False, True):
+            r = mapped()
+            r.select_object(r.create_brush(0, 0xA96C32, 0))
+            r.set_window_origin(3, 5)
+            r.set_viewport_origin(112 if extent[0] < 0 else 7, 112 if extent[1] < 0 else 9)
+            r.set_viewport_extent(*extent)
+            if clipped:
+                r.exclude_clip_rect(25, 0, 35, 128)
+            for index, (width, height) in enumerate(product((-9, -1, 0, 1, 9), repeat=2)):
+                r.pat_blt(15 + (index % 5) * 23, 15 + (index // 5) * 23, width, height, 0x00F00021)
+            yield f"patblt-extents-{extent[0]}-{extent[1]}-{int(clipped)}", r
+    for flags in (0, 0x40000000, 0x80000000, 0xFFFF):
+        r = mapped()
+        r.select_object(r.create_brush(2, 0xA96C32, 5))
+        r.set_background_mode(1)
+        for index, rop in enumerate((0x00000042, 0x00550009, 0x00F00021, 0x005A0049, 0x00FF0062)):
+            r.pat_blt(4 + index * 24, 4, 20, 100, rop | flags)
+        yield f"patblt-code-bits-{flags:x}", r
 
 
 def main():
