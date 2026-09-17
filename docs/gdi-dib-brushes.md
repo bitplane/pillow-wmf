@@ -87,6 +87,6 @@ and [Wine WMF playback](https://github.com/wine-mirror/wine/blob/master/dlls/gdi
 
 ## Next
 
-Source blits remain unimplemented. Reuse the decoder and Boolean ROP3 evaluator
-for an unstretched 24-bit DIB transfer slice before expanding to indexed colour,
-compression, additional headers, legacy Bitmap16 and stretching modes.
+[Unstretched 24-bit DIB transfers](gdi-dib-transfers.md) now reuse the decoder
+and Boolean ROP3 evaluator. Indexed colour, compression, additional headers,
+legacy Bitmap16 and stretching modes remain future slices.

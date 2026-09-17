@@ -422,6 +422,7 @@ class GDI:
         color_usage: int,
         source: BitmapData,
     ) -> None:
+        """Transfer a band from a complete packed DIB (the WMF buffer contract)."""
         return self.invoke(
             Call.make(
                 "set_dib_to_device",

@@ -58,12 +58,45 @@ def encode_dib24(bitmap: RGBBitmap, *, top_down: bool = False) -> BitmapData:
     return BitmapData("dib", bytes(data))
 
 
-def decode_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFAULT_MAX_BITMAP_PIXELS) -> RGBBitmap:
-    """Decode the supported packed DIB profile without altering encoded data.
+@dataclass(frozen=True)
+class DIB24:
+    """Validated packed layout, before choosing full-image or scan-band decoding."""
+
+    width: int
+    height: int
+    top_down: bool
+    data: bytes
+    offset: int
+
+    @property
+    def complete(self) -> bool:
+        """Whether the packed object contains the entire declared image."""
+        return len(self.data) >= self.offset + ((self.width * 3 + 3) & ~3) * self.height
+
+    def decode(self, rows: int | None = None) -> RGBBitmap:
+        """Decode rows from the beginning of the pixel buffer, not a row offset."""
+        rows = self.height if rows is None else rows
+        if not 0 < rows <= self.height:
+            raise ValueError("DIB row count outside image")
+        stride = (self.width * 3 + 3) & ~3
+        if self.offset + stride * rows > len(self.data):
+            raise FormatError("Truncated DIB colour table or pixel array")
+        pixels = bytearray(self.width * rows * 3)
+        for y in range(rows):
+            source_y = y if self.top_down else rows - 1 - y
+            start = self.offset + source_y * stride
+            row = bytearray(self.data[start : start + self.width * 3])
+            row[0::3], row[2::3] = row[2::3], row[0::3]
+            pixels[y * self.width * 3 : (y + 1) * self.width * 3] = row
+        return RGBBitmap(self.width, rows, bytes(pixels))
+
+
+def read_dib24(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFAULT_MAX_BITMAP_PIXELS) -> DIB24:
+    """Validate the supported packed DIB layout without allocating pixels.
 
     Initially: BITMAPINFOHEADER, BI_RGB, 24 bpp and DIB_RGB_COLORS. Other
     formats remain explicit unsupported operations, not guessed RGB pixels.
-    Validate the complete input extent and pixel budget before allocating.
+    The decoder checks the required pixel extent; bands may omit other rows.
     """
     if max_pixels < 0:
         raise ValueError("Bitmap pixel limit must be nonnegative")
@@ -85,17 +118,14 @@ def decode_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DE
     height = abs(signed_height)
     if width * height > max_pixels:
         raise FormatError("Decoded bitmap pixel limit exceeded")
-    stride = (width * 3 + 3) & ~3
     offset = header_size + colors * 4
     # biSizeImage may be zero for BI_RGB. Compute the required extent rather
     # than trusting it as an allocation size or assuming a BMP file header.
-    if offset + stride * height > len(data):
-        raise FormatError("Truncated DIB colour table or pixel array")
-    pixels = bytearray(width * height * 3)
-    for y in range(height):
-        source_y = y if signed_height < 0 else height - 1 - y
-        start = offset + source_y * stride
-        row = bytearray(data[start : start + width * 3])
-        row[0::3], row[2::3] = row[2::3], row[0::3]
-        pixels[y * width * 3 : (y + 1) * width * 3] = row
-    return RGBBitmap(width, height, bytes(pixels))
+    if offset > len(data):
+        raise FormatError("Truncated DIB colour table")
+    return DIB24(width, height, signed_height < 0, data, offset)
+
+
+def decode_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFAULT_MAX_BITMAP_PIXELS) -> RGBBitmap:
+    """Decode a complete packed DIB into immutable top-down RGB pixels."""
+    return read_dib24(bitmap, color_usage=color_usage, max_pixels=max_pixels).decode()

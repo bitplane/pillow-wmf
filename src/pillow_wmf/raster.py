@@ -9,14 +9,15 @@ from struct import unpack_from
 
 from PIL import Image
 
-from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, decode_dib
+from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, decode_dib, read_dib24
+from .blit import BlitAxis
 from .clip import ClipRegion, RegionMask
 from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
 from .mapping import Mapping
-from .paint import pattern_rop2, rop2
+from .paint import pattern_rop2, rop2, rop3
 from .stroke import (
     cosmetic_line,
     cosmetic_span,
@@ -141,6 +142,51 @@ class RasterContext(TraceContext):
                 # compatible memory DC. Its bitmap creation rejects top-down
                 # dimensions; failed selection preserves the previous brush.
                 pattern = None if unpack_from("<i", a["bitmap"].data, 8)[0] < 0 else pattern.monochrome()
+        elif name == "dib_bit_blt":
+            bitmap = None
+            source_required = pattern_rop2(a["rop"]) is None
+            if a["source"] is not None and source_required:
+                layout = read_dib24(a["source"], max_pixels=self.max_bitmap_pixels)
+                bitmap = layout.decode()
+                x, y = self._point(a["x"], a["y"])
+                right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
+                mirrored = (right - x < 0) != (a["width"] < 0) or (bottom - y < 0) != (a["height"] < 0)
+                copy = (a["rop"] >> 16) & 255 == 0xCC
+                # WMF's ternary path retains bottom-origin source coordinates
+                # for top-down DIBs; the direct copy normalizes either layout.
+                sy = layout.height - a["src_y"] - a["height"] if layout.top_down and not copy else a["src_y"]
+                horizontal = BlitAxis.unscaled(
+                    x, right - x, a["src_x"], a["width"], bitmap.width, anchor_pixel=copy or mirrored
+                )
+                vertical = BlitAxis.unscaled(
+                    y, bottom - y, sy, a["height"], bitmap.height, anchor_pixel=copy or mirrored
+                )
+                # Model reflected ternary transfers as source realization into
+                # a zeroed intermediate surface, then combining the full target.
+                # Plain copies preserve source clipping instead.
+                pad_bounds = None
+                if mirrored and not copy:
+                    left = x if right >= x else right + 1
+                    top = y if bottom >= y else bottom + 1
+                    pad_bounds = (left, top, left + abs(right - x), top + abs(bottom - y))
+        elif name == "set_dib_to_device":
+            layout = read_dib24(a["source"], color_usage=a["color_usage"], max_pixels=self.max_bitmap_pixels)
+            bitmap = None
+            # WMF stores WORDs here but playback sign-extends coordinates and
+            # extents. Scan indexes/counts remain unsigned.
+            x, y, width, height, sx, sy = (
+                (a[k] + 32768) % 65536 - 32768 for k in ("x", "y", "width", "height", "src_x", "src_y")
+            )
+            start, count = a["start_scan"], a["scan_count"]
+            # WMF requires a complete packed DIB even when only cLines rows
+            # are consumed. Short buffers are rejected regardless of SizeImage.
+            if layout.complete and width > 0 and height > 0 and count and start < layout.height:
+                if not layout.top_down:
+                    count = min(count, layout.height - start)
+                bitmap = layout.decode(min(count, layout.height))
+                x, y = self._point(x, y)
+                horizontal = BlitAxis(x, sx, width)
+                vertical = BlitAxis(y, start + count - sy - height, height)
         elif name == "select_object":
             if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
@@ -279,6 +325,17 @@ class RasterContext(TraceContext):
             self._pixel(*self._point(a["x"], a["y"]), rgb(a["color"]))
         elif name == "pat_blt":
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
+        elif name in ("dib_bit_blt", "set_dib_to_device"):
+            if bitmap is not None:
+                self._source_blt(
+                    bitmap,
+                    horizontal,
+                    vertical,
+                    a.get("rop", 0xCC0020),
+                    pad_bounds=pad_bounds if name == "dib_bit_blt" else None,
+                )
+            elif name == "dib_bit_blt":
+                self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
         elif name in ("flood_fill", "ext_flood_fill"):
             self._flood_fill(self._point(a["x"], a["y"]), rgb(a["color"]), a.get("mode", 0))
         elif name == "save_dc":
@@ -433,6 +490,34 @@ class RasterContext(TraceContext):
                     self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
         return result
 
+    def _source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
+        table = (operation >> 16) & 255
+        needs_pattern = (table & 15) != (table >> 4)
+        left, top, right, bottom = pad_bounds or (
+            horizontal.destination,
+            vertical.destination,
+            horizontal.destination + horizontal.length,
+            vertical.destination + vertical.length,
+        )
+        for y in range(max(0, top), min(self.image.height, bottom)):
+            sy = vertical.source + (y - vertical.destination) * vertical.step
+            for x in range(max(0, left), min(self.image.width, right)):
+                sx = horizontal.source + (x - horizontal.destination) * horizontal.step
+                if not self._clip.contains(x, y):
+                    continue
+                in_source = (
+                    0 <= sx < bitmap.width
+                    and 0 <= sy < bitmap.height
+                    and horizontal.destination <= x < horizontal.destination + horizontal.length
+                    and vertical.destination <= y < vertical.destination + vertical.length
+                )
+                if not in_source and pad_bounds is None:
+                    continue
+                source = bitmap.pixel(sx, sy) if in_source else (0, 0, 0)
+                pattern = self._brush_color_at(x, y, opaque=True) if needs_pattern else (0, 0, 0)
+                if pattern is not None:
+                    self.image.putpixel((x, y), rop3(operation, pattern, source, self.image.getpixel((x, y))))
+
     def _pat_blt(self, x, y, width, height, rop):
         operation = pattern_rop2(rop)
         if operation is None:
@@ -442,13 +527,13 @@ class RasterContext(TraceContext):
         # PatBlt orders mapped rectangle edges (unlike mirrored source blits).
         left, right = sorted((left, right))
         top, bottom = sorted((top, bottom))
-        for y in range(max(0, top), min(self.image.height, bottom)):
-            for x in range(max(0, left), min(self.image.width, right)):
+        for py in range(max(0, top), min(self.image.height, bottom)):
+            for px in range(max(0, left), min(self.image.width, right)):
                 # Pattern-independent functions do not need a brush, including
                 # a null brush or transparent hatch gaps.
-                paint = (0, 0, 0) if operation in (1, 6, 11, 16) else self._brush_color_at(x, y, opaque=True)
+                paint = (0, 0, 0) if operation in (1, 6, 11, 16) else self._brush_color_at(px, py, opaque=True)
                 if paint is not None:
-                    self._pixel(x, y, paint, operation=operation)
+                    self._pixel(px, py, paint, operation=operation)
 
     def _flood_fill(self, seed, color, mode):
         if self._brush.style == 1:

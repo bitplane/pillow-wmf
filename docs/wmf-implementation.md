@@ -17,7 +17,7 @@ device metrics, rounding boundaries, and the next native compatibility probes.
 | Objects | Pen/brush record fields, font, palette, region/scan structures | Native object realization and selected/saved-object quirks |
 | Bitmap payloads | Explicit `BitmapData` values; Bitmap16/DIB/legacy-pattern distinction; bounded 24-bit BI_RGB BITMAPINFOHEADER decoder and writer | Other headers/depths, compression, palette resolution, legacy Bitmap16 decoding |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including 24-bit DIB patterns, text-colour state, ROP2/ROP3, PatBlt, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Other bitmap pattern formats, bitmap transfers, palette behavior and text drawing; remaining pen/state behavior |
+| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including 24-bit DIB patterns, text-colour state, ROP2/ROP3, PatBlt, unscaled 24-bit DIBBitBlt and SetDIBToDev, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Other bitmap formats, stretching, palette behavior and text drawing; remaining pen/state behavior |
 | Playback | File-slot mapping, lowest-free allocation, references, unsupported-operation diagnostics | Native behavioral validation and device-state emulation |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
@@ -30,7 +30,8 @@ and [Pie](gdi-pies.md), plus [RoundRect](gdi-roundrects.md) and
 [inside-frame pens](gdi-insideframe.md). [Region creation, clipping, painting
 and framing](gdi-regions.md), [flood fills](gdi-flood-fills.md) and
 [PatBlt/ROP3](gdi-patblt.md) are implemented. The first
-[DIB/pattern-brush slice](gdi-dib-brushes.md) adds 24-bit pixels without source blits.
+[DIB/pattern-brush slice](gdi-dib-brushes.md) supplies the 24-bit decoder shared
+with [unscaled DIB source transfers](gdi-dib-transfers.md).
 
 The structural reader parses fields without realizing graphics objects. A valid
 envelope containing `BitmapData` is not certification that the bitmap itself is
