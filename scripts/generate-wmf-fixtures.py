@@ -3,6 +3,7 @@
 import runpy
 from itertools import product
 from pathlib import Path
+from struct import pack_into
 
 from pillow_wmf import Metafile, Recorder, play
 from pillow_wmf.bitmap import RGBBitmap, encode_dib24
@@ -1595,6 +1596,40 @@ def dib_transfer_cases():
         for i, (start, sy, height) in enumerate(product((0, 2, 6), (-2, 0, 2, 8), (3, 7))):
             r.set_dib_to_device(4 + i % 5 * 24, 4 + i // 5 * 24, 9, height, 2, sy & 65535, start, 3, 0, source)
         yield f"dib-device-band-crops-{int(top_down)}-{int(partial)}", r
+
+    for mirrored, top_down in product((False, True), repeat=2):
+        r = mapped()
+        r.select_object(r.create_brush(0, 0x37598B, 0))
+        r.pat_blt(0, 0, 128, 128, 0xF00021)
+        r.select_object(r.create_brush(0, 0xA96C32, 0))
+        if mirrored:
+            r.set_viewport_origin(127, 127)
+            r.set_viewport_extent(-128, -128)
+        for table in range(256):
+            r.dib_bit_blt(
+                table % 16 * 8 + 6,
+                table // 16 * 8 + 6,
+                -5,
+                -5,
+                3,
+                2,
+                table << 16,
+                encode_dib24(bitmap, top_down=top_down),
+            )
+        yield f"dib-blt-negative-tables-{int(mirrored)}-{int(top_down)}", r
+
+    for top_down in (False, True):
+        r = mapped()
+        for i, (size_image, buffer_rows) in enumerate(product((0, 108, 324), (3, 9))):
+            data = bytearray(encode_dib24(bitmap, top_down=top_down).data[: 40 + 36 * buffer_rows])
+            pack_into("<I", data, 20, size_image)
+            r.set_dib_to_device(4 + i * 20, 4, 11, 9, 0, 0, 2, 3, 0, BitmapData("dib", bytes(data)))
+        yield f"dib-device-band-size-{int(top_down)}", r
+
+    r = mapped()
+    for i, code in enumerate((0xCC0000, 0xCC0020, 0xCCFFFF, 0x40CC0020, 0x80CC0020)):
+        r.dib_bit_blt(12 + i * 24, 12, -7, -7, 8, 7, code, encode_dib24(bitmap))
+    yield "dib-blt-copy-code-bits", r
 
 
 def main():
