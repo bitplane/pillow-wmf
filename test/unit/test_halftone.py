@@ -16,6 +16,7 @@ from pillow_wmf.halftone import (
     replication_content,
 )
 from pillow_wmf.halftone_power import tent_power
+from pillow_wmf.halftone_scan import ExpansionWindow, ReductionScanReader
 
 
 def test_weights_carry_remainders_between_source_contributions():
@@ -61,10 +62,24 @@ def test_source_clipping_retains_fractional_coverage_and_black_unavailable_cells
 
 def test_clipped_general_expansion_freezes_fetch_window_not_fractional_phase():
     full = ExpansionAxis(11, 13)
-    clipped = ExpansionAxis(11, 13, 3)
-    assert clipped.weights(2) == ((2, 231), (1, 4843), (0, 3025), (-1, 93))
-    assert [w for _, w in clipped.weights(2)] == [w for _, w in full.weights(2)]
-    assert clipped.weights(3) != clipped.weights(2)
+    clipped = ExpansionWindow(3)
+    assert clipped.fetch(full.weights(2)) == ((2, 231), (1, 4843), (0, 3025), (None, 93))
+    assert [w for _, w in clipped.fetch(full.weights(2))] == [w for _, w in full.weights(2)]
+    assert clipped.fetch(full.weights(3)) != clipped.fetch(full.weights(2))
+
+
+@pytest.mark.parametrize("rows", (1, 2, 3))
+@pytest.mark.parametrize("fixup", (False, True))
+def test_scan_reader_priming_and_replay_are_independent_of_access_order(rows, fixup):
+    bitmap = RGBBitmap(1, rows, bytes((31, 71, 113)) * rows)
+    reader = ReductionScanReader(bitmap, 0, -1, 4, 3, fixup=fixup)
+    assert reader.current == (2 if rows > 1 else 1)
+    assert reader.previous == (1 if rows > 1 else None)
+    expected = None if fixup and rows == 1 else 1
+    assert reader.row(1) == expected
+    assert reader.row(3) == 3
+    assert reader.row(1) == expected
+    assert reader.pixel(0, reader.row(1)) == ((0, 0, 0) if expected is None else (31, 71, 113))
 
 
 def test_destination_clipping_retains_filter_phase_and_neighbours():
