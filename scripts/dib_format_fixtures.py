@@ -27,6 +27,7 @@ def formats():
 
 
 def cases():
+    yield from conversion_cases()
     for name, header, depth, masks, rle in formats():
         for top_down in (False,) if header == 12 or rle else (False, True):
             width, height = 13, 7  # Byte/nibble/word padding, asymmetry and crop edges.
@@ -89,3 +90,73 @@ def cases():
         r.stretch_dib(64, 2, 52, 28, 0, 0, 13, 7, 0xCC0020, 0, source)
         r.set_dib_to_device(2, 48, 13, 7, 0, 0, 0, 7, 0, source)
         yield f"dib-format-rle{depth}-commands", r
+
+
+def conversion_cases():
+    palettes = (
+        ((0, 0, 0), (255, 255, 255)),
+        ((255, 255, 255), (0, 0, 0)),
+        ((19, 59, 97), (90, 96, 210)),
+        ((0, 0, 0), (0, 0, 0)),
+        ((255, 0, 0), (0, 255, 0)),
+        ((11, 37, 83), (11, 37, 83)),
+    )
+    for pi, colors in enumerate(palettes):
+        r = Recorder()
+        for pattern, mode, size in product(range(4), (3, 4), (0, 1)):
+            row = pattern * 2 + mode - 3
+            source = encode_dib(
+                13,
+                7,
+                tuple(
+                    0 if pattern == 0 else 1 if pattern == 1 else (x + y) % 2 if pattern == 2 else int(x == y)
+                    for y in range(7)
+                    for x in range(13)
+                ),
+                depth=1,
+                colors=colors,
+            )
+            r.set_stretch_mode(mode)
+            dw, dh = (13, 7) if size == 0 else (23, 11)
+            r.dib_stretch_blt(2 + size * 30, 2 + row * 15, dw, dh, 0, 0, 13, 7, 0xCC0020, source)
+            r.stretch_dib(64 + size * 30, 2 + row * 15, dw, dh, 0, 0, 13, 7, 0xCC0020, 0, source)
+        yield f"dib-format-mono-halftone-palette-{pi}", r
+
+    # Select a coloured brush first: failed creations must preserve it, not
+    # silently realize a white/null brush. Also covers the legacy style path.
+    for style in (3, 5):
+        r = Recorder()
+        r.select_object(r.create_brush(0, 0x731951, 0))
+        profiles = (
+            (12, 4, None, False),
+            (40, 4, None, True),
+            (108, 16, (0xF800, 0x7E0, 31), False),
+            (124, 32, (0xFF0000, 0xFF00, 255), False),
+        )
+        for i, (header, depth, masks, rle) in enumerate(profiles):
+            source = encode_dib(
+                3,
+                2,
+                (0, 1, 2, 3, 2, 1),
+                depth=depth,
+                colors=palettes[2] * 8 if depth == 4 else (),
+                masks=masks,
+                header_size=header,
+                rle=rle,
+            )
+            r.select_object(r.create_dib_pattern_brush(style, 0, source))
+            r.pat_blt(2 + i * 30, 2, 25, 25, 0xF00021)
+        yield f"dib-format-rejected-brush-style-{style}", r
+
+    for bits in (4, 5, 6, 10):
+        depth = 16 if bits <= 5 else 32
+        mask = (1 << bits) - 1
+        masks = (mask << (2 * bits), mask << bits, mask)
+        samples = tuple(i * (1 + (1 << bits) + (1 << (2 * bits))) for i in range(1 << bits))
+        r = Recorder()
+        for i in range(0, len(samples), 64):
+            source = encode_dib(min(64, len(samples)), 1, samples[i : i + 64], depth=depth, masks=masks)
+            for mode in (3, 4):
+                r.set_stretch_mode(mode)
+                r.dib_bit_blt(2 + (mode - 3) * 64, 2 + i // 64 * 4, min(64, len(samples)), 1, 0, 0, 0xCC0020, source)
+        yield f"dib-format-channel-ramp-{bits}", r
