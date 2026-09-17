@@ -70,8 +70,10 @@ there are no per-primitive region rendering branches.
 
 ## Verification
 
-Committed Windows references cover rings/holes, overlap, negative coordinates,
+Twenty-one committed Windows references cover rings/holes, overlap, negative coordinates,
 misleading bounds, mapping changes, replacement, offsets, save/restore,
 intersection/exclusion, reset, null objects and slot-zero selection. The manual
 `probe-windows-regions.py` additionally asserts native object creation outcomes,
-15 displacement cases, and exact cross-primitive pixel comparisons.
+15 displacement cases, native allocation after a failed creation, and 324 exact
+cross-primitive pixel comparisons. The final native verification is
+[run 35172754644](https://github.com/bitplane/pillow-wmf/actions/runs/35172754644).
