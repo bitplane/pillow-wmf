@@ -4,6 +4,8 @@ from itertools import product
 from pathlib import Path
 
 from pillow_wmf import Recorder
+from pillow_wmf.wmf.fixed import SelectClipRegion
+from pillow_wmf.wmf.objects import Region, Scan
 
 FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
 
@@ -57,6 +59,54 @@ def cases():
     yield from round_rect_cases()
     yield from inside_frame_cases()
     yield from edge_cases()
+    yield from region_clip_cases()
+
+
+def region_clip_cases():
+    ring = Region((8, 12, 112, 108), (Scan(12, 32, (8, 112)), Scan(32, 88, (8, 32, 88, 112)), Scan(88, 108, (8, 112))))
+    for name, region in (
+        ("ring", ring),
+        ("empty", Region((0, 0, 0, 0), ())),
+        ("negative", Region((-16, -8, 64, 64), (Scan(65528, 64, (65520, 64)),))),
+        ("overlap", Region((8, 8, 96, 96), (Scan(8, 64, (8, 64)), Scan(32, 96, (32, 96))))),
+        ("bounds", Region((0, 0, 1, 1), ring.scans)),
+    ):
+        for scale in (128, 192):
+            recorder = mapped()
+            recorder.select_object(recorder.create_pen(5, 1, 0))
+            recorder.set_viewport_extent(scale, scale)
+            handle = recorder.create_region(region)
+            recorder.select_clip_region(handle)
+            recorder.delete_object(handle)
+            recorder.set_viewport_extent(128, 128)
+            recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+            recorder.rectangle(0, 0, 128, 128)
+            yield f"region-clip-{name}-{scale}", recorder
+    for operation in ("replace", "offset", "restore", "clear", "select-object", "intersect", "exclude"):
+        recorder = mapped()
+        recorder.select_object(recorder.create_pen(5, 1, 0))
+        handle = recorder.create_region(ring)
+        recorder.intersect_clip_rect(40, 40, 64, 64)
+        recorder.select_clip_region(handle)
+        if operation == "offset":
+            recorder.set_viewport_extent(192, 64)
+            recorder.offset_clip_region(7, -9)
+            recorder.set_viewport_extent(128, 128)
+        elif operation == "restore":
+            recorder.save_dc()
+            recorder.exclude_clip_rect(0, 0, 128, 128)
+            recorder.restore_dc(-1)
+        elif operation == "clear":
+            recorder.records.append(SelectClipRegion(0))
+        elif operation == "select-object":
+            recorder.select_object(handle)
+        elif operation == "intersect":
+            recorder.intersect_clip_rect(20, 20, 100, 100)
+        elif operation == "exclude":
+            recorder.exclude_clip_rect(20, 20, 100, 100)
+        recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+        recorder.rectangle(0, 0, 128, 128)
+        yield f"region-clip-{operation}", recorder
 
 
 def inside_frame_cases():
