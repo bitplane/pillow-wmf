@@ -358,7 +358,13 @@ class RasterContext(TraceContext):
                 elif name == "arc":
                     self._stroke_path(path)
                 else:
-                    self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle)
+                    brush = self._brush
+                    # Rectangle's block-fill realization simplifies ROPs
+                    # independent of the pattern before applying hatch
+                    # transparency. Region/path fills retain the hatch mask.
+                    if rectangle and brush.style == 2 and self._rop2 in (1, 6, 11, 16):
+                        brush = replace(brush, style=0)
+                    self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
         return result
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
@@ -467,7 +473,7 @@ class RasterContext(TraceContext):
                 if contains(contours, x, y, fill_mode=fill_mode):
                     yield x, y
 
-    def _paint_polygons(self, paths: tuple[DevicePath, ...], *, miter=False, reserve_outline=False) -> None:
+    def _paint_polygons(self, paths: tuple[DevicePath, ...], *, miter=False, reserve_outline=False, brush=None) -> None:
         paths = tuple(path for path in paths if path.segments)
         contours = tuple(path.vertices for path in paths)
         # Native copy-mode combined fill/stroke consumes the flattened contour.
@@ -483,7 +489,7 @@ class RasterContext(TraceContext):
             # repeated pixels). Wide combined paths exclude stroke coverage.
             stroke_pixels = set()
         for x, y in fill_pixels - stroke_pixels:
-            color = self._brush_color_at(x, y)
+            color = self._brush_color_at(x, y, brush)
             if color is not None:
                 self._pixel(x, y, color)
         if pen.cosmetic:
@@ -501,10 +507,6 @@ class RasterContext(TraceContext):
             return brush.color
         if brush.style == 1:
             return None
-        # Brush-independent ROPs realize a constant brush, so transparent
-        # hatch gaps do not suppress their destination operation.
-        if self._rop2 in (1, 6, 11, 16):
-            return brush.color
         # The six GDI hatches tile in device space. These phase offsets are
         # shared by all shapes, mapping modes and brush selections.
         horizontal = y % 8 == 3
