@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pillow_wmf import Metafile, Recorder, play
 from pillow_wmf.bitmap import RGBBitmap, encode_dib24
-from pillow_wmf.wmf.objects import Region, Scan
+from pillow_wmf.wmf.objects import BitmapData, Region, Scan
 
 FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
 
@@ -1562,6 +1562,39 @@ def dib_transfer_cases():
                 None if brush == "absent-source" else encode_dib24(bitmap),
             )
         yield f"dib-blt-tables-{brush}", r
+
+    for mirror_x, mirror_y in product((False, True), repeat=2):
+        r = mapped()
+        r.select_object(r.create_brush(0, 0x37598B, 0))
+        r.pat_blt(0, 0, 128, 128, 0xF00021)
+        r.select_object(r.create_brush(0, 0xA96C32, 0))
+        r.set_viewport_origin(127 if mirror_x else 0, 127 if mirror_y else 0)
+        r.set_viewport_extent(-128 if mirror_x else 128, -128 if mirror_y else 128)
+        for i, ((sx, sy), table) in enumerate(
+            product(((-3, -2), (8, 7), (12, 10), (0, 0), (3, 4)), (0, 0xCC, 0xF0, 0x5A, 0x96))
+        ):
+            r.dib_bit_blt(
+                12 + i % 5 * 24,
+                12 + i // 5 * 24,
+                -7 if i % 2 else 7,
+                -7 if i % 3 else 7,
+                sx,
+                sy,
+                table << 16,
+                encode_dib24(bitmap),
+            )
+        yield f"dib-blt-clip-rops-{int(mirror_x)}-{int(mirror_y)}", r
+
+    for top_down, partial in product((False, True), repeat=2):
+        source = encode_dib24(bitmap, top_down=top_down)
+        if partial:
+            # A band supplies only cLines rows; StartScan positions this buffer
+            # in the image rather than skipping bytes in it.
+            source = BitmapData("dib", source.data[: 40 + 36 * 3])
+        r = mapped()
+        for i, (start, sy, height) in enumerate(product((0, 2, 6), (-2, 0, 2, 8), (3, 7))):
+            r.set_dib_to_device(4 + i % 5 * 24, 4 + i // 5 * 24, 9, height, 2, sy & 65535, start, 3, 0, source)
+        yield f"dib-device-band-crops-{int(top_down)}-{int(partial)}", r
 
 
 def main():
