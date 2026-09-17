@@ -6,11 +6,54 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
-from pillow_wmf import Metafile, TraceContext, play
+from pillow_wmf import Metafile, Recorder, TraceContext, play
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
+
+
+def test_reference_comparison_preserves_dc_state_and_surface_clipping(tmp_path):
+    # Hand-specified tool regression, not a generated Windows oracle.
+    recorder = Recorder()
+    recorder.set_window_extent(1, 1)
+    recorder.set_viewport_extent(2, 2)
+    recorder.set_viewport_origin(-1, -1)
+    recorder.intersect_clip_rect(1, 1, 2, 2)
+    recorder.select_object(recorder.create_brush(0, 0x332211, 0))
+    recorder.pat_blt(-10, -10, 20, 20, 0xF00021)
+    path = tmp_path / "state.wmf"
+    path.write_bytes(recorder.to_bytes())
+    expected = Image.new("RGB", (4, 4), "white")
+    expected.paste((17, 34, 51), (1, 1, 3, 3))
+    expected.save(path.with_suffix(".png"))
+    compare = runpy.run_path(str(SCRIPTS / "reference_compare.py"))["compare_reference"]
+    assert compare(path).differing_pixels == 0
+    # A single channel differing by one must still fail exact comparison.
+    expected.putpixel((1, 1), (18, 34, 51))
+    expected.save(path.with_suffix(".png"))
+    result = compare(path)
+    assert result.pixels == 16
+    assert result.differing_pixels == result.differing_channels == result.largest_error == 1
+    assert result.first == (1, 1, (17, 34, 51), (18, 34, 51))
+
+
+@pytest.mark.parametrize("script", ("analyze-halftone.py", "analyze-halftone-expansion.py"))
+def test_diagnostics_fail_on_differences_without_writing_references(script, monkeypatch, tmp_path, capsys):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    main = runpy.run_path(str(SCRIPTS / script))["main"]
+    path = tmp_path / "empty.wmf"
+    path.write_bytes(Recorder().to_bytes())
+    expected = Image.new("RGB", (2, 2), "white")
+    expected.save(path.with_suffix(".png"))
+    assert main([path]) == 0
+    expected.putpixel((0, 0), (254, 255, 255))
+    expected.save(path.with_suffix(".png"))
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    assert main([path]) == 1
+    assert "1/4 pixels differ" in capsys.readouterr().out
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
 
 
 def test_foundation_inputs_are_unique_reproducible_and_lossless():
