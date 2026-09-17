@@ -105,6 +105,35 @@ def test_incomplete_native_brush_is_null_but_incompatible_depth_is_not():
     assert dc.image.getpixel((0, 0)) == (0, 0, 0)
 
 
+@pytest.mark.parametrize("layout", (0, 1))
+@pytest.mark.parametrize("height,destination_y,source_y", ((19, 51, 48), (-19, 71, 48)))
+def test_self_copy_uses_destination_size_and_independently_mapped_low_source(layout, height, destination_y, source_y):
+    """Native fractional BitBlt cases: unequal rounded extents must not stretch."""
+    dc = RasterContext(128, 128)
+    dc.image.putdata([(x, y, x ^ y) for y in range(128) for x in range(128)])
+    original = dc.image.copy()
+    dc.set_layout(layout)
+    dc.set_window_extent(64, 64)
+    dc.set_viewport_extent(96, 80)
+    dc.set_window_origin(3, 2)
+    dc.set_viewport_origin(7, 5)
+    dc.bit_blt(17, destination_y, 24, height, 12, source_y, 0x660046)
+    # Native ordered rectangle corners, including RTL's half-open edge.
+    left, source_x = (63, 71) if layout else (28, 21)
+    top, source_top, count = (66, 63, 24) if height > 0 else (68, 39, 23)
+    for y in range(count):
+        for x in range(36):
+            expected = tuple(
+                a ^ b
+                for a, b in zip(
+                    original.getpixel((left + x, top + y)),
+                    original.getpixel((source_x + x, source_top + y)),
+                    strict=True,
+                )
+            )
+            assert dc.image.getpixel((left + x, top + y)) == expected
+
+
 def test_overlapping_source_free_copy_reads_original_pixels():
     dc = RasterContext(8, 1)
     for x in range(8):

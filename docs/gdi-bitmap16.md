@@ -3,7 +3,7 @@
 This slice covers `META_BITBLT`, `META_STRETCHBLT`, and
 `META_CREATEPATTERNBRUSH`. The target is the existing Windows 2025 x64,
 32-bit RGB reference surface, not an emulation of every historical display
-driver. There are 39 independent WMF/Windows-PNG cases. PNGs were generated
+driver. There are 84 independent WMF/Windows-PNG cases. PNGs were generated
 only when missing; all comparisons and unit tests run locally/Linux.
 
 Native batches: [initial layouts](https://github.com/bitplane/pillow-wmf/actions/runs/35227911644),
@@ -71,12 +71,40 @@ the oracle observations; it is not a claim about all Windows builds.
 
 With no embedded bitmap, the transfer uses the destination DC as its source.
 Source-independent ROPs go through the existing PatBlt path. Source-dependent
-operations snapshot the destination, map source coordinates through that DC,
-and use the shared bitmap-transfer preparation and rasterizer. There is no
-second stretch/ROP implementation for Bitmap16. Current native source-free
-controls cover PATCOPY, DSTINVERT and SRCCOPY at identity mapping, including
-enlargement; more complex self-copy mapping/overlap combinations remain useful
-holdouts. Overlapping-copy snapshot semantics also have a unit regression.
+operations snapshot the destination and map source coordinates through that DC.
+There is no second stretch/ROP rasterizer for Bitmap16.
+
+### Self-copy geometry
+
+The [45 mapped self-copy references](https://github.com/bitplane/pillow-wmf/actions/runs/35238172460)
+cover identity, fractional and negative scales, RTL at identity/fractional
+scale, nonzero origins, overlap, destination clipping, source bounds, negative
+extents, SRCCOPY and SRCINVERT, and COLORONCOLOR/HALFTONE stretching.
+Sixteen initially failed; the fixes are in transfer preparation, not filtering
+or pixel comparison.
+
+With equal DC transforms, BitBlt transforms and orders two half-open rectangles.
+RTL adds one device X unit to both rectangles' edges. The actual copy uses the
+destination rectangle's size and the source rectangle's low corner. Their
+independently rounded sizes need not agree: this does **not** invoke stretching.
+For negative extents, transform the source's low logical corner independently;
+subtracting the rounded destination size from the source anchor loses a pixel
+at fractional scales. Both SRCCOPY and ternary ROPs use this geometry.
+
+Native `GreBitBltInternal` in the same 26100.9444 win32kfull binary used for
+[layout research](gdi-layout.md) establishes this: RVA 0x7a753 constructs the
+source rectangle; 0x7a7d5 adds the RTL edge adjustment; 0x7a7e5 orders it.
+Destination construction and equivalent steps are at 0x7a808–0x7a8be.
+The shared `BlitAxis` scan copier then handles the prepared rectangle, retaining
+the original source snapshot and destination-only DC clipping.
+
+StretchBlt still maps independent source and destination extents through the
+shared stretch/filter pipeline. A same-DC source already carries the RTL
+transform; the DIB-only destination-anchor adjustment must not be applied to it.
+The signed RTL references distinguish these contracts. Unit regressions retain
+the fractional extent mismatch, negative-height source corner, and overlapping
+snapshot semantics. This is tested coverage, not exhaustive proof of every
+ROP, stretch mode, clipping region or extreme coordinate combination.
 
 ## Brush realization, not shape-specific exceptions
 

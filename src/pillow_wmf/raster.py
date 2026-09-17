@@ -621,14 +621,29 @@ class RasterContext(TraceContext):
             return TransferAction.PATTERN
         # Without embedded bits Windows uses the destination DC as source.
         # Snapshot before painting so overlapping transfers read original data.
+        bitmap = RGBBitmap(self.image.width, self.image.height, self.image.tobytes())
+        if name == "bit_blt":
+            # Equal transforms order both half-open rectangles, then use the
+            # destination size and source's low corner. Fractional rounding
+            # can give the source a different size; that does not stretch it.
+            x, y = self.mapping.edge_point(a["x"], a["y"])
+            right, bottom = self.mapping.edge_point(a["x"] + a["width"], a["y"] + a["height"])
+            sx, sy = self.mapping.edge_point(
+                a["src_x"] + (a["width"] if right < x else 0),
+                a["src_y"] + (a["height"] if bottom < y else 0),
+            )
+            left, top = min(x, right), min(y, bottom)
+            return SourceTransfer(
+                bitmap,
+                BlitAxis(left, sx, abs(right - x)),
+                BlitAxis(top, sy, abs(bottom - y)),
+                a["rop"],
+            )
         sx, sy = self._point(a["src_x"], a["src_y"])
         sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         right, bottom = self._point(a["src_x"] + sw, a["src_y"] + sh)
         a = dict(a, src_x=sx, src_width=right - sx, src_height=bottom - sy)
-        bitmap = RGBBitmap(self.image.width, self.image.height, self.image.tobytes())
-        return self._prepare_bitmap_transfer(
-            a, bitmap, sy, depth=32, halftone=name == "stretch_blt" and self._stretch_mode == 4
-        )
+        return self._prepare_bitmap_transfer(a, bitmap, sy, depth=32, halftone=self._stretch_mode == 4, source_dc=True)
 
     def _prepare_transfer(self, name, a) -> SourceTransfer | TransferAction:
         if pattern_rop2(a["rop"]) is not None:
@@ -665,15 +680,16 @@ class RasterContext(TraceContext):
             monochrome_bitblt=monochrome and name == "dib_bit_blt",
         )
 
-    def _prepare_bitmap_transfer(self, a, bitmap, sy, *, depth, halftone, monochrome_bitblt=False):
+    def _prepare_bitmap_transfer(self, a, bitmap, sy, *, depth, halftone, monochrome_bitblt=False, source_dc=False):
         x, y = self._point(a["x"], a["y"])
         right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
         sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         dw, dh = right - x, bottom - y
-        if self.mapping.rtl and dw > 0:
+        if self.mapping.rtl and dw > 0 and not source_dc:
             # A second X reflection restores forward scan order. Its anchor
             # is then the exclusive RTL edge rather than the mirrored pixel;
             # negative device extents get this conversion in Blit/StretchAxis.
+            # A source using the same DC already shares the RTL transform.
             x += 1
         if not all((sw, sh, dw, dh)):
             return TransferAction.NOOP

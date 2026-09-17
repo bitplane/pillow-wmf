@@ -74,7 +74,9 @@ half-open edges when RTL cancels a negative destination extent.
 Hatch and DIB-pattern brushes retain their device-space pattern alignment.
 Source-free legacy transfers use the same reflected source/destination DC and
 the existing bitmap pipeline. Their identity-mapping self-copy holdouts pass
-with both flags 1 and 9; broader Bitmap16 overlap/mapping holdouts remain useful.
+with both flags 1 and 9. The subsequent [Bitmap16 self-copy slice](gdi-bitmap16.md#self-copy-geometry)
+adds overlap, fractional mapping, clipping and signed-extent holdouts, and
+distinguishes same-DC rectangle preparation from the DIB anchor adjustment.
 
 ## Evidence and limits
 

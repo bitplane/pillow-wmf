@@ -155,9 +155,10 @@ fixed-point path/state observations. Mapping, clipping, pen orientation and
 clockwise curves share the existing drawing algorithms. Text-related state
 and rendering remain deferred.
 
-[Bitmap16](gdi-bitmap16.md) adds 39 exact Windows references and documents
-modern playback's bitmap-selection/transfer quirk and native pattern layout. That
-profile is not a claim of historical display-driver compatibility.
+[Bitmap16](gdi-bitmap16.md) adds 84 exact Windows references and documents
+modern playback's bitmap-selection/transfer quirk, native pattern layout, and
+mapped/overlapping self-copy geometry. That profile is not a claim of historical
+display-driver compatibility.
 
 The unit suite checks all record classes and both blit layouts, independently
 specified wire bytes, truncation/count/limit failures, sequence snapshots, handle
