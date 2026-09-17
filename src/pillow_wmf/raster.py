@@ -14,7 +14,7 @@ from .flood import flood_spans
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
 from .mapping import Mapping
-from .paint import rop2
+from .paint import pattern_rop2, rop2
 from .stroke import (
     cosmetic_line,
     cosmetic_span,
@@ -129,6 +129,7 @@ class RasterContext(TraceContext):
                 else None
             )
         elif name not in {
+            "pat_blt",
             "flood_fill",
             "fill_region",
             "paint_region",
@@ -237,6 +238,8 @@ class RasterContext(TraceContext):
             self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))
         elif name == "set_pixel":
             self._pixel(*self._point(a["x"], a["y"]), rgb(a["color"]))
+        elif name == "pat_blt":
+            self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
         elif name in ("flood_fill", "ext_flood_fill"):
             self._flood_fill(self._point(a["x"], a["y"]), rgb(a["color"]), a.get("mode", 0))
         elif name == "save_dc":
@@ -389,6 +392,23 @@ class RasterContext(TraceContext):
                     self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
         return result
 
+    def _pat_blt(self, x, y, width, height, rop):
+        operation = pattern_rop2(rop)
+        if operation is None:
+            return  # Native PatBlt rejects operations requiring a source.
+        left, top = self._point(x, y)
+        right, bottom = self._point(x + width, y + height)
+        # PatBlt orders mapped rectangle edges (unlike mirrored source blits).
+        left, right = sorted((left, right))
+        top, bottom = sorted((top, bottom))
+        for y in range(max(0, top), min(self.image.height, bottom)):
+            for x in range(max(0, left), min(self.image.width, right)):
+                # Pattern-independent functions do not need a brush, including
+                # a null brush or transparent hatch gaps.
+                paint = (0, 0, 0) if operation in (1, 6, 11, 16) else self._brush_color_at(x, y, opaque=True)
+                if paint is not None:
+                    self._pixel(x, y, paint, operation=operation)
+
     def _flood_fill(self, seed, color, mode):
         if self._brush.style == 1:
             return
@@ -540,7 +560,9 @@ class RasterContext(TraceContext):
         for x, y in foreground:
             self._pixel(x, y, self._pen.color)
 
-    def _brush_color_at(self, x: int, y: int, brush: Brush | None = None) -> tuple[int, int, int] | None:
+    def _brush_color_at(
+        self, x: int, y: int, brush: Brush | None = None, *, opaque: bool = False
+    ) -> tuple[int, int, int] | None:
         brush = self._brush if brush is None else brush
         if brush.style == 0:
             return brush.color
@@ -555,4 +577,4 @@ class RasterContext(TraceContext):
         mark = (horizontal, vertical, forward, backward, horizontal or vertical, forward or backward)[brush.hatch]
         if mark:
             return brush.color
-        return self._background_color if self._background_mode == 2 else None
+        return self._background_color if opaque or self._background_mode == 2 else None
