@@ -64,8 +64,17 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
         # Preserve the orientation of the first transformed basis vector.
         # The other radius has that same sign so the contour stays CCW.
         sign = 1 if scale_x >= 0 else -1
-        rx = sign * ceil(width * abs(scale_x) * 8)
-        ry = sign * ceil(width * abs(scale_y) * 8)
+        if geometric:
+
+            def half(value):
+                fixed = floor(value + 0.5)
+                return (fixed + (fixed >= 0)) // 2
+
+            rx = half(width * scale_x * 16)
+            ry = sign * abs(half(-width * scale_y * 16))
+        else:
+            rx = sign * ceil(width * abs(scale_x) * 8)
+            ry = sign * ceil(width * abs(scale_y) * 8)
         cx, cy = ceil(rx * _CIRCLE_CONTROL), floor(ry * _CIRCLE_CONTROL)
         half = [(rx, 0)]
         half += flatten_cubic(((rx, 0), (rx, -cy), (cx, -ry), (0, -ry)))
@@ -98,9 +107,9 @@ def frame_footprint(width, height, scale_x, scale_y):
     )
     supports = []
     for axis, index in enumerate(indices):
-        previous = (index - 1) % len(pen.vertices)
+        previous = (index + 1) % len(pen.vertices)
         while pen.vertices[previous] == pen.vertices[index]:
-            previous = (previous - 1) % len(pen.vertices)
+            previous = (previous + 1) % len(pen.vertices)
         value = pen.vertices[index][axis]
         delta = value - pen.vertices[previous][axis]
         # The native normal/pen-edge intersection rounds its midpoint and
