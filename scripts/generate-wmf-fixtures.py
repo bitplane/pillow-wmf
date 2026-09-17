@@ -1098,6 +1098,8 @@ def region_paint_cases():
         ("small-mirror", (-64, 64), (1, 1), (Scan(3, 63, (5, 67)),), 20),
         ("fraction-state", (43, 77), (19, 23), (Scan(3, 63, (5, 67)),), 63),
         ("fraction-hole", (43, 77), (-5, -7), ring, 138),
+        ("fraction-hole-edge", (43, 77), (5, 7), ring, 132),
+        ("fraction-hole-filled", (43, 77), (100, 100), ring, 139),
         ("fraction-islands-small", (43, 77), (2, 3), islands, 271),
         ("fraction-islands", (43, 77), (5, 7), islands, 272),
         ("fraction-islands-large", (43, 77), (19, 23), islands, 273),
