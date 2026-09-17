@@ -99,7 +99,7 @@ class RegionMask:
                         rectangles.append((cursor, y0, right, y1))
         return RegionMask.from_rectangles(rectangles)
 
-    def frame(self, width, height):
+    def frame(self, width, height, *, point=None):
         """Inner rectangular border: subtract the rectangular erosion.
 
         Dilating the complement includes holes and concave corners, without
@@ -114,12 +114,32 @@ class RegionMask:
         left = min(e[0] for _, _, e in self.bands)
         right = max(e[-1] for _, _, e in self.bands)
         top, bottom = self.bands[0][0], self.bands[-1][1]
-        outside = RegionMask.from_rectangles(((left - x1, top - y1, right + x1, bottom + y1),))
+        outside = RegionMask.from_rectangles(((left - 1, top - 1, right + 1, bottom + 1),))
         complement = outside.difference(self)
-        expanded = RegionMask.from_rectangles(
-            (left - x0, top - y0, right + x1, bottom + y1) for left, top, right, bottom in complement.rectangles()
-        )
-        return self.difference(self.difference(expanded))
+        rectangles = []
+        for left, top, right, bottom in complement.rectangles():
+            if point is not None:
+                left, top = point(left, top)
+                right, bottom = point(right, bottom)
+                left, right = sorted((left, right))
+                top, bottom = sorted((top, bottom))
+            # Widen even collapsed gaps: native framing transforms the source
+            # boundary path, retaining seams that disappear from a device union.
+            # A collapsed area is a retraced segment with flat ends, not an
+            # area to dilate beyond those ends. A collapsed point has no edge.
+            if left == right and top == bottom:
+                continue
+            rectangles.append(
+                (
+                    left - (x0 if top != bottom else 0),
+                    top - (y0 if left != right else 0),
+                    right + (x1 if top != bottom else 0),
+                    bottom + (y1 if left != right else 0),
+                )
+            )
+        expanded = RegionMask.from_rectangles(rectangles)
+        region = self.transformed(point) if point is not None else self
+        return region.difference(region.difference(expanded))
 
 
 @dataclass(frozen=True)

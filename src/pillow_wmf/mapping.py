@@ -51,6 +51,15 @@ class Mapping:
             rounded(y * self.viewport_extent[1] / self.window_extent[1]),
         )
 
+    def region_point(self, x: int, y: int) -> tuple[int, int]:
+        """Region/path rectangle edges pass through 28.4 before pixel rounding."""
+        return tuple(
+            (rounded((origin + (value - window_origin) * viewport / window) * 16) + 8) // 16
+            for value, origin, window_origin, viewport, window in zip(
+                (x, y), self.viewport_origin, self.window_origin, self.viewport_extent, self.window_extent, strict=True
+            )
+        )
+
     def clip_displacement(self, x: int, y: int) -> tuple[int, int]:
         """OffsetClipRgn rounds transformed distances symmetrically at ties."""
         result = []

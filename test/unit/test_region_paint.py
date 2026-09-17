@@ -7,6 +7,7 @@ import pytest
 
 from pillow_wmf import RasterContext
 from pillow_wmf.clip import RegionMask
+from pillow_wmf.mapping import Mapping
 from pillow_wmf.stroke import frame_footprint
 from pillow_wmf.wmf.objects import Region, Scan
 
@@ -109,6 +110,28 @@ def test_native_frame_footprint_quantization(width, height, sx, sy, expected):
 
 def test_collapsed_geometric_frame_terminates():
     assert frame_footprint(1, 2, 1 / 32767, 1 / 32767) == (0, 0)
+
+
+def test_region_edges_round_through_fixed_point():
+    mapping = Mapping(window_origin=(1, -3), viewport_origin=(7, 9), viewport_extent=(43, 77))
+    assert mapping.point(17, 51) == (12, 41)
+    assert mapping.region_point(17, 51) == (12, 42)
+
+
+def test_collapsed_gap_retains_seam_without_extending_its_ends():
+    region = RegionMask.from_rectangles(((0, 0, 4, 10), (5, 0, 12, 10), (0, 10, 12, 14)))
+
+    def point(x, y):
+        return x // 2, y
+
+    frame = region.frame(1, 2, point=point)
+    assert frame.contains(2, 5)
+    assert not frame.contains(2, 10)
+    assert not region.transformed(point).frame(1, 2).contains(2, 5)
+
+
+def test_mirrored_small_frame_uses_realized_contour_orientation():
+    assert frame_footprint(1, 1, -0.5, 0.5) == (0.5, 0.5)
 
 
 @pytest.mark.parametrize("mode,color", ((1, (0, 0, 0)), (6, (238, 192, 126)), (16, (255, 255, 255))))
