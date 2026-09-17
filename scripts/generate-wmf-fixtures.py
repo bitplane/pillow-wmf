@@ -1092,6 +1092,17 @@ def styled_pen_cases():
 
 
 def region_paint_cases():
+    for extent in (96, -96, 43):
+        r = mapped()
+        brush = r.create_brush(0, 0x00663399, 0)
+        r.set_viewport_extent(extent, 128)
+        r.set_viewport_origin(112 if extent < 0 else 7, 0)
+        for width in range(1, 21):
+            top = (width - 1) * 6 + 1
+            region = r.create_region(Region((5, top, 125, top + 5), (Scan(top, top + 5, (5, 125)),)))
+            r.frame_region(region, brush, width, 1)
+            r.delete_object(region)
+        yield f"region-frame-width-atlas-{extent}", r
     for origin, size in product(range(4), ((1, 1), (5, 7), (19, 23))):
         r = mapped()
         brush = r.create_brush(0, 0x00663399, 0)
