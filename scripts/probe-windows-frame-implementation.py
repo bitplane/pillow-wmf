@@ -40,8 +40,8 @@ def inspect(path):
     for name, rva in entries:
         print(name, hex(rva), data[offset(rva) : offset(rva) + 2048].hex(), flush=True)
     if path.name == "win32kfull.sys":
-        for rva in (0x1D43D4, 0x191530):
-            print("helper", hex(rva), data[offset(rva) : offset(rva) + 2048].hex(), flush=True)
+        for rva in (0xAA8C,):
+            print("helper", hex(rva), data[offset(rva) : offset(rva) + 4096].hex(), flush=True)
 
 
 for filename in ("gdi32full.dll", "win32kfull.sys", "win32kbase.sys"):
