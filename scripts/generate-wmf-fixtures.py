@@ -1443,6 +1443,30 @@ def dib_brush_cases():
         r.select_object(r.create_dib_pattern_brush(style, 0, encode_dib24(bitmap(3, 2))))
         r.pat_blt(0, 0, 128, 128, 0xF00021)
         yield f"dib-brush-style-{style}", r
+    # Legacy BS_PATTERN realizes a device-dependent bitmap, unlike the other
+    # styles. White/near-white and coloured bands distinguish mono conversion
+    # from luminance thresholding; a previous brush reveals creation failure.
+    colors = (
+        (0, 0, 0),
+        (255, 255, 255),
+        (254, 254, 254),
+        (128, 128, 128),
+        (255, 0, 0),
+        (0, 255, 0),
+        (0, 0, 255),
+        (255, 255, 0),
+        (255, 0, 255),
+        (0, 255, 255),
+    )
+    legacy = RGBBitmap(10, 2, bytes(c for row in (colors, colors[::-1]) for pixel in row for c in pixel))
+    for top_down, usage, background in product((False, True), (0, 1), (0xFFFFFF, 0x3377CC)):
+        r = mapped()
+        r.select_object(r.create_brush(0, 0x66BB22, 0))
+        r.set_background_color(background)
+        brush = r.create_dib_pattern_brush(3, usage, encode_dib24(legacy, top_down=top_down))
+        r.select_object(brush)
+        r.pat_blt(0, 0, 128, 128, 0xF00021)
+        yield f"dib-brush-legacy-{int(top_down)}-{usage}-{background:x}", r
 
 
 def main():
