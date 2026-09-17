@@ -1092,6 +1092,20 @@ def styled_pen_cases():
 
 
 def region_paint_cases():
+    for mode in (1, 6, 16):
+        r = mapped()
+        r.select_object(r.create_pen(5, 0, 0))
+        r.select_object(r.create_brush(0, 0x00554433, 0))
+        r.rectangle(0, 0, 128, 128)
+        r.select_object(r.create_brush(2, 0x00CC7733, 5))
+        r.set_background_mode(1)
+        r.set_rop2(mode)
+        r.rectangle(8, 8, 55, 55)
+        r.ellipse(67, 8, 120, 55)
+        r.polygon(((67, 67), (120, 67), (120, 120), (67, 120)))
+        region = r.create_region(Region((8, 67, 55, 120), (Scan(67, 120, (8, 55)),)))
+        r.paint_region(region)
+        yield f"brush-independent-rop-{mode}", r
     for operation, extent in product(
         ("fill_region", "paint_region", "invert_region", "frame_region"),
         ((64, 64), (-64, 64), (64, -64)),

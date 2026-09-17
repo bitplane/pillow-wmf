@@ -86,3 +86,19 @@ def test_frame_storage_depends_on_region_edges_not_surface_area():
     assert len(frame.bands) == 3
     assert frame.contains(-1000000, 0)
     assert not frame.contains(0, 0)
+
+
+@pytest.mark.parametrize("mode,color", ((1, (0, 0, 0)), (6, (238, 192, 126)), (16, (255, 255, 255))))
+@pytest.mark.parametrize("operation", ("rectangle", "paint_region"))
+def test_brush_independent_rops_do_not_leave_transparent_hatch_gaps(mode, color, operation):
+    context = RasterContext(8, 8)
+    context.image.paste((17, 63, 129), (0, 0, 8, 8))
+    context.select_object(context.create_pen(5, 0, 0))
+    context.select_object(context.create_brush(2, 0x00123456, 4))
+    context.set_background_mode(1)
+    context.set_rop2(mode)
+    if operation == "rectangle":
+        context.rectangle(0, 0, 8, 8)
+    else:
+        context.paint_region(context.create_region(Region((0, 0, 8, 8), (Scan(0, 8, (0, 8)),))))
+    assert {context.image.getpixel((x, y)) for x, y in product(range(1, 7), repeat=2)} == {color}
