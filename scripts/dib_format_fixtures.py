@@ -164,6 +164,37 @@ def conversion_cases():
 
 
 def fixup_holdouts():
+    r = Recorder()
+    palettes = (
+        ((0, 0, 0), (255, 255, 255)),
+        ((255, 255, 255), (0, 0, 0)),
+        ((1, 1, 1), (254, 254, 254)),
+        ((19, 59, 97), (90, 96, 210)),
+    )
+    for i, (colors, dc, operation, scale) in enumerate(
+        product(
+            palettes,
+            ((0, 0xFFFFFF), (0xFFFFFF, 0), (0x371953, 0xB7D3E1)),
+            ("dib_bit_blt", "dib_stretch_blt", "stretch_dib"),
+            (1, 2),
+        )
+    ):
+        r.save_dc()
+        r.set_window_extent(1, 1)
+        r.set_viewport_extent(scale, scale)
+        r.set_viewport_origin(i % 8 * 15, i // 8 * 13)
+        r.set_text_color(dc[0])
+        r.set_background_color(dc[1])
+        r.set_stretch_mode(4)
+        source = encode_dib(3, 3, (0, 1, 0, 1, 0, 1, 0, 1, 0), depth=1, colors=colors)
+        if operation == "dib_bit_blt":
+            r.dib_bit_blt(0, 0, 3, 3, 0, 0, 0xCC0020, source)
+        else:
+            args = {"source": source} | ({"color_usage": 0} if operation == "stretch_dib" else {})
+            getattr(r, operation)(0, 0, 3, 3, 0, 0, 3, 3, 0xCC0020, **args)
+        r.restore_dc(-1)
+    yield "dib-format-mono-copy-dispatch", r
+
     # Exhaust every binary 3x3 neighbourhood, including image boundaries.
     for reverse in (False, True):
         colors = ((0, 0, 0), (255, 255, 255))[:: -1 if reverse else 1]
