@@ -114,6 +114,13 @@ decision until the last pixel: some primitives may consume integer device points
 Wine's DIB line path does precisely that before stroking. Its rectangle and ellipse
 paths have their own realization rules. [Wine DIB drawing][wine-drawing].
 
+The later [PatBlt native matrix](gdi-patblt.md) established a shared driver-point
+boundary for the implemented raster backend. Quantize affine translation and
+scaled coordinates separately to signed 28.4 (nearest, ties away from zero),
+then round their sum to pixels with `(fixed + 8) // 16`. This is implemented by
+`Mapping.device_point`; it is distinct from `Mapping.point`'s LPtoDP-style
+integer calculation and from pen-size or clip-displacement realization.
+
 GDI's driver path interface can carry 28.4 fixed-point coordinates. That is
 evidence that subpixel precision exists, not proof that every WMF primitive goes
 through a single 1/16-pixel engine. [PATHOBJ][pathobj]. The existing 1:1 ellipse
@@ -174,13 +181,13 @@ the placeable prefix before passing standard WMF bytes to GDI.
 
 | Consumer | Design boundary |
 | --- | --- |
-| Lines, polygons, primitive bounds | Map logical geometry; retain direction and primitive-specific endpoint/edge rules. Do not discard a reflected rectangle because its mapped corners reverse order. |
+| Lines, polygons, primitive bounds | Use the shared driver-point conversion; retain direction and primitive-specific endpoint/edge rules. Do not discard a reflected rectangle because its mapped corners reverse order. |
 | Current position | Keep logical state; test `MoveTo`, mapping change, then `LineTo`, including save/restore. |
 | Pens | Preserve logical width and style. Width zero is a device-pixel hairline; nonzero width scales as an X scalar. Re-realize after relevant mapping changes. |
 | Fonts and text advances | Separate font realization from position/advance mapping; zero font width is not an ordinary zero-length vector. |
-| Clip rectangles | Convert logical bounds through 28.4 and then round to pixels when modifying the clip, not again at every draw. |
+| Clip rectangles | Use the shared driver-point conversion when modifying the clip, not again at every draw. |
 | Selected regions | Region coordinates are device units; selecting a region copies it. Do not apply ordinary point mapping again. |
-| Painted regions | Map stored coordinates as logical units using ordinary point rounding. Frame realization additionally preserves source topology and realizes a geometric pen footprint; see [regions](gdi-regions.md). |
+| Painted regions | Map stored coordinates as logical units through the driver-point conversion. Frame realization additionally preserves source topology and realizes a geometric pen footprint; see [regions](gdi-regions.md). |
 | Clip offsets | Transform a logical displacement, without origin translation. |
 | Bitmap transfers | Keep source bitmap coordinates separate from destination logical coordinates; preserve signed dimensions for mirroring. |
 | Pattern origin / layout | Device alignment and reflection are separate policies, not a post-render image flip. |

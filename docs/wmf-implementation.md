@@ -17,7 +17,7 @@ device metrics, rounding boundaries, and the next native compatibility probes.
 | Objects | Pen/brush record fields, font, palette, region/scan structures | Native object realization and selected/saved-object quirks |
 | Bitmap payloads | Explicit `BitmapData` values; Bitmap16/DIB/legacy-pattern distinction | Header/pixel decoding, compression, palette resolution, validation of nested bitmap contents |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes, ROP2, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Pattern brushes/PatBlt, bitmap transfers, palette behavior and text; remaining pen/state behavior |
+| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes, ROP2/ROP3, PatBlt, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Bitmap pattern brushes, bitmap transfers, palette behavior and text; remaining pen/state behavior |
 | Playback | File-slot mapping, lowest-free allocation, references, unsupported-operation diagnostics | Native behavioral validation and device-state emulation |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
@@ -28,7 +28,8 @@ unsupported operations explicitly. See the individual GDI design notes for
 measured coverage and limits, including [Arc](gdi-arcs.md), [Chord](gdi-chords.md)
 and [Pie](gdi-pies.md), plus [RoundRect](gdi-roundrects.md) and
 [inside-frame pens](gdi-insideframe.md). [Region creation, clipping, painting
-and framing](gdi-regions.md) and [flood fills](gdi-flood-fills.md) are implemented.
+and framing](gdi-regions.md), [flood fills](gdi-flood-fills.md) and
+[PatBlt/ROP3](gdi-patblt.md) are implemented.
 
 The structural reader parses fields without realizing graphics objects. A valid
 envelope containing `BitmapData` is not certification that the bitmap itself is

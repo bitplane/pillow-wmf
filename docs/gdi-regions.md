@@ -93,9 +93,11 @@ subtraction and dilation operate on bands, not bitmap-sized masks.
 Native probes and inspection of the reference runner's frame/widening entry
 points establish the following device footprint realization:
 
-1. Map the stored region's edges with ordinary point rounding, retaining its
-   source boundary topology. Do not confuse this with rectangular clip
-   operations, whose edges pass through 28.4 before pixel rounding.
+1. Map the stored region's edges with the shared driver-point conversion,
+   retaining source boundary topology. Later [PatBlt probes](gdi-patblt.md)
+   refined that conversion: quantize the translation and scaled coordinate
+   separately to signed 28.4 before rounding to pixels. The existing native
+   region matrices also pass with this shared conversion.
 2. Take absolute logical dimensions. Use twice the larger dimension as a
    common geometric-pen width and normalize the shorter axis of its transform.
    The normalization and transform multiplication use IEEE single precision.
