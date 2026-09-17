@@ -46,7 +46,8 @@ class GDI:
     def is_null_object(self, handle: Handle) -> bool:
         """Whether a creation produced a native null object rather than a resource.
 
-        Logical handles still identify failed creations for subsequent calls.
+        Logical handles still represent failed creations for subsequent calls;
+        emulating backends may share a typed null handle across failures.
         WMF playback uses this result to preserve native file-slot allocation.
         Non-emulating backends may retain the default successful-creation model.
         """

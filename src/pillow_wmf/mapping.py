@@ -1,6 +1,7 @@
 """Logical-to-device coordinate state for the Windows reference bitmap profile."""
 
 from dataclasses import dataclass
+from fractions import Fraction
 from math import floor
 
 
@@ -46,6 +47,15 @@ class Mapping:
     @property
     def rtl(self):
         return bool(self.layout & 1)
+
+    @property
+    def linear_scale(self):
+        """Signed linear transform for pen support and logical directions.
+
+        Point mapping separately preserves native product/translation rounding.
+        """
+        x, y = (Fraction(v, w) for v, w in zip(self.viewport_extent, self.window_extent, strict=True))
+        return (-x if self.rtl else x), y
 
     def set_layout(self, layout):
         self.layout = layout

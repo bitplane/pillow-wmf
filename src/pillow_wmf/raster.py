@@ -407,7 +407,8 @@ class RasterContext(TraceContext):
             else:
                 self._brush = obj
         elif name == "delete_object":
-            del self._objects[a["handle"]]
+            if not self.is_null_object(a["handle"]):
+                del self._objects[a["handle"]]
         elif name == "move_to":
             self._position = a["x"], a["y"]
         elif name == "line_to":
@@ -490,10 +491,7 @@ class RasterContext(TraceContext):
                         *frame_footprint(
                             a["width"],
                             a["height"],
-                            *(
-                                v / w
-                                for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent, strict=True)
-                            ),
+                            *self.mapping.linear_scale,
                         ),
                         point=self._point,
                     )
@@ -569,12 +567,7 @@ class RasterContext(TraceContext):
                         clockwise=self.mapping.rtl,
                     )
                 else:
-                    sx, sy = (
-                        1 if v * w >= 0 else -1
-                        for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent)
-                    )
-                    if self.mapping.rtl:
-                        sx = -sx
+                    sx, sy = (1 if value >= 0 else -1 for value in self.mapping.linear_scale)
                     start = sx * a["start_x"], sy * a["start_y"]
                     end = sx * a["end_x"], sy * a["end_y"]
                     x0, x1 = sorted((sx * (a["left"] - shift), sx * (a["right"] - shift)))
@@ -605,6 +598,13 @@ class RasterContext(TraceContext):
                     if rectangle and brush.style == 2 and self._rop2 in (1, 6, 11, 16):
                         brush = replace(brush, style=0)
                     self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
+        if isinstance(result, Handle) and self.is_null_object(result):
+            # A failed creation is a typed null value, not an allocated GDI
+            # object. Intern it so WMF slot reuse cannot leak backend handles.
+            del self._live[result.serial]
+            del self._objects[result]
+            result = Handle(0, result.kind, self)
+            self._objects[result] = None
         return result
 
     def _prepare_legacy_transfer(self, name, a) -> SourceTransfer | TransferAction:
@@ -775,7 +775,7 @@ class RasterContext(TraceContext):
                 if not in_source and pad_bounds is None:
                     continue
                 source = source if in_source else (0, 0, 0)
-                pattern = self._brush_color_at(x, y, opaque=True) if needs_pattern else (0, 0, 0)
+                pattern = self._brush_color_at(x, y, self._brush, opaque=True) if needs_pattern else (0, 0, 0)
                 if pattern is not None:
                     self.image.putpixel((x, y), rop3(operation, pattern, source, self.image.getpixel((x, y))))
 
@@ -792,7 +792,9 @@ class RasterContext(TraceContext):
             for px in range(max(0, left), min(self.image.width, right)):
                 # Pattern-independent functions do not need a brush, including
                 # a null brush or transparent hatch gaps.
-                paint = (0, 0, 0) if operation in (1, 6, 11, 16) else self._brush_color_at(px, py, opaque=True)
+                paint = (
+                    (0, 0, 0) if operation in (1, 6, 11, 16) else self._brush_color_at(px, py, self._brush, opaque=True)
+                )
                 if paint is not None:
                     self._pixel(px, py, paint, operation=operation)
 
@@ -809,7 +811,7 @@ class RasterContext(TraceContext):
         spans = flood_spans(self.image.width, self.image.height, seed, eligible)
         for y, left, right in spans:
             for x in range(left, right):
-                paint = self._brush_color_at(x, y)
+                paint = self._brush_color_at(x, y, self._brush)
                 if paint is not None:
                     self._pixel(x, y, paint)
 
@@ -839,11 +841,7 @@ class RasterContext(TraceContext):
             self._pixel(x, y, self._pen.color)
 
     def _realized_pen(self):
-        return realize_pen(
-            self._pen.width,
-            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]) * (-1 if self.mapping.rtl else 1),
-            Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
-        )
+        return realize_pen(self._pen.width, *self.mapping.linear_scale)
 
     def _cosmetic_fragments(self, paths):
         if self._pen.style == 5:
@@ -921,6 +919,7 @@ class RasterContext(TraceContext):
                     yield x, y
 
     def _paint_polygons(self, paths: tuple[DevicePath, ...], *, miter=False, reserve_outline=False, brush=None) -> None:
+        brush = self._brush if brush is None else brush
         paths = tuple(path for path in paths if path.segments)
         contours = tuple(path.vertices for path in paths)
         # Native copy-mode combined fill/stroke consumes the flattened contour.
@@ -949,9 +948,10 @@ class RasterContext(TraceContext):
             self._pixel(x, y, self._pen.color)
 
     def _brush_color_at(
-        self, x: int, y: int, brush: Brush | None = None, *, opaque: bool = False
+        self, x: int, y: int, brush: Brush | None, *, opaque: bool = False
     ) -> tuple[int, int, int] | None:
-        brush = self._brush if brush is None else brush
+        if brush is None:
+            return None
         if brush.style == 0:
             return self._palette.colorref(brush.color)
         if brush.style == 1 or not brush.realizable:

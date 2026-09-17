@@ -160,6 +160,11 @@ modern playback's bitmap-selection/transfer quirk, native pattern layout, and
 mapped/overlapping self-copy geometry. That profile is not a claim of historical
 display-driver compatibility.
 
+[Object-state holdouts](gdi-object-lifetime.md) add 22 native references for
+failed explicit brushes, selected/saved deletion and signed FrameRegion support.
+Null raster results do not consume live-object allocations; explicit failed
+brushes never fall back to the selected brush.
+
 The unit suite checks all record classes and both blit layouts, independently
 specified wire bytes, truncation/count/limit failures, sequence snapshots, handle
 reuse, save references, unsupported operations, and mixed command round trips.

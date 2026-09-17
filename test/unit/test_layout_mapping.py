@@ -1,10 +1,25 @@
 """Native-observed RTL state and coordinate-space contracts."""
 
+from fractions import Fraction
+
 import pytest
 
 from pillow_wmf import RasterContext, UnsupportedOperation
 from pillow_wmf.ellipse import arc_cubics, ellipse_cubics
 from pillow_wmf.mapping import Mapping
+from pillow_wmf.stroke import frame_footprint
+
+
+@pytest.mark.parametrize(
+    "layout,extent,expected", ((0, 48, 4), (1, 48, Fraction(7, 2)), (0, -48, Fraction(7, 2)), (1, -48, 4))
+)
+def test_pen_and_frame_consumers_share_layout_signed_scale(layout, extent, expected):
+    mapping = Mapping(window_extent=(64, 64), viewport_extent=(extent, 72))
+    mapping.set_layout(layout)
+    sx, sy = mapping.linear_scale
+    assert sx == Fraction(extent * (-1 if layout else 1), 64)
+    assert sy == Fraction(9, 8)
+    assert frame_footprint(5, 1, sx, sy)[0] == expected
 
 
 @pytest.mark.parametrize(

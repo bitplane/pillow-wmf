@@ -42,6 +42,9 @@ Different consumers retain different coordinate contracts:
   These are native API preparation rules, not alternative rasterizers.
 - Pen realization includes the signed layout transform. This matters for the
   fixed-point support contour of nonuniformly scaled wide pens.
+  FrameRegion and ordinary pens share `Mapping.linear_scale`; the
+  [state-review holdouts](gdi-object-lifetime.md) verify reflected fractional
+  frame footprints, including negative viewport extents.
 
 ## Clockwise curves
 
