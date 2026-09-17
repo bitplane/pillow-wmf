@@ -136,7 +136,8 @@ class BitmapData:
     """An encoded Bitmap16 or DIB, not decoded or certified as renderable.
 
     Keeping this explicit prevents opaque preservation from being mistaken for
-    bitmap codec support. Pixel/header interpretation is a later work package.
+    bitmap codec support. The separate bitmap module decodes a bounded subset;
+    constructing this envelope alone does not validate its header or pixels.
     """
 
     format: str

@@ -15,9 +15,9 @@ device metrics, rounding boundaries, and the next native compatibility probes.
 | Variable records | 19 record classes, including all six bitmap transfer envelopes | Native probes for ambiguous layouts |
 | Text | Raw strings, word padding, optional rectangle and raw advances | Charset/glyph interpretation, layout and drawing |
 | Objects | Pen/brush record fields, font, palette, region/scan structures | Native object realization and selected/saved-object quirks |
-| Bitmap payloads | Explicit `BitmapData` values; Bitmap16/DIB/legacy-pattern distinction | Header/pixel decoding, compression, palette resolution, validation of nested bitmap contents |
+| Bitmap payloads | Explicit `BitmapData` values; Bitmap16/DIB/legacy-pattern distinction; bounded 24-bit BI_RGB BITMAPINFOHEADER decoder and writer | Other headers/depths, compression, palette resolution, legacy Bitmap16 decoding |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes, ROP2/ROP3, PatBlt, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Bitmap pattern brushes, bitmap transfers, palette behavior and text; remaining pen/state behavior |
+| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including 24-bit DIB patterns, text-colour state, ROP2/ROP3, PatBlt, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Other bitmap pattern formats, bitmap transfers, palette behavior and text drawing; remaining pen/state behavior |
 | Playback | File-slot mapping, lowest-free allocation, references, unsupported-operation diagnostics | Native behavioral validation and device-state emulation |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
@@ -29,7 +29,8 @@ measured coverage and limits, including [Arc](gdi-arcs.md), [Chord](gdi-chords.m
 and [Pie](gdi-pies.md), plus [RoundRect](gdi-roundrects.md) and
 [inside-frame pens](gdi-insideframe.md). [Region creation, clipping, painting
 and framing](gdi-regions.md), [flood fills](gdi-flood-fills.md) and
-[PatBlt/ROP3](gdi-patblt.md) are implemented.
+[PatBlt/ROP3](gdi-patblt.md) are implemented. The first
+[DIB/pattern-brush slice](gdi-dib-brushes.md) adds 24-bit pixels without source blits.
 
 The structural reader parses fields without realizing graphics objects. A valid
 envelope containing `BitmapData` is not certification that the bitmap itself is

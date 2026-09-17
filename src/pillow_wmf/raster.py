@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from math import ceil
+from struct import unpack_from
 
 from PIL import Image
 
+from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, decode_dib
 from .clip import ClipRegion, RegionMask
 from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
@@ -43,6 +45,8 @@ class Brush:
     color: tuple[int, int, int]
     style: int = 0
     hatch: int = 0
+    pattern: RGBBitmap | None = None
+    monochrome: bool = False
 
 
 class RasterContext(TraceContext):
@@ -52,10 +56,15 @@ class RasterContext(TraceContext):
     approximate image. Playback with ``strict=True`` exposes that boundary.
     """
 
-    def __init__(self, width: int, height: int, *, background=(255, 255, 255)):
+    def __init__(
+        self, width: int, height: int, *, background=(255, 255, 255), max_bitmap_pixels: int = DEFAULT_MAX_BITMAP_PIXELS
+    ):
         super().__init__()
         if width <= 0 or height <= 0:
             raise ValueError("Image dimensions must be positive")
+        if max_bitmap_pixels < 0:
+            raise ValueError("Bitmap pixel limit must be nonnegative")
+        self.max_bitmap_pixels = max_bitmap_pixels
         self.image = Image.new("RGB", (width, height), background)
         self._objects: dict[Handle, Pen | Brush | RegionMask | None] = {}
         self._pen = Pen((0, 0, 0), width=0)
@@ -65,10 +74,22 @@ class RasterContext(TraceContext):
         self._rop2 = 13
         self._background_mode = 2
         self._background_color = (255, 255, 255)
+        self._text_color = (0, 0, 0)
         self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height))
         self._clip = ClipRegion()
         self._saved: list[
-            tuple[Mapping, Pen, Brush, tuple[int, int], ClipRegion, int, int, int, tuple[int, int, int]]
+            tuple[
+                Mapping,
+                Pen,
+                Brush,
+                tuple[int, int],
+                ClipRegion,
+                int,
+                int,
+                int,
+                tuple[int, int, int],
+                tuple[int, int, int],
+            ]
         ] = []
 
     def _point(self, x: int, y: int) -> tuple[int, int]:
@@ -109,6 +130,17 @@ class RasterContext(TraceContext):
         elif name == "create_brush":
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
+        elif name == "create_dib_pattern_brush":
+            pattern = decode_dib(
+                a["bitmap"],
+                color_usage=0 if a["style"] == 3 else a["color_usage"],
+                max_pixels=self.max_bitmap_pixels,
+            )
+            if a["style"] == 3:
+                # The legacy record path realizes a monochrome DDB in a
+                # compatible memory DC. Its bitmap creation rejects top-down
+                # dimensions; failed selection preserves the previous brush.
+                pattern = None if unpack_from("<i", a["bitmap"].data, 8)[0] < 0 else pattern.monochrome()
         elif name == "select_object":
             if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
@@ -152,6 +184,7 @@ class RasterContext(TraceContext):
             "set_polygon_fill_mode",
             "set_rop2",
             "set_background_color",
+            "set_text_color",
             "rectangle",
             "ellipse",
             "arc",
@@ -183,6 +216,8 @@ class RasterContext(TraceContext):
             self._background_mode = a["mode"]
         elif name == "set_background_color":
             self._background_color = rgb(a["color"])
+        elif name == "set_text_color":
+            self._text_color = rgb(a["color"])
         elif name == "set_window_origin":
             self.mapping.window_origin = a["x"], a["y"]
         elif name == "set_viewport_origin":
@@ -209,6 +244,10 @@ class RasterContext(TraceContext):
             self._objects[result] = Pen(rgb(a["color"]), a["width"], a["style"])
         elif name == "create_brush":
             self._objects[result] = Brush(rgb(a["color"]), a["style"], a["hatch"])
+        elif name == "create_dib_pattern_brush":
+            self._objects[result] = (
+                Brush((0, 0, 0), style=3, pattern=pattern, monochrome=a["style"] == 3) if pattern is not None else None
+            )
         elif name == "create_region":
             self._objects[result] = region_mask
         elif name == "select_clip_region":
@@ -254,6 +293,7 @@ class RasterContext(TraceContext):
                     self._rop2,
                     self._background_mode,
                     self._background_color,
+                    self._text_color,
                 )
             )
         elif name == "restore_dc":
@@ -267,6 +307,7 @@ class RasterContext(TraceContext):
                 self._rop2,
                 self._background_mode,
                 self._background_color,
+                self._text_color,
             ) = snapshot
             del self._saved[target - 1 :]
         elif name in ("intersect_clip_rect", "exclude_clip_rect"):
@@ -568,6 +609,11 @@ class RasterContext(TraceContext):
             return brush.color
         if brush.style == 1:
             return None
+        if brush.pattern is not None:
+            color = brush.pattern.pixel(x % brush.pattern.width, y % brush.pattern.height)
+            if brush.monochrome:
+                return self._background_color if color == (255, 255, 255) else self._text_color
+            return color
         # The six GDI hatches tile in device space. These phase offsets are
         # shared by all shapes, mapping modes and brush selections.
         horizontal = y % 8 == 3
