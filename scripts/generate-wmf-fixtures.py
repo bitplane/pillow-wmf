@@ -10,6 +10,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf
 
 
 def cases():
+    yield from region_paint_cases()
     blank = Recorder()
     blank.set_map_mode(8)
     blank.set_window_extent(128, 128)
@@ -1088,6 +1089,49 @@ def styled_pen_cases():
         y = 12 + (style - 1) * 27
         recorder.polyline(((-80, y), (-32, y), (96, y)))
     yield "pen-styles-offscreen-connected", recorder
+
+
+def region_paint_cases():
+    # A ring with a narrow arm and disconnected islands: internal scan-band
+    # boundaries must not become frame edges.
+    shape = Region(
+        (8, 8, 112, 112),
+        (Scan(8, 24, (8, 88)), Scan(24, 64, (8, 24, 64, 88)), Scan(64, 80, (8, 88)), Scan(80, 104, (40, 46, 96, 112))),
+    )
+    for operation, state in product(
+        ("fill_region", "paint_region", "invert_region", "frame_region"),
+        ("solid", "hatch", "transparent", "null", "mapped", "reflected", "xor", "clip"),
+    ):
+        r = mapped()
+        r.select_object(r.create_pen(5, 0, 0))
+        r.select_object(r.create_brush(0, 0x00554433, 0))
+        r.rectangle(0, 0, 128, 128)
+        brush = r.create_brush(1 if state == "null" else 2 if state in ("hatch", "transparent") else 0, 0x00CC7733, 5)
+        r.select_object(brush)
+        handle = r.create_region(shape)
+        r.set_background_color(0x002299EE)
+        r.set_background_mode(1 if state == "transparent" else 2)
+        if state in ("mapped", "reflected"):
+            r.set_window_origin(3, 5)
+            r.set_viewport_extent(-96 if state == "reflected" else 96, 144)
+            r.set_viewport_origin(112 if state == "reflected" else 7, -3)
+        if state == "xor":
+            r.set_rop2(7)
+        if state == "clip":
+            r.exclude_clip_rect(15, 13, 70, 73)
+        if operation in ("fill_region", "frame_region"):
+            r.select_object(r.create_brush(0, 0x0011EE22, 0))
+            getattr(r, operation)(handle, brush, *((5, 9) if operation == "frame_region" else ()))
+        else:
+            getattr(r, operation)(handle)
+        yield f"region-paint-{operation}-{state}", r
+
+    for width, height in ((0, 0), (0, 4), (4, 0), (-3, 4), (3, -4), (1, 1), (18, 27), (60, 60)):
+        r = mapped()
+        brush = r.create_brush(0, 0x00663399, 0)
+        handle = r.create_region(shape)
+        r.frame_region(handle, brush, width, height)
+        yield f"region-frame-size-{width}-{height}", r
 
 
 def main():
