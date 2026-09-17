@@ -4,7 +4,7 @@ import pytest
 
 from pillow_wmf import FormatError, RasterContext, UnsupportedOperation
 from pillow_wmf.bitmap import RGBBitmap, encode_dib24, read_dib24
-from pillow_wmf.blit import BlitAxis
+from pillow_wmf.blit import BlitAxis, StretchAxis
 from pillow_wmf.wmf.objects import BitmapData
 
 
@@ -148,12 +148,74 @@ def test_wmf_device_transfer_rejects_short_packed_image_even_with_complete_band(
     assert set(context.image.get_flattened_data()) == {(255, 255, 255)}
 
 
-def test_scaled_dib_blt_is_explicitly_unsupported_before_commit():
+def test_halftone_is_explicitly_unsupported_before_commit():
     context = RasterContext(8, 8)
     context.set_window_extent(1, 1)
     context.set_viewport_extent(2, 2)
+    context.set_stretch_mode(4)
     before = list(context.calls)
-    with pytest.raises(UnsupportedOperation, match="Scaled"):
+    with pytest.raises(UnsupportedOperation, match="HALFTONE"):
         context.dib_bit_blt(0, 0, 1, 1, 0, 0, 0xCC0020, encode_dib24(RGBBitmap(1, 1, bytes(3))))
     assert context.calls == before
     assert set(context.image.get_flattened_data()) == {(255, 255, 255)}
+
+
+@pytest.mark.parametrize(
+    "source,destination,expected",
+    (
+        (2, 5, (0, 0, 1, 1, 1)),
+        (7, 5, (0, 2, 3, 4, 6)),
+        (11, 2, (2, 8)),
+        (9, 1, (4,)),
+    ),
+)
+def test_stretch_centre_phase(source, destination, expected):
+    axis = StretchAxis.create(0, destination, 0, source, source)
+    assert tuple(next(iter(axis.samples(x, 3))) for x in range(destination)) == expected
+
+
+def test_and_or_reduce_through_chosen_scan_not_an_area_box():
+    axis = StretchAxis.create(0, 2, 0, 9, 9)
+    assert tuple(axis.samples(0, 1)) == (0, 1, 2)
+    assert tuple(axis.samples(1, 2)) == (3, 4, 5, 6)
+    # Trailing scans 7 and 8 are not part of either destination sample.
+
+
+def test_mirror_follows_source_clipping_without_restarting_dda():
+    axis = StretchAxis.create(0, 13, 3, -7, 11)
+    assert [tuple(axis.samples(x, 3)) for x in range(13)] == [
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (3,),
+        (2,),
+        (2,),
+        (1,),
+        (1,),
+        (0,),
+        (0,),
+    ]
+
+
+def test_reduction_clips_work_to_bitmap_and_requires_selected_scan():
+    axis = StretchAxis.create(0, 1, -16000, 32001, 1)
+    assert tuple(axis.samples(0, 1)) == (0,)
+    axis = StretchAxis.create(0, 1, 0, 9, 4)
+    assert tuple(axis.samples(0, 1)) == ()
+
+
+def test_stretch_mode_is_saved_and_restored():
+    context = RasterContext(3, 1)
+    context.set_stretch_mode(3)
+    context.save_dc()
+    context.set_stretch_mode(1)
+    source = encode_dib24(RGBBitmap(3, 1, bytes((1, 2, 4, 8, 16, 32, 64, 128, 255))))
+    context.dib_stretch_blt(0, 0, 1, 1, 0, 0, 3, 1, 0xCC0020, source)
+    context.restore_dc(-1)
+    context.dib_stretch_blt(1, 0, 1, 1, 0, 0, 3, 1, 0xCC0020, source)
+    context.set_stretch_mode(2)
+    context.dib_stretch_blt(2, 0, 1, 1, 0, 0, 3, 1, 0xCC0020, source)
+    assert list(context.image.get_flattened_data()) == [(0, 0, 0), (8, 16, 32), (9, 18, 36)]

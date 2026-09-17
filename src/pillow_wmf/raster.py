@@ -10,7 +10,7 @@ from struct import unpack_from
 from PIL import Image
 
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, decode_dib, read_dib24
-from .blit import BlitAxis
+from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
 from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
@@ -73,6 +73,7 @@ class RasterContext(TraceContext):
         self._position = (0, 0)
         self._polygon_fill_mode = 1
         self._rop2 = 13
+        self._stretch_mode = 1
         self._background_mode = 2
         self._background_color = (255, 255, 255)
         self._text_color = (0, 0, 0)
@@ -90,6 +91,7 @@ class RasterContext(TraceContext):
                 int,
                 tuple[int, int, int],
                 tuple[int, int, int],
+                int,
             ]
         ] = []
 
@@ -119,6 +121,11 @@ class RasterContext(TraceContext):
         elif name == "set_rop2":
             if a["mode"] not in range(1, 17):
                 raise UnsupportedOperation(f"ROP2 mode {a['mode']}")
+        elif name == "set_stretch_mode":
+            if a["mode"] not in (1, 2, 3, 4):
+                raise UnsupportedOperation(f"Stretch mode {a['mode']}")
+        elif name in ("dib_bit_blt", "dib_stretch_blt", "stretch_dib"):
+            bitmap, horizontal, vertical, pad_bounds = self._prepare_transfer(name, a)
         elif name == "set_background_mode":
             if a["mode"] not in (1, 2):
                 raise UnsupportedOperation(f"Background mode {a['mode']}")
@@ -142,33 +149,6 @@ class RasterContext(TraceContext):
                 # compatible memory DC. Its bitmap creation rejects top-down
                 # dimensions; failed selection preserves the previous brush.
                 pattern = None if unpack_from("<i", a["bitmap"].data, 8)[0] < 0 else pattern.monochrome()
-        elif name == "dib_bit_blt":
-            bitmap = None
-            source_required = pattern_rop2(a["rop"]) is None
-            if a["source"] is not None and source_required:
-                layout = read_dib24(a["source"], max_pixels=self.max_bitmap_pixels)
-                bitmap = layout.decode()
-                x, y = self._point(a["x"], a["y"])
-                right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
-                mirrored = (right - x < 0) != (a["width"] < 0) or (bottom - y < 0) != (a["height"] < 0)
-                copy = (a["rop"] >> 16) & 255 == 0xCC
-                # WMF's ternary path retains bottom-origin source coordinates
-                # for top-down DIBs; the direct copy normalizes either layout.
-                sy = layout.height - a["src_y"] - a["height"] if layout.top_down and not copy else a["src_y"]
-                horizontal = BlitAxis.unscaled(
-                    x, right - x, a["src_x"], a["width"], bitmap.width, anchor_pixel=copy or mirrored
-                )
-                vertical = BlitAxis.unscaled(
-                    y, bottom - y, sy, a["height"], bitmap.height, anchor_pixel=copy or mirrored
-                )
-                # Model reflected ternary transfers as source realization into
-                # a zeroed intermediate surface, then combining the full target.
-                # Plain copies preserve source clipping instead.
-                pad_bounds = None
-                if mirrored and not copy:
-                    left = x if right >= x else right + 1
-                    top = y if bottom >= y else bottom + 1
-                    pad_bounds = (left, top, left + abs(right - x), top + abs(bottom - y))
         elif name == "set_dib_to_device":
             layout = read_dib24(a["source"], color_usage=a["color_usage"], max_pixels=self.max_bitmap_pixels)
             bitmap = None
@@ -258,6 +238,8 @@ class RasterContext(TraceContext):
             self._polygon_fill_mode = a["mode"]
         elif name == "set_rop2":
             self._rop2 = a["mode"]
+        elif name == "set_stretch_mode":
+            self._stretch_mode = a["mode"]
         elif name == "set_background_mode":
             self._background_mode = a["mode"]
         elif name == "set_background_color":
@@ -325,16 +307,16 @@ class RasterContext(TraceContext):
             self._pixel(*self._point(a["x"], a["y"]), rgb(a["color"]))
         elif name == "pat_blt":
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
-        elif name in ("dib_bit_blt", "set_dib_to_device"):
+        elif name in ("dib_bit_blt", "set_dib_to_device", "dib_stretch_blt", "stretch_dib"):
             if bitmap is not None:
                 self._source_blt(
                     bitmap,
                     horizontal,
                     vertical,
                     a.get("rop", 0xCC0020),
-                    pad_bounds=pad_bounds if name == "dib_bit_blt" else None,
+                    pad_bounds=pad_bounds if name != "set_dib_to_device" else None,
                 )
-            elif name == "dib_bit_blt":
+            elif name != "set_dib_to_device":
                 self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
         elif name in ("flood_fill", "ext_flood_fill"):
             self._flood_fill(self._point(a["x"], a["y"]), rgb(a["color"]), a.get("mode", 0))
@@ -351,6 +333,7 @@ class RasterContext(TraceContext):
                     self._background_mode,
                     self._background_color,
                     self._text_color,
+                    self._stretch_mode,
                 )
             )
         elif name == "restore_dc":
@@ -365,6 +348,7 @@ class RasterContext(TraceContext):
                 self._background_mode,
                 self._background_color,
                 self._text_color,
+                self._stretch_mode,
             ) = snapshot
             del self._saved[target - 1 :]
         elif name in ("intersect_clip_rect", "exclude_clip_rect"):
@@ -490,6 +474,40 @@ class RasterContext(TraceContext):
                     self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
         return result
 
+    def _prepare_transfer(self, name, a):
+        if a["source"] is None or pattern_rop2(a["rop"]) is not None:
+            return None, None, None, None
+        layout = read_dib24(a["source"], color_usage=a.get("color_usage", 0), max_pixels=self.max_bitmap_pixels)
+        x, y = self._point(a["x"], a["y"])
+        right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
+        sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
+        dw, dh = right - x, bottom - y
+        if not all((sw, sh, dw, dh)):
+            return None, None, None, None
+        scaled = abs(dw) != abs(sw) or abs(dh) != abs(sh)
+        if scaled and self._stretch_mode == 4:
+            raise UnsupportedOperation("HALFTONE sampling")
+        bitmap = layout.decode()
+        mirrored = (dw < 0) != (sw < 0) or (dh < 0) != (sh < 0)
+        copy = (a["rop"] >> 16) & 255 == 0xCC
+        sy = a["src_y"]
+        # STRETCHDIB exposes DIB-origin coordinates; DIB[STRETCH]BITBLT
+        # adapts the source to top-left. The native ternary path also retains
+        # the top-down storage distinction documented in gdi-dib-transfers.md.
+        if (name == "stretch_dib") != (layout.top_down and not copy):
+            sy = layout.height - sy - sh
+        if scaled:
+            horizontal = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
+            vertical = StretchAxis.create(y, dh, sy, sh, bitmap.height)
+        else:
+            horizontal = BlitAxis.unscaled(x, dw, a["src_x"], sw, bitmap.width, anchor_pixel=copy or mirrored)
+            vertical = BlitAxis.unscaled(y, dh, sy, sh, bitmap.height, anchor_pixel=copy or mirrored)
+        pad_bounds = None
+        if (scaled or mirrored) and not copy:
+            left, top = x + min(0, dw + 1), y + min(0, dh + 1)
+            pad_bounds = (left, top, left + abs(dw), top + abs(dh))
+        return bitmap, horizontal, vertical, pad_bounds
+
     def _source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
         table = (operation >> 16) & 255
         needs_pattern = (table & 15) != (table >> 4)
@@ -500,20 +518,29 @@ class RasterContext(TraceContext):
             vertical.destination + vertical.length,
         )
         for y in range(max(0, top), min(self.image.height, bottom)):
-            sy = vertical.source + (y - vertical.destination) * vertical.step
             for x in range(max(0, left), min(self.image.width, right)):
-                sx = horizontal.source + (x - horizontal.destination) * horizontal.step
                 if not self._clip.contains(x, y):
                     continue
+                samples = (
+                    bitmap.pixel(sx, sy)
+                    for sy in vertical.samples(y, self._stretch_mode)
+                    for sx in horizontal.samples(x, self._stretch_mode)
+                    if 0 <= sx < bitmap.width and 0 <= sy < bitmap.height
+                )
+                source = next(samples, None)
+                if source is not None:
+                    for sample in samples:
+                        source = tuple(
+                            a & b if self._stretch_mode == 1 else a | b for a, b in zip(source, sample, strict=True)
+                        )
                 in_source = (
-                    0 <= sx < bitmap.width
-                    and 0 <= sy < bitmap.height
+                    source is not None
                     and horizontal.destination <= x < horizontal.destination + horizontal.length
                     and vertical.destination <= y < vertical.destination + vertical.length
                 )
                 if not in_source and pad_bounds is None:
                     continue
-                source = bitmap.pixel(sx, sy) if in_source else (0, 0, 0)
+                source = source if in_source else (0, 0, 0)
                 pattern = self._brush_color_at(x, y, opaque=True) if needs_pattern else (0, 0, 0)
                 if pattern is not None:
                     self.image.putpixel((x, y), rop3(operation, pattern, source, self.image.getpixel((x, y))))

@@ -41,9 +41,9 @@ only pattern-dependent truth tables. The no-embedded-DIB record uses PatBlt;
 it does not copy pixels from the playback surface. ROP truth-table bits, not
 the low opcode word, choose the Boolean operation.
 
-Mapped source-dependent transfers that change the pixel dimensions remain
-explicitly unsupported, before committing the call. Translation and reflection
-are supported. Stretch modes and their sampling algorithms are a later slice.
+Mapped source-dependent transfers now also use the shared
+[integer stretch sampler](gdi-dib-stretching.md) for modes 1–3. HALFTONE scaling
+remains explicitly unsupported before committing the call.
 
 ## SetDIBitsToDevice bands
 
@@ -92,6 +92,6 @@ and [Wine WMF playback](https://github.com/wine-mirror/wine/blob/master/dlls/gdi
 Wine corroborates separate copy/ternary and band paths, but Windows remains
 the oracle. The implementation is not a transcription of Wine's source.
 
-Still unsupported: DIB stretching/shrinking modes, indexed and other pixel
+Still unsupported: HALFTONE scaling, indexed and other pixel
 formats, additional headers, compression, palettes and legacy Bitmap16 blits.
 Fonts remain deferred.

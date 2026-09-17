@@ -1,4 +1,4 @@
-"""Integer geometry for unscaled source transfers."""
+"""Integer source-transfer geometry and scan selection."""
 
 from dataclasses import dataclass
 
@@ -11,6 +11,9 @@ class BlitAxis:
     source: int
     length: int
     step: int = 1
+
+    def samples(self, coordinate, mode):
+        return (self.source + (coordinate - self.destination) * self.step,)
 
     @classmethod
     def unscaled(cls, destination: int, extent: int, source: int, source_extent: int, limit: int, *, anchor_pixel=True):
@@ -29,3 +32,41 @@ class BlitAxis:
         source += left
         mirrored = (extent < 0) != (source_extent < 0)
         return cls(destination, source + length - 1 if mirrored else source, length, -1 if mirrored else 1)
+
+
+@dataclass(frozen=True)
+class StretchAxis:
+    destination: int
+    source: int
+    length: int
+    source_length: int
+    mirrored: bool
+    limit: int
+
+    @classmethod
+    def create(cls, destination, extent, source, source_extent, limit):
+        return cls(
+            destination + min(0, extent + 1),
+            source + min(0, source_extent + 1),
+            abs(extent),
+            abs(source_extent),
+            (extent < 0) != (source_extent < 0),
+            limit,
+        )
+
+    def samples(self, coordinate, mode):
+        """Centre-phase DDA; reduction modes accumulate through each chosen scan."""
+        if not self.length or not self.source_length:
+            return ()
+        index = coordinate - self.destination
+        last = ((2 * index + 1) * self.source_length) // (2 * self.length)
+        if not 0 <= self.source + last < self.limit:
+            return ()  # The scan selected by the DDA must survive source clipping.
+        first = last
+        if mode in (1, 2) and self.source_length > self.length:
+            first = 0 if index == 0 else ((2 * index - 1) * self.source_length) // (2 * self.length) + 1
+        values = range(max(0, self.source + first), min(self.limit, self.source + last + 1))
+        if self.mirrored:
+            low, high = max(0, self.source), min(self.limit, self.source + self.source_length)
+            return (low + high - 1 - value for value in values if low <= value < high)
+        return values
