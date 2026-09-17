@@ -3,7 +3,7 @@
 from itertools import product
 from struct import pack
 
-from pillow_wmf import Recorder
+from pillow_wmf import Metafile, Recorder
 from pillow_wmf.wmf.objects import BitmapData
 
 
@@ -23,6 +23,20 @@ def source(depth, width=13, height=7, *, pattern=False):
 
 
 def cases():
+    for operation in ("bit_blt", "stretch_blt", "brush"):
+        r = LegacyRecorder()
+        r.set_text_color(0x713519)
+        r.set_background_color(0xABCDEF)
+        bitmap = source(1, pattern=operation == "brush")
+        if operation == "brush":
+            r.select_object(r.create_pattern_brush(bitmap))
+            r.pat_blt(2, 2, 54, 42, 0xF00021)
+        elif operation == "bit_blt":
+            r.bit_blt(2, 2, 13, 7, 0, 0, 0xCC0020, bitmap)
+        else:
+            r.stretch_blt(2, 2, 52, 28, 0, 0, 13, 7, 0xCC0020, bitmap)
+        yield f"bitmap16-version100-{operation}", r
+
     for depth, operation in product((1, 4, 8, 16, 24, 32), ("bit_blt", "stretch_blt", "brush")):
         r = Recorder()
         r.set_text_color(0x713519)
@@ -54,3 +68,8 @@ def cases():
                     r.stretch_blt(28 + i * 30, 46, -27, 21, 2, 1, 9, 5, 0x660046, dib)
                     r.stretch_blt(2 + i * 30, 76, 27, 21, -2, -1, 13, 7, 0xCC0020, dib)
         yield f"bitmap16-{depth}-{operation}", r
+
+
+class LegacyRecorder(Recorder):
+    def to_bytes(self):
+        return Metafile.build(self.records, version=0x0100).to_bytes()
