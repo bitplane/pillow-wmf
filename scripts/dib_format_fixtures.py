@@ -93,6 +93,7 @@ def cases():
 
 
 def conversion_cases():
+    yield from fixup_holdouts()
     palettes = (
         ((0, 0, 0), (255, 255, 255)),
         ((255, 255, 255), (0, 0, 0)),
@@ -160,3 +161,59 @@ def conversion_cases():
                 r.set_stretch_mode(mode)
                 r.dib_bit_blt(2 + (mode - 3) * 64, 2 + i // 64 * 4, min(64, len(samples)), 1, 0, 0, 0xCC0020, source)
         yield f"dib-format-channel-ramp-{bits}", r
+
+
+def fixup_holdouts():
+    # Exhaust every binary 3x3 neighbourhood, including image boundaries.
+    for reverse in (False, True):
+        colors = ((0, 0, 0), (255, 255, 255))[:: -1 if reverse else 1]
+        r = Recorder()
+        r.set_stretch_mode(4)
+        for value in range(512):
+            source = encode_dib(3, 3, tuple((value >> i) & 1 for i in range(9)), depth=1, colors=colors)
+            r.dib_bit_blt(value % 32 * 4, value // 32 * 4, 3, 3, 0, 0, 0xCC0020, source)
+        yield f"dib-format-fixup-neighbourhoods-{int(reverse)}", r
+
+    for top_down in (False, True):
+        for operation in ("dib_stretch_blt", "stretch_dib"):
+            r = Recorder()
+            r.set_stretch_mode(4)
+            source = encode_dib(
+                11,
+                9,
+                tuple(((x * 317 + y * 157) ^ (x * y * 97)) >> 4 & 1 for y in range(9) for x in range(11)),
+                depth=1,
+                colors=((31, 17, 173), (71, 131, 29)),
+                top_down=top_down,
+            )
+            args = {"source": source} | ({"color_usage": 0} if operation == "stretch_dib" else {})
+            for i, (dw, dh, sx, sy, sw, sh) in enumerate(
+                (
+                    (11, 9, 0, 0, 11, 9),
+                    (23, 19, 0, 0, 11, 9),
+                    (7, 5, 0, 0, 11, 9),
+                    (5, 3, 0, 0, 11, 9),
+                    (29, 3, 0, 0, 11, 9),
+                    (3, 27, 0, 0, 11, 9),
+                    (23, 19, 2, 1, 7, 7),
+                    (-23, 19, 2, 1, 7, 7),
+                    (23, -19, 2, 1, 7, 7),
+                    (23, 19, -2, -1, 11, 9),
+                    (23, 19, 8, 6, 11, 9),
+                    (1, 19, 0, 0, 1, 9),
+                )
+            ):
+                x, y = i % 4 * 32 + 1, i // 4 * 40 + 1
+                getattr(r, operation)(
+                    x + (abs(dw) - 1 if dw < 0 else 0),
+                    y + (abs(dh) - 1 if dh < 0 else 0),
+                    dw,
+                    dh,
+                    sx,
+                    sy,
+                    sw,
+                    sh,
+                    0xCC0020,
+                    **args,
+                )
+            yield f"dib-format-fixup-transfers-{operation}-{int(top_down)}", r
