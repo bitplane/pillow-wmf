@@ -260,8 +260,8 @@ class RasterContext(TraceContext):
             ) = snapshot
             del self._saved[target - 1 :]
         elif name in ("intersect_clip_rect", "exclude_clip_rect"):
-            left, top = self.mapping.region_point(a["left"], a["top"])
-            right, bottom = self.mapping.region_point(a["right"], a["bottom"])
+            left, top = self.mapping.clip_point(a["left"], a["top"])
+            right, bottom = self.mapping.clip_point(a["right"], a["bottom"])
             rectangle = (min(left, right), min(top, bottom), max(left, right), max(top, bottom))
             if name == "intersect_clip_rect":
                 self._clip = self._clip.intersect(rectangle)
@@ -283,10 +283,10 @@ class RasterContext(TraceContext):
                                 for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent, strict=True)
                             ),
                         ),
-                        point=self.mapping.region_point,
+                        point=self._point,
                     )
                 else:
-                    region = region.transformed(self.mapping.region_point)
+                    region = region.transformed(self._point)
                 brush = self._objects[a["brush"]] if "brush" in a else self._brush
                 for left, top, right, bottom in region.rectangles():
                     for y in range(max(0, top), min(self.image.height, bottom)):

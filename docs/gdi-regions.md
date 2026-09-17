@@ -16,8 +16,10 @@ SaveDC preserves the clip value independently of the source object's lifetime.
 
 The WMF [Scan structure](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/ae8f7607-b1dc-4d58-a958-70f517c6d152)
 describes unsigned words and logical units. Native playback nevertheless treats
-the scan coordinates as signed 16-bit device coordinates. The structural codec
-preserves the raw unsigned words; raster realization interprets the sign.
+the scan coordinates as signed 16-bit values and applies no mapping during
+creation. Clip selection uses those values as device coordinates; painting
+uses them as logical coordinates. The structural codec preserves the raw
+unsigned words; raster realization interprets the sign.
 The scan rectangles, rather than the advisory region bounds, determine coverage.
 Overlapping scans form a union. Left/top edges are included; right/bottom are
 excluded. These rules agree with the relevant region playback construction in
@@ -91,9 +93,9 @@ subtraction and dilation operate on bands, not bitmap-sized masks.
 Native probes and inspection of the reference runner's frame/widening entry
 points establish the following device footprint realization:
 
-1. Map region/path rectangle edges through 28.4 fixed point, then round to
-   pixels. Rectangular clip operations use this conversion too; ordinary
-   point mapping is not interchangeable near half-pixel thresholds.
+1. Map the stored region's edges with ordinary point rounding, retaining its
+   source boundary topology. Do not confuse this with rectangular clip
+   operations, whose edges pass through 28.4 before pixel rounding.
 2. Take absolute logical dimensions. Use twice the larger dimension as a
    common geometric-pen width and normalize the shorter axis of its transform.
    The normalization and transform multiplication use IEEE single precision.
@@ -138,7 +140,7 @@ intersection/exclusion, reset, null objects and slot-zero selection. The manual
 cross-primitive pixel comparisons. The final native verification is
 [run 35172754644](https://github.com/bitplane/pillow-wmf/actions/runs/35172754644).
 
-An additional 81 Windows PNGs cover all four paint calls, explicit and selected
+An additional 83 Windows PNGs cover all four paint calls, explicit and selected
 brushes, solid/null/hatch brushes, transparent/opaque backgrounds, XOR, clipping,
 nonuniform and reflected mappings, half-pixel boundaries, and zero, negative
 and oversized frame dimensions, phase isolation, continuous width atlases and

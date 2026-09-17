@@ -178,8 +178,9 @@ the placeable prefix before passing standard WMF bytes to GDI.
 | Current position | Keep logical state; test `MoveTo`, mapping change, then `LineTo`, including save/restore. |
 | Pens | Preserve logical width and style. Width zero is a device-pixel hairline; nonzero width scales as an X scalar. Re-realize after relevant mapping changes. |
 | Fonts and text advances | Separate font realization from position/advance mapping; zero font width is not an ordinary zero-length vector. |
-| Clip rectangles | Convert logical bounds when modifying the clip, not again at every draw. |
+| Clip rectangles | Convert logical bounds through 28.4 and then round to pixels when modifying the clip, not again at every draw. |
 | Selected regions | Region coordinates are device units; selecting a region copies it. Do not apply ordinary point mapping again. |
+| Painted regions | Map stored coordinates as logical units using ordinary point rounding. Frame realization additionally preserves source topology and realizes a geometric pen footprint; see [regions](gdi-regions.md). |
 | Clip offsets | Transform a logical displacement, without origin translation. |
 | Bitmap transfers | Keep source bitmap coordinates separate from destination logical coordinates; preserve signed dimensions for mirroring. |
 | Pattern origin / layout | Device alignment and reflection are separate policies, not a post-render image flip. |

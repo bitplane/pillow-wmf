@@ -51,8 +51,8 @@ class Mapping:
             rounded(y * self.viewport_extent[1] / self.window_extent[1]),
         )
 
-    def region_point(self, x: int, y: int) -> tuple[int, int]:
-        """Region/path rectangle edges pass through 28.4 before pixel rounding."""
+    def clip_point(self, x: int, y: int) -> tuple[int, int]:
+        """Rectangular clip edges pass through 28.4 before pixel rounding."""
         return tuple(
             (rounded((origin + (value - window_origin) * viewport / window) * 16) + 8) // 16
             for value, origin, window_origin, viewport, window in zip(

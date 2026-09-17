@@ -112,10 +112,10 @@ def test_collapsed_geometric_frame_terminates():
     assert frame_footprint(1, 2, 1 / 32767, 1 / 32767) == (0, 0)
 
 
-def test_region_edges_round_through_fixed_point():
+def test_clip_rectangle_edges_round_through_fixed_point():
     mapping = Mapping(window_origin=(1, -3), viewport_origin=(7, 9), viewport_extent=(43, 77))
     assert mapping.point(17, 51) == (12, 41)
-    assert mapping.region_point(17, 51) == (12, 42)
+    assert mapping.clip_point(17, 51) == (12, 42)
 
 
 def test_collapsed_gap_retains_seam_without_extending_its_ends():
