@@ -117,6 +117,10 @@ class RasterContext(TraceContext):
                 else None
             )
         elif name not in {
+            "fill_region",
+            "paint_region",
+            "invert_region",
+            "frame_region",
             "select_clip_region",
             "set_window_origin",
             "set_viewport_origin",
@@ -258,6 +262,20 @@ class RasterContext(TraceContext):
         elif name == "offset_clip_region":
             dx, dy = self.mapping.clip_displacement(a["x"], a["y"])
             self._clip = self._clip.offset(dx, dy)
+        elif name in {"fill_region", "paint_region", "invert_region", "frame_region"}:
+            region = self._objects[a["region"]]
+            if region is not None:
+                region = region.transformed(self._point)
+                if name == "frame_region":
+                    dx, dy = self.mapping.vector(2 * a["width"], 2 * a["height"])
+                    region = region.frame(Fraction(abs(dx), 2), Fraction(abs(dy), 2))
+                brush = self._objects[a["brush"]] if "brush" in a else self._brush
+                for left, top, right, bottom in region.rectangles():
+                    for y in range(max(0, top), min(self.image.height, bottom)):
+                        for x in range(max(0, left), min(self.image.width, right)):
+                            color = (0, 0, 0) if name == "invert_region" else self._brush_color_at(x, y, brush)
+                            if color is not None:
+                                self._pixel(x, y, color, operation=6 if name == "invert_region" else None)
         elif name in {"rectangle", "ellipse", "arc", "chord", "pie", "round_rect"}:
             left, top = self._point(a["left"], a["top"])
             right, bottom = self._point(a["right"], a["bottom"])
@@ -340,10 +358,10 @@ class RasterContext(TraceContext):
                     self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle)
         return result
 
-    def _pixel(self, x: int, y: int, color: tuple[int, int, int]) -> None:
+    def _pixel(self, x: int, y: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
         if 0 <= x < self.image.width and 0 <= y < self.image.height and self._clip.contains(x, y):
             destination = self.image.getpixel((x, y))
-            self.image.putpixel((x, y), rop2(self._rop2, color, destination))
+            self.image.putpixel((x, y), rop2(self._rop2 if operation is None else operation, color, destination))
 
     def _line(self, start: tuple[int, int], end: tuple[int, int]) -> None:
         self._stroke_path(DevicePath.polyline([(start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16)]))
@@ -474,8 +492,8 @@ class RasterContext(TraceContext):
         for x, y in foreground:
             self._pixel(x, y, self._pen.color)
 
-    def _brush_color_at(self, x: int, y: int) -> tuple[int, int, int] | None:
-        brush = self._brush
+    def _brush_color_at(self, x: int, y: int, brush: Brush | None = None) -> tuple[int, int, int] | None:
+        brush = self._brush if brush is None else brush
         if brush.style == 0:
             return brush.color
         if brush.style == 1:

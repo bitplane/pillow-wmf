@@ -58,6 +58,9 @@ jobs:
       - name: Verify native regions
         if: github.event_name == 'workflow_dispatch'
         run: python scripts/probe-windows-regions.py
+      - name: Verify native region painting
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/probe-windows-region-paint.py
       - name: Probe native inside-frame paths
         if: github.event_name == 'workflow_dispatch'
         run: python scripts/probe-windows-insideframe.py

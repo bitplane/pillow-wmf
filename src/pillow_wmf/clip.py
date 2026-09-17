@@ -8,6 +8,7 @@ from bisect import bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import cached_property
+from math import ceil, floor
 
 type Rectangle = tuple[int, int, int, int]
 
@@ -65,6 +66,58 @@ class RegionMask:
         return RegionMask(
             tuple((top + dy, bottom + dy, tuple(x + dx for x in endpoints)) for top, bottom, endpoints in self.bands)
         )
+
+    def rectangles(self):
+        for top, bottom, endpoints in self.bands:
+            for left, right in zip(endpoints[::2], endpoints[1::2], strict=True):
+                yield left, top, right, bottom
+
+    def transformed(self, point):
+        return RegionMask.from_rectangles(
+            (*point(left, top), *point(right, bottom)) for left, top, right, bottom in self.rectangles()
+        )
+
+    def difference(self, other):
+        """Subtract bands without introducing pixel-sized storage."""
+        rectangles = []
+        for top, bottom, endpoints in self.bands:
+            boundaries = sorted({top, bottom} | {y for band in other.bands for y in band[:2] if top < y < bottom})
+            for y0, y1 in zip(boundaries, boundaries[1:]):
+                index = bisect_right(other.tops, y0) - 1
+                cuts = other.bands[index][2] if index >= 0 and y0 < other.bands[index][1] else ()
+                for left, right in zip(endpoints[::2], endpoints[1::2], strict=True):
+                    cursor = left
+                    for start, end in zip(cuts[::2], cuts[1::2], strict=True):
+                        if end <= cursor:
+                            continue
+                        if start >= right:
+                            break
+                        if cursor < start:
+                            rectangles.append((cursor, y0, start, y1))
+                        cursor = max(cursor, end)
+                    if cursor < right:
+                        rectangles.append((cursor, y0, right, y1))
+        return RegionMask.from_rectangles(rectangles)
+
+    def frame(self, width, height):
+        """Inner rectangular border: subtract the rectangular erosion.
+
+        Dilating the complement includes holes and concave corners, without
+        exposing the artificial boundaries between a region's scan bands.
+        """
+        if not self.bands or not width or not height:
+            return RegionMask()
+        width, height = abs(width), abs(height)
+        x0, x1, y0, y1 = floor(width), ceil(width), floor(height), ceil(height)
+        left = min(e[0] for _, _, e in self.bands)
+        right = max(e[-1] for _, _, e in self.bands)
+        top, bottom = self.bands[0][0], self.bands[-1][1]
+        outside = RegionMask.from_rectangles(((left - x1, top - y1, right + x1, bottom + y1),))
+        complement = outside.difference(self)
+        expanded = RegionMask.from_rectangles(
+            (left - x0, top - y0, right + x1, bottom + y1) for left, top, right, bottom in complement.rectangles()
+        )
+        return self.difference(self.difference(expanded))
 
 
 @dataclass(frozen=True)
