@@ -13,6 +13,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf
 
 
 def cases():
+    yield from halftone_cases()
     yield from dib_stretch_cases()
     yield from dib_transfer_cases()
     yield from dib_brush_cases()
@@ -1680,6 +1681,27 @@ def dib_stretch_cases():
         for i, (sx, sy) in enumerate(product((-3, 0, 8), (-2, 0, 7))):
             r.dib_bit_blt(8 + i % 3 * 48, 8 + i // 3 * 48, 11, 9, sx, sy, 0xCC0020, encode_dib24(bitmap))
         yield f"dib-stretch-mapped-{mode}", r
+
+
+def halftone_cases():
+    for pattern in ("constant", "ramp-x", "ramp-y", "impulse-x", "impulse-y"):
+        pixels = []
+        for y in range(9):
+            for x in range(9):
+                value = {
+                    "constant": 96,
+                    "ramp-x": 32 + x * 20,
+                    "ramp-y": 32 + y * 20,
+                    "impulse-x": 192 if x == 4 else 64,
+                    "impulse-y": 192 if y == 4 else 64,
+                }[pattern]
+                pixels.extend((value, value, value))
+        source = encode_dib24(RGBBitmap(9, 9, bytes(pixels)))
+        r = mapped()
+        r.set_stretch_mode(4)
+        for i, (dw, dh) in enumerate(product((1, 2, 3, 5, 9, 13, 17), repeat=2)):
+            r.dib_stretch_blt(2 + i % 7 * 18, 2 + i // 7 * 18, dw, dh, 0, 0, 9, 9, 0xCC0020, source)
+        yield f"halftone-kernel-{pattern}", r
 
 
 def main():
