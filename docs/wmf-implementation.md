@@ -150,6 +150,11 @@ carried through recording, not executed by the trace backend.
 
 ## Verification and next work
 
+[RTL layout](gdi-layout.md) adds 36 exact Windows references and native
+fixed-point path/state observations. Mapping, clipping, pen orientation and
+clockwise curves share the existing drawing algorithms. Text-related state
+and rendering remain deferred.
+
 [Bitmap16](gdi-bitmap16.md) adds 39 exact Windows references and documents
 modern playback's bitmap-selection/transfer quirk and native pattern layout. That
 profile is not a claim of historical display-driver compatibility.

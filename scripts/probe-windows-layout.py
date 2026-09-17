@@ -48,7 +48,7 @@ def main():
             errors = []
 
             @callback_type
-            def callback(hdc, handles, record, count, _):
+            def callback(hdc, handles, record, count, _, *, name=name, play=play, get_path=get_path, errors=errors):
                 try:
                     function = ctypes.c_ushort.from_address(record + 4).value
                     capture = "shapes" in name and function in (0x0418, 0x061C, 0x0817, 0x081A)
@@ -75,7 +75,7 @@ def main():
                         print(f"record={function:04x} result={result}")
                         helpers["snapshot"](gdi, hdc)
                     return 1
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 -- exceptions must not escape a ctypes callback
                     errors.append(error)
                     return 0
 

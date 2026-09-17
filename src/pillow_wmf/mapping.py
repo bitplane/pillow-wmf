@@ -40,8 +40,37 @@ class Mapping:
     viewport_origin: tuple[int, int] = (0, 0)
     window_extent: tuple[int, int] = (128, 128)
     viewport_extent: tuple[int, int] = (128, 128)
+    layout: int = 0
+    surface_width: int = 128
+
+    @property
+    def rtl(self):
+        return bool(self.layout & 1)
+
+    def set_layout(self, layout):
+        self.layout = layout
+        if self.rtl:
+            self.mode = 8
+
+    def _axes(self):
+        for i in range(2):
+            viewport, window = self.viewport_extent[i], self.window_extent[i]
+            origin = self.viewport_origin[i] - self.window_origin[i] * viewport / window
+            if i == 0 and self.rtl:
+                # GDI's MirrorWindowOrg converts the last device pixel to a
+                # logical integer with signed truncation before mapping back.
+                # At 3/2 scale the reflection origin is 126, not 127.
+                last = scaled(self.surface_width - 1, window, viewport)
+                origin = last * viewport / window - origin
+                viewport = -viewport
+            yield viewport, window, origin
 
     def point(self, x: int, y: int) -> tuple[int, int]:
+        if self.rtl:
+            return tuple(
+                rounded(value * viewport / window + origin)
+                for value, (viewport, window, origin) in zip((x, y), self._axes(), strict=True)
+            )
         return (
             rounded(
                 self.viewport_origin[0] + (x - self.window_origin[0]) * self.viewport_extent[0] / self.window_extent[0]
@@ -53,13 +82,18 @@ class Mapping:
 
     def vector(self, x: int, y: int) -> tuple[int, int]:
         return (
-            rounded(x * self.viewport_extent[0] / self.window_extent[0]),
+            rounded(x * self.viewport_extent[0] / self.window_extent[0] * (-1 if self.rtl else 1)),
             rounded(y * self.viewport_extent[1] / self.window_extent[1]),
         )
 
     def clip_point(self, x: int, y: int) -> tuple[int, int]:
         """Rectangular clip edges use the driver's fixed-point transform."""
-        return self.device_point(x, y)
+        return self.edge_point(x, y)
+
+    def edge_point(self, x: int, y: int) -> tuple[int, int]:
+        """Map half-open device edges, rather than inclusive pixel centres."""
+        x, y = self.device_point(x, y)
+        return x + self.rtl, y
 
     def device_point(self, x: int, y: int) -> tuple[int, int]:
         """Driver coordinates: quantize translation and product to 28.4.
@@ -70,10 +104,8 @@ class Mapping:
         ``point`` retains the separate LPtoDP-style integer conversion.
         """
         return tuple(
-            (fixed(value * viewport / window) + fixed(origin - window_origin * viewport / window) + 8) // 16
-            for value, origin, window_origin, viewport, window in zip(
-                (x, y), self.viewport_origin, self.window_origin, self.viewport_extent, self.window_extent, strict=True
-            )
+            (fixed(value * viewport / window) + fixed(origin) + 8) // 16
+            for value, (viewport, window, origin) in zip((x, y), self._axes(), strict=True)
         )
 
     def clip_displacement(self, x: int, y: int) -> tuple[int, int]:
@@ -83,10 +115,12 @@ class Mapping:
             numerator = value * viewport
             magnitude = (2 * abs(numerator) + abs(window)) // (2 * abs(window))
             result.append(-magnitude if numerator * window < 0 else magnitude)
+        if self.rtl:
+            result[0] = -result[0]
         return tuple(result)
 
     def set_mode(self, mode: int) -> None:
-        self.mode = mode
+        self.mode = 8 if self.rtl else mode
         if mode == 1:
             self.window_extent = (1, 1)
             self.viewport_extent = (1, 1)

@@ -24,19 +24,23 @@ def _ellipse_bounds(left, top, right, bottom, *, null_pen=False):
 
 
 def ellipse_cubics(
-    left: int, top: int, right: int, bottom: int, *, null_pen=False, drawing_bounds=None
+    left: int, top: int, right: int, bottom: int, *, null_pen=False, drawing_bounds=None, clockwise=False
 ) -> tuple[tuple[Point, Point, Point, Point], ...]:
-    """The four counterclockwise GDI-style cubics of an exclusive-bound ellipse."""
+    """Four GDI-style cubics, with orientation applied before quantization."""
     left_fixed, top_fixed, right_fixed, bottom_fixed = drawing_bounds or _ellipse_bounds(
         left, top, right, bottom, null_pen=null_pen
     )
     cx, cy = (left_fixed + right_fixed) // 2, (top_fixed + bottom_fixed) // 2
     rx, ry = (right_fixed - left_fixed) // 2, (bottom_fixed - top_fixed) // 2
-    return tuple(tuple((cx + x, cy + y) for x, y in curve) for curve in _ellipse_quadrants(rx, ry))
+    return tuple(
+        tuple((cx + x, cy + y) for x, y in curve) for curve in _ellipse_quadrants(rx, -ry if clockwise else ry)
+    )
 
 
 def _ellipse_quadrants(rx: int, ry: int):
     """Four canonical cubic quarters about the origin, in device sixteenths."""
+    # A signed Y radius changes traversal before rounding the controls.
+    # Reversing already-rounded CCW curves loses the clockwise floor/ceil bias.
     horizontal_control = ceil(_CUBIC_CIRCLE_CONTROL * rx)
     vertical_control = floor(_CUBIC_CIRCLE_CONTROL * ry)
     return (
@@ -48,7 +52,7 @@ def _ellipse_quadrants(rx: int, ry: int):
 
 
 def round_rect_figure(
-    left, top, right, bottom, ellipse_width, ellipse_height, *, null_pen=False, drawing_bounds=None
+    left, top, right, bottom, ellipse_width, ellipse_height, *, null_pen=False, drawing_bounds=None, clockwise=False
 ) -> DevicePath:
     """Place canonical ellipse quarters at four centres and connect the edges."""
     if not ellipse_width or not ellipse_height:
@@ -59,6 +63,9 @@ def round_rect_figure(
     rx = floor((x1 - x0) * min(abs(ellipse_width), right - left) / (2 * (right - left)) + 0.5)
     ry = floor((y1 - y0) * min(abs(ellipse_height), bottom - top) / (2 * (bottom - top)) + 0.5)
     centres = ((x1 - rx, y0 + ry), (x0 + rx, y0 + ry), (x0 + rx, y1 - ry), (x1 - rx, y1 - ry))
+    if clockwise:
+        centres = tuple((x, y0 + y1 - y) for x, y in centres)
+        ry = -ry
     curves = tuple(
         tuple((cx + x, cy + y) for x, y in curve)
         for (cx, cy), curve in zip(centres, _ellipse_quadrants(rx, ry), strict=True)
@@ -89,6 +96,7 @@ def arc_cubics(
     null_pen=False,
     drawing_bounds=None,
     radial_bounds=None,
+    clockwise=False,
 ) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """Cut an exclusive-bound ellipse at two radial directions.
 
@@ -104,6 +112,9 @@ def arc_cubics(
     radial_cy = (radial_top + radial_bottom) / 2
     radial_rx = (radial_right - radial_left) / 2
     radial_ry = (radial_bottom - radial_top) / 2
+    if clockwise:
+        ry = -ry
+        radial_ry = -radial_ry
 
     def angle(point: tuple[int, int]) -> float:
         return atan2_degrees((radial_cy - point[1]) / radial_ry, (point[0] - radial_cx) / radial_rx)
@@ -125,7 +136,9 @@ def arc_cubics(
         return (cx + rx * nx) * 16, (cy + ry * ny) * 16
 
     cubics = []
-    quadrants = ellipse_cubics(left, top, right, bottom, null_pen=null_pen, drawing_bounds=drawing_bounds)
+    quadrants = ellipse_cubics(
+        left, top, right, bottom, null_pen=null_pen, drawing_bounds=drawing_bounds, clockwise=clockwise
+    )
     for index, (a, b) in enumerate(pairwise(boundaries)):
         if 0 < index < len(boundaries) - 2:
             cubics.append(quadrants[round(a / 90) % 4])
@@ -166,6 +179,7 @@ def arc_figure(
     null_pen=False,
     drawing_bounds=None,
     radial_bounds=None,
+    clockwise=False,
 ) -> DevicePath:
     """Retain one arc figure, optionally closed directly or through its centre."""
     curves = arc_cubics(
@@ -178,6 +192,7 @@ def arc_figure(
         null_pen=null_pen,
         drawing_bounds=drawing_bounds,
         radial_bounds=radial_bounds,
+        clockwise=clockwise,
     )
     if closure == "open":
         return DevicePath(curves, closed=start == end)

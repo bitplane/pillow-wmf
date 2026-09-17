@@ -202,8 +202,10 @@ Layout is in the WMF surface already. Wine's tests show RTL switching the mode
 to anisotropic and reflecting relative to the selected surface width, with
 additional clipping interactions. [Wine layout tests][wine-tests]. Windows
 also provides bitmap-orientation preservation independently of RTL layout.
-[SetLayout][layout]. Represent layout state now; leave non-default layouts
-explicitly unsupported until their native tests and implementation land.
+[SetLayout][layout]. The subsequent [layout slice](gdi-layout.md) implements
+the measured LTR/RTL and bitmap-orientation flags, including native fractional
+reflection-origin quantization, logical shape-edge preparation and clockwise
+curve construction. Other layout bits remain explicitly unsupported.
 
 ## Proposed Python ownership
 

@@ -108,7 +108,7 @@ class RasterContext(TraceContext):
         self._background_mode = 2
         self._background_color = (255, 255, 255)
         self._text_color = (0, 0, 0)
-        self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height))
+        self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height), surface_width=width)
         self._clip = ClipRegion()
         self._saved: list[
             tuple[
@@ -139,6 +139,11 @@ class RasterContext(TraceContext):
     def is_null_object(self, handle: Handle) -> bool:
         return handle.owner is self and handle in self._objects and self._objects[handle] is None
 
+    def _clip_mask(self, region):
+        if region is not None and self.mapping.rtl:
+            return region.transformed(lambda x, y: (self.image.width - x, y))
+        return region
+
     def _mapped_path(self, points) -> Polygon:
         path = []
         for logical_x, logical_y in points:
@@ -157,6 +162,9 @@ class RasterContext(TraceContext):
         elif name == "resize_palette":
             if not 0 <= a["count"] <= 65535:
                 raise ValueError("Palette size outside WORD range")
+        elif name == "set_layout":
+            if a["layout"] & ~9:
+                raise UnsupportedOperation(f"Layout {a['layout']}")
         elif name == "set_map_mode":
             if a["mode"] not in range(1, 9):
                 raise UnsupportedOperation(f"Map mode {a['mode']}")
@@ -247,6 +255,10 @@ class RasterContext(TraceContext):
                     count = min(count, layout.height - start)
                 bitmap = layout.decode(min(count, layout.height), preserve_gaps=True, palette=self._palette.colors())
                 x, y = self._point(x, y)
+                if self.mapping.rtl:
+                    # Device scans keep their order; only the destination
+                    # rectangle is reflected about the anchor pixel.
+                    x -= width - 1
                 horizontal = BlitAxis(x, sx, width)
                 vertical = BlitAxis(y, start + count - sy - height, height)
                 transfer = SourceTransfer(bitmap, horizontal, vertical, 0xCC0020)
@@ -328,6 +340,8 @@ class RasterContext(TraceContext):
             self._palette.resize(a["count"])
         elif name == "set_map_mode":
             self.mapping.set_mode(a["mode"])
+        elif name == "set_layout":
+            self.mapping.set_layout(a["layout"])
         elif name == "set_polygon_fill_mode":
             self._polygon_fill_mode = a["mode"]
         elif name == "set_rop2":
@@ -379,13 +393,15 @@ class RasterContext(TraceContext):
         elif name == "create_region":
             self._objects[result] = region_mask
         elif name == "select_clip_region":
-            self._clip = ClipRegion(mask=self._objects[a["region"]] if a["region"] is not None else None)
+            self._clip = ClipRegion(
+                mask=self._clip_mask(self._objects[a["region"]]) if a["region"] is not None else None
+            )
         elif name == "select_object":
             obj = self._objects[a["handle"]] if a["handle"] is not None else None
             if isinstance(obj, Pen):
                 self._pen = obj
             elif isinstance(obj, RegionMask):
-                self._clip = ClipRegion(mask=obj)
+                self._clip = ClipRegion(mask=self._clip_mask(obj))
             elif obj is None:
                 pass  # Selecting a null object fails without changing state.
             else:
@@ -491,14 +507,17 @@ class RasterContext(TraceContext):
                             if color is not None:
                                 self._pixel(x, y, color, operation=6 if name == "invert_region" else None)
         elif name in {"rectangle", "ellipse", "arc", "chord", "pie", "round_rect"}:
-            left, top = self._point(a["left"], a["top"])
-            right, bottom = self._point(a["right"], a["bottom"])
+            pen = self._realized_pen()
+            # Native EBOX decrements RTL logical X edges before transforming.
+            # Rectangle's wide-pen path enters EBOX after its own decrement.
+            shift = int(self.mapping.rtl) * (1 + (name == "rectangle" and not pen.cosmetic))
+            left, top = self._point(a["left"] - shift, a["top"])
+            right, bottom = self._point(a["right"] - shift, a["bottom"])
             left, right = sorted((left, right))
             top, bottom = sorted((top, bottom))
             if right > left and bottom > top:
                 drawing_bounds = None
                 covered = False
-                pen = self._realized_pen()
                 if self._pen.style == 6 and not pen.cosmetic:
                     dx, dy = (
                         ceil(self._pen.width * abs(Fraction(v, w)) * 8)
@@ -522,7 +541,13 @@ class RasterContext(TraceContext):
                 elif name == "ellipse":
                     path = DevicePath(
                         ellipse_cubics(
-                            left, top, right, bottom, null_pen=self._pen.style == 5, drawing_bounds=drawing_bounds
+                            left,
+                            top,
+                            right,
+                            bottom,
+                            null_pen=self._pen.style == 5,
+                            drawing_bounds=drawing_bounds,
+                            clockwise=self.mapping.rtl,
                         ),
                         closed=True,
                     )
@@ -541,15 +566,18 @@ class RasterContext(TraceContext):
                         height,
                         null_pen=self._pen.style == 5,
                         drawing_bounds=drawing_bounds,
+                        clockwise=self.mapping.rtl,
                     )
                 else:
                     sx, sy = (
                         1 if v * w >= 0 else -1
                         for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent)
                     )
+                    if self.mapping.rtl:
+                        sx = -sx
                     start = sx * a["start_x"], sy * a["start_y"]
                     end = sx * a["end_x"], sy * a["end_y"]
-                    x0, x1 = sorted((sx * a["left"], sx * a["right"]))
+                    x0, x1 = sorted((sx * (a["left"] - shift), sx * (a["right"] - shift)))
                     y0, y1 = sorted((sy * a["top"], sy * a["bottom"]))
                     path = arc_figure(
                         left,
@@ -562,6 +590,7 @@ class RasterContext(TraceContext):
                         null_pen=self._pen.style == 5,
                         drawing_bounds=drawing_bounds,
                         radial_bounds=(x0, y0, x1, y1),
+                        clockwise=self.mapping.rtl,
                     )
                 if covered:
                     for x, y in self._contour_pixels((path.vertices,)):
@@ -641,6 +670,11 @@ class RasterContext(TraceContext):
         right, bottom = self._point(a["x"] + a["width"], a["y"] + a["height"])
         sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         dw, dh = right - x, bottom - y
+        if self.mapping.rtl and dw > 0:
+            # A second X reflection restores forward scan order. Its anchor
+            # is then the exclusive RTL edge rather than the mirrored pixel;
+            # negative device extents get this conversion in Blit/StretchAxis.
+            x += 1
         if not all((sw, sh, dw, dh)):
             return TransferAction.NOOP
         scaled = abs(dw) != abs(sw) or abs(dh) != abs(sh)
@@ -733,8 +767,8 @@ class RasterContext(TraceContext):
         operation = pattern_rop2(rop)
         if operation is None:
             return  # Native PatBlt rejects operations requiring a source.
-        left, top = self._point(x, y)
-        right, bottom = self._point(x + width, y + height)
+        left, top = self.mapping.edge_point(x, y)
+        right, bottom = self.mapping.edge_point(x + width, y + height)
         # PatBlt orders mapped rectangle edges (unlike mirrored source blits).
         left, right = sorted((left, right))
         top, bottom = sorted((top, bottom))
@@ -791,7 +825,7 @@ class RasterContext(TraceContext):
     def _realized_pen(self):
         return realize_pen(
             self._pen.width,
-            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]),
+            Fraction(self.mapping.viewport_extent[0], self.mapping.window_extent[0]) * (-1 if self.mapping.rtl else 1),
             Fraction(self.mapping.viewport_extent[1], self.mapping.window_extent[1]),
         )
 
