@@ -1782,6 +1782,36 @@ def halftone_boundary_cases():
         r.set_stretch_mode(4)
         r.dib_stretch_blt(dx, dy, dw, dh, sx, sy, sw, sh, 0xCC0020, large)
         yield f"halftone-large-clip-{name}", r
+        if name in ("fast-trailing", "general-trailing"):
+            for flip_x, flip_y in ((True, False), (False, True), (True, True)):
+                r = mapped()
+                r.set_stretch_mode(4)
+                r.dib_stretch_blt(
+                    dx + (dw - 1 if flip_x else 0),
+                    dy + (dh - 1 if flip_y else 0),
+                    -dw if flip_x else dw,
+                    -dh if flip_y else dh,
+                    sx,
+                    sy,
+                    sw,
+                    sh,
+                    0xCC0020,
+                    large,
+                )
+                yield f"halftone-large-clip-{name}-reflect-{int(flip_x)}{int(flip_y)}", r
+    small = encode_dib24(
+        RGBBitmap(
+            5,
+            5,
+            bytes((x * 37 + y * 53 + x * y * 11 + c * 71) % 256 for y in range(5) for x in range(5) for c in range(3)),
+        )
+    )
+    for dw, dh in ((3, 2), (7, 2), (2, 7), (3, 5), (5, 3)):
+        r = mapped()
+        r.set_stretch_mode(4)
+        for i, (sx, sy) in enumerate(product(range(-4, 5), repeat=2)):
+            r.dib_stretch_blt(i % 9 * 8, i // 9 * 8, dw, dh, sx, sy, 5, 5, 0xCC0020, small)
+        yield f"halftone-clip-cells-{dw}x{dh}", r
     # Classifier thresholds: small images, full colour counting, then sampled
     # rows. Repeated rows distinguish spatial structure from palette size.
     for size in (48, 49, 129):
