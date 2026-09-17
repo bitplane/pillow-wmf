@@ -129,6 +129,50 @@ def cases():
 
 
 def holdouts():
+    for depth in (8, 32):
+        for operation in ("device", "brush"):
+            r = Recorder()
+            r.set_stretch_mode(3)
+            r.select_object(r.create_brush(0, 0x735119, 0))
+            r.pat_blt(0, 0, 128, 128, 0xF00021)
+            dib = source(usage=2, depth=depth) if depth == 8 else encode_dib(8, 4, (0x735119,) * 32, depth=depth)
+            draw(r, dib, 2, 2, operation)
+            yield f"palette-direct-index-{depth}-{operation}", r
+
+    r = Recorder()
+    a = r.create_palette(Palette(entries=ENTRIES))
+    b = r.create_palette(Palette(entries=tuple(reversed(ENTRIES))))
+    r.select_palette(a)
+    r.select_object(r.create_brush(0, 0x01000001, 0))
+    r.select_object(r.create_pen(0, 1, 0x01000002))
+    r.set_text_color(0x01000001)
+    r.set_background_color(0x01000003)
+    mono = encode_dib(8, 4, (0, 1) * 16, depth=1, colors=((0, 0, 0), (255, 255, 255)))
+    for i in range(4):
+        if i == 1:
+            r.set_palette_entries(Palette(1, ((23, 43, 73, 0), (151, 179, 211, 0))))
+        elif i == 2:
+            r.select_palette(b)
+        elif i == 3:
+            r.realize_palette()
+        r.pat_blt(2, i * 30, 30, 10, 0xF00021)
+        r.move_to(2, i * 30 + 15)
+        r.line_to(32, i * 30 + 15)
+        r.dib_bit_blt(40, i * 30, 8, 4, 0, 0, 0xCC0020, mono)
+    yield "palette-colorref-mutation", r
+
+    r = Recorder()
+    r.select_palette(r.create_palette(Palette(entries=ENTRIES)))
+    for i, (depth, count) in enumerate(((4, 3), (4, 5), (8, 3), (8, 5))):
+        raw = encode_dib(7, 3, tuple(j % count for j in range(21)), depth=depth, colors=((0, 0, 0),) * count)
+        table = pack("<" + "H" * count, *range(count))
+        # Explicit nonzero table padding and tail sentinels distinguish the
+        # packed-brush bit offset from the transfer's separate bits pointer.
+        dib = BitmapData("dib", raw.data[:40] + table + b"\x11\x11" + raw.data[40 + count * 4 :] + b"\x22\x22")
+        r.select_object(r.create_dib_pattern_brush(5, 1, dib))
+        r.pat_blt(2, i * 30, 110, 24, 0xF00021)
+    yield "palette-brush-aligned-storage", r
+
     r = Recorder()
     r.set_stretch_mode(3)
     # The default logical palette, including wraparound and high WORD indexes.
