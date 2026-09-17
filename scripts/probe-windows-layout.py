@@ -10,6 +10,25 @@ from windows_wmf_render import bind, check, reference_surface
 
 def main():
     helpers = runpy.run_path(str(Path(__file__).with_name("probe-windows-mapping.py")))
+
+    class Xform(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_float) for name in ("xx", "xy", "yx", "yy", "dx", "dy")]
+
+    for wx, vx, extent in ((0, 0, 96), (3, 0, 96), (0, 7, 96), (3, 7, 96), (3, 7, -96), (3, 7, 64)):
+        with reference_surface(128, 128) as (gdi, dc, _):
+            helpers["bind_probe"](gdi)
+            transform = bind(gdi, "GetTransform", wintypes.BOOL, ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(Xform))
+            gdi.SetWindowOrgEx(dc, wx, -2, None)
+            gdi.SetViewportOrgEx(dc, vx, 4, None)
+            gdi.SetLayout(dc, 1)
+            gdi.SetWindowExtEx(dc, 64, 128, None)
+            gdi.SetViewportExtEx(dc, extent, 128, None)
+            value = Xform()
+            check(transform(dc, 0x204, ctypes.byref(value)), "GetTransform")
+            print(
+                f"TRANSFORM wx={wx} vx={vx} extent={extent}: {[(name, getattr(value, name)) for name, _ in value._fields_]}"
+            )
+            helpers["snapshot"](gdi, dc)
     for order in ("before", "after", "restore"):
         print(f"\n[WMF layout-mapping-{order}]", flush=True)
         source = (
