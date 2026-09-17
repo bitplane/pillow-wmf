@@ -1759,6 +1759,29 @@ def halftone_cases():
 
 
 def halftone_boundary_cases():
+    large = encode_dib24(
+        RGBBitmap(
+            129,
+            129,
+            bytes(
+                (x * 37 + y * 53 + x * y * 11 + c * 71) % 256 for y in range(129) for x in range(129) for c in range(3)
+            ),
+        )
+    )
+    for name, sx, sy, sw, sh, dw, dh, dx, dy in (
+        ("fast-leading", -7, -5, 180, 180, 226, 226, 0, 0),
+        ("fast-trailing", 0, 0, 180, 180, 226, 226, -100, -100),
+        ("general-leading", -7, -5, 180, 180, 1000, 1000, 0, 0),
+        ("general-trailing", 0, 0, 180, 180, 1000, 1000, -660, -660),
+        ("horizontal-leading", -7, 0, 180, 129, 226, 129, 0, 0),
+        ("horizontal-trailing", 0, 0, 180, 129, 226, 129, -100, 0),
+        ("vertical-leading", 0, -5, 129, 180, 129, 226, 0, 0),
+        ("vertical-trailing", 0, 0, 129, 180, 129, 226, 0, -100),
+    ):
+        r = mapped()
+        r.set_stretch_mode(4)
+        r.dib_stretch_blt(dx, dy, dw, dh, sx, sy, sw, sh, 0xCC0020, large)
+        yield f"halftone-large-clip-{name}", r
     # Classifier thresholds: small images, full colour counting, then sampled
     # rows. Repeated rows distinguish spatial structure from palette size.
     for size in (48, 49, 129):
