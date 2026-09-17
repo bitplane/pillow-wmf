@@ -77,7 +77,7 @@ def verify():
         )
         if differing:
             failures += 1
-            if failures <= 25:
+            if failures <= 100:
                 print("FAIL", count, operation, style, mode, extent, size, scans, index, differing, flush=True)
     print(f"Region painting: {count} native pixel cases, {failures} failures", flush=True)
     assert failures == 0

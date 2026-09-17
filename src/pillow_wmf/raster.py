@@ -501,6 +501,10 @@ class RasterContext(TraceContext):
             return brush.color
         if brush.style == 1:
             return None
+        # Brush-independent ROPs realize a constant brush, so transparent
+        # hatch gaps do not suppress their destination operation.
+        if self._rop2 in (1, 6, 11, 16):
+            return brush.color
         # The six GDI hatches tile in device space. These phase offsets are
         # shared by all shapes, mapping modes and brush selections.
         horizontal = y % 8 == 3
