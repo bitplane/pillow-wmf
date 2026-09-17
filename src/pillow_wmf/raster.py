@@ -498,13 +498,6 @@ class RasterContext(TraceContext):
         if scaled and self._stretch_mode == 4 and copy:
             hx = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
             hy = StretchAxis.create(y, dh, sy, sh, bitmap.height)
-            if (
-                hx.source >= bitmap.width
-                or hx.source + abs(sw) <= 0
-                or hy.source >= bitmap.height
-                or hy.source + abs(sh) <= 0
-            ):
-                return None, None, None, None
             filtered = halftone_bitmap(bitmap, hx.source, hy.source, abs(sw), abs(sh), abs(dw), abs(dh))
             if filtered is not None:
                 if not filtered.valid:

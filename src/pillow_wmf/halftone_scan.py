@@ -8,6 +8,11 @@ unfilled buffer slot, not a black pixel fetched from the source bitmap.
 from dataclasses import dataclass
 
 
+def has_source(bitmap, x, y, width, height):
+    """Physical intersection, independent of filter output's closing cells."""
+    return max(0, x) < min(bitmap.width, x + width) and max(0, y) < min(bitmap.height, y + height)
+
+
 @dataclass(frozen=True)
 class ExpansionWindow:
     stop: int

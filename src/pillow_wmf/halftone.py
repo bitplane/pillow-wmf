@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from .gdi import UnsupportedOperation
 from .halftone_power import FD6, round_ratio, tent_power
-from .halftone_scan import ExpansionSamples, ExpansionWindow, ReductionScanReader
+from .halftone_scan import ExpansionSamples, ExpansionWindow, ReductionScanReader, has_source
 
 SCALE = 8192
 MAX_FILTER_TAPS = 65536
@@ -66,8 +66,10 @@ def halftone_bitmap(bitmap, x, y, sw, sh, width, height):
         raise UnsupportedOperation("HALFTONE reflected extents")
     left, top = max(0, x), max(0, y)
     right, bottom = min(bitmap.width, x + sw), min(bitmap.height, y + sh)
-    fixup = fixup_candidate(sw, sh, width, height) and replication_content(
-        bitmap, left, top, max(0, right - left), max(0, bottom - top)
+    fixup = (
+        has_source(bitmap, x, y, sw, sh)
+        and fixup_candidate(sw, sh, width, height)
+        and replication_content(bitmap, left, top, right - left, bottom - top)
     )
     if fixup and replication_candidate(sw, sh, width, height):
         return None
@@ -206,7 +208,7 @@ class HalftoneExpansion:
     def pixel(self, x, y):
         if not (0 <= x < self.width and 0 <= y < self.height):
             raise IndexError("Bitmap pixel outside bounds")
-        if not (self.left <= x < self.right and self.top <= y < self.bottom):
+        if not self.valid or not (self.left <= x < self.right and self.top <= y < self.bottom):
             return (0, 0, 0)
         if not self.y_axis:
             return self.horizontal(x, y)
@@ -271,7 +273,9 @@ class HalftoneReduction:
         # even when that edge lands exactly on a destination-cell boundary.
         self.right = min(width, (bitmap.width - x) * width // source_width + int(width < source_width))
         self.bottom = min(height, (bitmap.height - y) * height // source_height + int(height < source_height))
-        self.valid = self.left < self.right and self.top < self.bottom
+        self.valid = (
+            has_source(bitmap, x, y, source_width, source_height) and self.left < self.right and self.top < self.bottom
+        )
         self.shrink_x, self.shrink_y = width < source_width, height < source_height
         self.both = self.shrink_x and self.shrink_y
         self.reader = ReductionScanReader(bitmap, x, y, source_height, height, fixup=fixup)
@@ -303,7 +307,7 @@ class HalftoneReduction:
     def pixel(self, x, y):
         if not (0 <= x < self.width and 0 <= y < self.height):
             raise IndexError("Bitmap pixel outside bounds")
-        if not (self.left <= x < self.right and self.top <= y < self.bottom):
+        if not self.valid or not (self.left <= x < self.right and self.top <= y < self.bottom):
             return (0, 0, 0)
         center = self.area(x, y)
         neighbours = []

@@ -60,6 +60,30 @@ def test_source_clipping_retains_fractional_coverage_and_black_unavailable_cells
     assert view.pixel(1, 0) == (17, 128, 255)
 
 
+@pytest.mark.parametrize("x,y", ((1, 0), (0, 1), (-2, 0), (0, -2), (9, 9)))
+@pytest.mark.parametrize("width,height", ((1, 1), (2, 2), (3, 3), (1, 3), (13, 13)))
+def test_factory_rejects_unavailable_source_before_classification(x, y, width, height):
+    class UnreadableBitmap:
+        width = height = 1
+
+        def pixel(self, x, y):
+            pytest.fail("An unavailable source must not be sampled or classified")
+
+    view = halftone_bitmap(UnreadableBitmap(), x, y, 2, 2, width, height)
+    assert view is not None  # Empty input must not select replication.
+    assert not view.valid
+    assert (view.width, view.height) == (width, height)
+    assert view.pixel(0, 0) == (0, 0, 0)
+
+
+def test_reduction_closing_cell_does_not_imply_physical_source_availability():
+    bitmap = RGBBitmap(1, 1, bytes((31, 71, 113)))
+    view = HalftoneReduction(bitmap, 0, 1, 1, 2, 1, 1)
+    assert (view.left, view.top, view.right, view.bottom) == (0, 0, 1, 1)
+    assert not view.valid
+    assert view.pixel(0, 0) == (0, 0, 0)
+
+
 def test_clipped_general_expansion_freezes_fetch_window_not_fractional_phase():
     full = ExpansionAxis(11, 13)
     clipped = ExpansionWindow(3)
