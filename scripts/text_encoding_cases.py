@@ -26,8 +26,7 @@ def font_bytes(*, symbol=False):
     table = CmapSubtable.newSubtable(4)
     table.platformID, table.platEncID, table.language = 3, 0 if symbol else 1, 0
     if symbol:
-        # A conflicting low entry distinguishes direct lookup from F000 rebasing.
-        table.cmap = {0x41: "B", 0xF020: "space", 0xF041: "A", 0xF042: "B", 0xF080: "A", 0xF0E9: "B", 0xF0FF: "A"}
+        table.cmap = {0xF020: "space", 0xF041: "A", 0xF042: "B", 0xF080: "A", 0xF0E9: "B", 0xF0FF: "A"}
     else:
         table.cmap = {
             32: "space",
@@ -43,6 +42,8 @@ def font_bytes(*, symbol=False):
     font["cmap"].tables = [table]
     os2 = font["OS/2"]
     os2.ulCodePageRange1 = 1 << 31 if symbol else (1 | (1 << 2))
+    if symbol:
+        os2.ulUnicodeRange1 = os2.ulUnicodeRange2 = os2.ulUnicodeRange3 = os2.ulUnicodeRange4 = 0
     os2.usFirstCharIndex, os2.usLastCharIndex = min(table.cmap), max(table.cmap)
     stream = BytesIO()
     font.save(stream)

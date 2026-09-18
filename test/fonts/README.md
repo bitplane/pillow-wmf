@@ -18,6 +18,5 @@ layout experiments; it is not representative coverage of real font hinting.
 different character maps. Regenerate them with
 `.venv/bin/python scripts/text_encoding_cases.py`. The encoding face assigns
 different glyphs to characters decoded from the same Windows-1252/1251 bytes.
-The symbol face has a Microsoft symbol cmap, including conflicting low-byte
-and F000-range entries to distinguish lookup rules. Neither is a copy of
+The symbol face has a Microsoft symbol cmap with F000-range entries. Neither is a copy of
 Microsoft Symbol or Wingdings.

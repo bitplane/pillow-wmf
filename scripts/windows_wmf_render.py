@@ -53,7 +53,7 @@ def private_fonts(paths):
     try:
         for path in paths:
             path = str(path.resolve())
-            check(add(path, 0x10, None), "AddFontResourceExW")  # FR_PRIVATE
+            check(add(path, 0x10, None), f"AddFontResourceExW({path})")  # FR_PRIVATE
             loaded.append(path)
         yield
     finally:

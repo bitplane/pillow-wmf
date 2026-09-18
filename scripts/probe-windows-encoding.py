@@ -1,13 +1,14 @@
 """Verify byte-to-glyph mappings using identical fonts and native ANSI APIs."""
 
 import argparse
+import ctypes
 import importlib.util
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
 from real_text_cases import fetch_fonts
 from text_encoding_cases import ENCODING_FAMILY, FONT_ROOT, SIZE, SYMBOL_FAMILY, cases
-from windows_wmf_render import private_fonts, render_wmf
+from windows_wmf_render import bind, check, private_fonts, render_wmf
 
 from pillow_wmf import Recorder
 from pillow_wmf.wmf.objects import Font
@@ -18,6 +19,23 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    convert = bind(
+        kernel,
+        "MultiByteToWideChar",
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.c_ulong,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_wchar_p,
+        ctypes.c_int,
+    )
+    sample_bytes = bytes(range(256))
+    for codepage in (1252, 1251):
+        decoded = ctypes.create_unicode_buffer(256)
+        check(convert(codepage, 0, sample_bytes, 256, decoded, 256), "MultiByteToWideChar")
+        print(f"codepage={codepage} unicode={[ord(c) for c in decoded]}", flush=True)
     paths = fetch_fonts(args.output / "fonts")
     for filename in ("encoding.ttf", "symbols.ttf"):
         path = args.output / "fonts" / filename
