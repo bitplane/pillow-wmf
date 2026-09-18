@@ -44,7 +44,7 @@ class GlyphMetrics(ctypes.Structure):
     ]
 
 
-def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=None, characters=None):
+def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=None, characters=None, shaping=False):
     with reference_surface(*size) as (gdi, dc, _):
         ptr = ctypes.c_void_p
         callback_type = ctypes.WINFUNCTYPE(ctypes.c_int, ptr, ptr, ptr, ctypes.c_int, ctypes.c_ssize_t)
@@ -106,6 +106,8 @@ def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=Non
                             if length != len(expected) or buffer.raw != expected:
                                 raise RuntimeError(f"Selected font table differs: {tag}")
                         decoded = sample.decode("ascii") if characters is None else characters
+                        if shaping:
+                            observe_shaping(hdc, decoded)
                         indices = (ctypes.c_ushort * len(decoded))()
                         if glyph_indices(hdc, decoded, len(decoded), indices, 1) == 0xFFFFFFFF:
                             raise OSError("GetGlyphIndicesW failed")
@@ -186,6 +188,53 @@ def main():
             render_wmf(source, 128, 128).save(args.output / f"{name}.png")
     finally:
         check(remove(str(FONT_PATH), 0x10, None), "RemoveFontResourceExW")
+
+
+def observe_shaping(dc, text):
+    """Inspect script boundaries and glyph attributes, not just raw cmap lookup."""
+
+    class Item(ctypes.Structure):
+        _fields_ = [("position", ctypes.c_int), ("analysis", ctypes.c_ushort * 2)]
+
+    usp = ctypes.WinDLL("usp10", use_last_error=True)
+    ptr = ctypes.c_void_p
+    integer = ctypes.c_int
+    itemize = bind(usp, "ScriptItemize", wintypes.LONG, ctypes.c_wchar_p, integer, integer, ptr, ptr, ptr, ptr)
+    shape = bind(
+        usp, "ScriptShape", wintypes.LONG, ptr, ptr, ctypes.c_wchar_p, integer, integer, ptr, ptr, ptr, ptr, ptr
+    )
+    free = bind(usp, "ScriptFreeCache", wintypes.LONG, ptr)
+    items = (Item * (len(text) + 2))()
+    count = integer()
+    if itemize(text, len(text), len(items), None, None, items, ctypes.byref(count)):
+        raise RuntimeError("ScriptItemize failed")
+    cache = ptr()
+    try:
+        for i in range(count.value):
+            segment = text[items[i].position : items[i + 1].position]
+            glyphs = (ctypes.c_ushort * (len(segment) * 2 + 16))()
+            clusters = (ctypes.c_ushort * len(segment))()
+            attributes = (ctypes.c_ushort * len(glyphs))()
+            length = integer()
+            result = shape(
+                dc,
+                ctypes.byref(cache),
+                segment,
+                len(segment),
+                len(glyphs),
+                items[i].analysis,
+                glyphs,
+                clusters,
+                attributes,
+                ctypes.byref(length),
+            )
+            print(
+                f"shape text={segment!a} analysis={list(items[i].analysis)} result={result} "
+                f"glyphs={list(glyphs)[: length.value]} attributes={list(attributes)[: length.value]}",
+                flush=True,
+            )
+    finally:
+        free(ctypes.byref(cache))
 
 
 if __name__ == "__main__":

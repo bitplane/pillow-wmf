@@ -58,7 +58,15 @@ def main():
                 characters = "".join(bytes([byte]).decode(encoding, errors="surrogateescape") for byte in sample)
                 characters = "".join(chr(ord(c) - 0xDC00) if 0xDC80 <= ord(c) <= 0xDCFF else c for c in characters)
             source = recorder.to_bytes()
-            probe.observe(source, family=family, size=SIZE, sample=sample, tables=tables[family], characters=characters)
+            probe.observe(
+                source,
+                family=family,
+                size=SIZE,
+                sample=sample,
+                tables=tables[family],
+                characters=characters,
+                shaping=args.missing_only,
+            )
             (args.output / f"{name}.wmf").write_bytes(source)
             render_wmf(source, *SIZE).save(args.output / f"{name}.png")
     if args.missing_only:
