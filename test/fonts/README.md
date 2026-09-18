@@ -13,3 +13,11 @@ descent are 900 and 300, and typographic ascent and descent are 800 and 200.
 Those differing metrics distinguish cell-height and character-height requests.
 There are no hinting instructions, kerning or shaping tables. This isolates
 layout experiments; it is not representative coverage of real font hinting.
+
+`encoding.ttf` and `symbols.ttf` reuse the same original CC0 geometry with
+different character maps. Regenerate them with
+`.venv/bin/python scripts/text_encoding_cases.py`. The encoding face assigns
+different glyphs to characters decoded from the same Windows-1252/1251 bytes.
+The symbol face has a Microsoft symbol cmap, including conflicting low-byte
+and F000-range entries to distinguish lookup rules. Neither is a copy of
+Microsoft Symbol or Wingdings.

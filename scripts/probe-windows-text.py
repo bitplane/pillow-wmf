@@ -44,7 +44,7 @@ class GlyphMetrics(ctypes.Structure):
     ]
 
 
-def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=None):
+def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=None, characters=None):
     with reference_surface(*size) as (gdi, dc, _):
         ptr = ctypes.c_void_p
         callback_type = ctypes.WINFUNCTYPE(ctypes.c_int, ptr, ptr, ptr, ctypes.c_int, ctypes.c_ssize_t)
@@ -68,6 +68,9 @@ def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=Non
         font_data = bind(gdi, "GetFontData", wintypes.DWORD, ptr, wintypes.DWORD, wintypes.DWORD, ptr, wintypes.DWORD)
         glyph_indices = bind(
             gdi, "GetGlyphIndicesW", wintypes.DWORD, ptr, ctypes.c_wchar_p, ctypes.c_int, ptr, wintypes.DWORD
+        )
+        ansi_indices = bind(
+            gdi, "GetGlyphIndicesA", wintypes.DWORD, ptr, ctypes.c_char_p, ctypes.c_int, ptr, wintypes.DWORD
         )
         char_width = bind(gdi, "GetCharWidth32W", wintypes.BOOL, ptr, wintypes.UINT, wintypes.UINT, ptr)
         glyph_metrics = bind(
@@ -102,21 +105,27 @@ def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=Non
                             length = font_data(hdc, int.from_bytes(tag.encode(), "little"), 0, buffer, len(expected))
                             if length != len(expected) or buffer.raw != expected:
                                 raise RuntimeError(f"Selected font table differs: {tag}")
-                        characters = sample.decode("ascii")
-                        indices = (ctypes.c_ushort * len(characters))()
-                        if glyph_indices(hdc, characters, len(characters), indices, 1) == 0xFFFFFFFF:
+                        decoded = sample.decode("ascii") if characters is None else characters
+                        indices = (ctypes.c_ushort * len(decoded))()
+                        if glyph_indices(hdc, decoded, len(decoded), indices, 1) == 0xFFFFFFFF:
                             raise OSError("GetGlyphIndicesW failed")
                         widths = []
-                        for character in characters:
+                        for character in decoded:
                             width = ctypes.c_int()
                             check(
                                 char_width(hdc, ord(character), ord(character), ctypes.byref(width)), "GetCharWidth32W"
                             )
                             widths.append(width.value)
-                        print(f"characters={characters!r} glyphs={list(indices)} advances={widths}", flush=True)
+                        ansi = (ctypes.c_ushort * len(sample))()
+                        if ansi_indices(hdc, sample, len(sample), ansi, 1) == 0xFFFFFFFF:
+                            raise OSError("GetGlyphIndicesA failed")
+                        print(
+                            f"characters={decoded!a} glyphs={list(indices)} ansi_glyphs={list(ansi)} advances={widths}",
+                            flush=True,
+                        )
                         identity = ctypes.create_string_buffer(struct.pack("<HhHhHhHh", 0, 1, 0, 0, 0, 0, 0, 1))
                         cells = []
-                        for character in characters:
+                        for character in decoded:
                             glyph = GlyphMetrics()
                             if (
                                 glyph_metrics(hdc, ord(character), 0, ctypes.byref(glyph), 0, None, identity)
@@ -124,11 +133,11 @@ def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=Non
                             ):
                                 raise OSError("GetGlyphOutlineW failed")
                             cells.append(glyph.advance_x)
-                        prefixes = (ctypes.c_int * len(characters))()
+                        prefixes = (ctypes.c_int * len(decoded))()
                         extent_size = wintypes.SIZE()
                         check(
                             extent_ex(
-                                hdc, characters, len(characters), 0x7FFFFFFF, None, prefixes, ctypes.byref(extent_size)
+                                hdc, decoded, len(decoded), 0x7FFFFFFF, None, prefixes, ctypes.byref(extent_size)
                             ),
                             "GetTextExtentExPointW",
                         )

@@ -19,6 +19,7 @@ on:
           - text
           - real-text
           - text-layout
+          - text-encoding
           - layout
           - patblt
           - dib-brush
@@ -122,6 +123,19 @@ jobs:
         with:
           name: real-text-probe
           path: real-text-probe/
+          retention-days: 7
+      - name: Probe single-byte text encodings
+        if: inputs.probe == 'text-encoding'
+        shell: bash
+        run: |
+          mkdir -p text-encoding-probe
+          python scripts/probe-windows-encoding.py --output text-encoding-probe | tee text-encoding-probe/observations.txt
+      - name: Upload encoding observations
+        if: always() && inputs.probe == 'text-encoding'
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-encoding-probe
+          path: text-encoding-probe/
           retention-days: 7
       - name: Verify native PatBlt
         if: inputs.probe == 'patblt' || inputs.probe == 'all'

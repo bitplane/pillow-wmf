@@ -39,6 +39,19 @@ def test_layout_probe_records_signed_spacing_and_round_trips():
         assert trace.calls == recorder.calls
 
 
+def test_encoding_probe_inputs_are_lossless_and_fonts_are_reproducible():
+    factory = runpy.run_path(str(SCRIPTS / "text_encoding_cases.py"))
+    for symbol, filename in ((False, "encoding.ttf"), (True, "symbols.ttf")):
+        assert factory["font_bytes"](symbol=symbol) == (factory["FONT_ROOT"] / filename).read_bytes()
+    for _, _, _, _, recorder in factory["cases"]():
+        source = recorder.to_bytes()
+        metafile = Metafile.from_bytes(source)
+        assert metafile.to_bytes() == source
+        trace = TraceContext()
+        assert play(metafile, trace, strict=True) == ()
+        assert trace.calls == recorder.calls
+
+
 def test_gallery_omits_exact_cases_keeps_single_channel_differences_and_reports_blocked(tmp_path):
     gallery = runpy.run_path(str(SCRIPTS / "text-gallery.py"))["gallery"]
     source, output = tmp_path / "source", tmp_path / "gallery"
