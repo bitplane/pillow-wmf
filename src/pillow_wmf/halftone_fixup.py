@@ -17,8 +17,15 @@ def fixup_bitmap(bitmap, left=0, top=0, right=None, bottom=None):
     pixels = bytearray(bitmap.pixels)
 
     def raw(x, y):
-        x = 2 * left - x if x < left else 2 * (right - 1) - x if x >= right else x
-        y = 2 * top - y if y < top else 2 * (bottom - 1) - y if y >= bottom else y
+        # Reflect lookahead across the boundary sample, not across its edge.
+        if x < left:
+            x = 2 * left - x
+        elif x >= right:
+            x = 2 * (right - 1) - x
+        if y < top:
+            y = 2 * top - y
+        elif y >= bottom:
+            y = 2 * (bottom - 1) - y
         return bitmap.pixel(x, y)
 
     def put(x, y, color):

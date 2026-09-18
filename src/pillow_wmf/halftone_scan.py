@@ -21,9 +21,11 @@ class ExpansionWindow:
         # The cursor stops fetching at the source boundary, but the filter's
         # fractional phase continues. Earlier slots may still be unfilled.
         shift = max(0, max(scan for scan, _ in weights) - max(1, self.stop - 1))
-        return tuple(
-            (slot if (slot := min(self.stop - 1, scan - shift)) >= 0 else None, weight) for scan, weight in weights
-        )
+        samples = []
+        for scan, weight in weights:
+            slot = min(self.stop - 1, scan - shift)
+            samples.append((slot if slot >= 0 else None, weight))
+        return tuple(samples)
 
 
 class ExpansionSamples:

@@ -10,10 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil, floor
-from struct import pack, unpack
 
 from .gdi_math import circle_control
 from .geometry import Point, Polygon, StrokeSegment, flatten_cubic
+from .numeric import float32
 
 # Native circular pen silhouettes, in half-pixel units. Only one half is
 # stored; each opposite vertex is its exact negation. These are pen shapes,
@@ -104,20 +104,14 @@ def frame_footprint(width, height, scale_x, scale_y):
     if not width or not height:
         return 0, 0
 
-    def single(value):
-        return unpack("f", pack("f", value))[0]
-
     radius = max(width, height)
-    scale_x = single(single(width / radius) * single(scale_x))
-    scale_y = single(single(height / radius) * single(scale_y))
+    scale_x = float32(float32(width / radius) * float32(scale_x))
+    scale_y = float32(float32(height / radius) * float32(scale_y))
     pen = realize_pen(2 * radius, scale_x, scale_y, geometric=True)
     half = pen.vertices[: len(pen.vertices) // 2]
-    indices = (
-        0,
-        min(range(len(half)), key=lambda i: half[i][1])
-        if half[0][0] >= 0
-        else max(range(len(half)), key=lambda i: half[i][1]),
-    )
+    extreme = min if half[0][0] >= 0 else max
+    vertical_index = extreme(range(len(half)), key=lambda index: half[index][1])
+    indices = (0, vertical_index)
     supports = []
     for axis, index in enumerate(indices):
         for step in range(1, len(pen.vertices)):

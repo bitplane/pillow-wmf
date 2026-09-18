@@ -90,6 +90,29 @@ class TextState:
     mapper_flags: int = 0
 
 
+@dataclass(frozen=True)
+class SavedDC:
+    """Saved drawing state; selected objects retain their identity.
+
+    Mapping is copied at save time. The image and handle allocation table are
+    not part of a snapshot, and palette mutations remain visible after restore.
+    """
+
+    mapping: Mapping
+    pen: Pen
+    brush: Brush
+    position: tuple[int, int]
+    clip: ClipRegion
+    polygon_fill_mode: int
+    rop2: int
+    background_mode: int
+    background_color: tuple[int, int, int] | PaletteIndex
+    text_color: tuple[int, int, int] | PaletteIndex
+    stretch_mode: int
+    palette: LogicalPalette
+    text_state: TextState
+
+
 # MFCOMMENT, POSTSCRIPT_IGNORE, BEGIN_PATH, CLIP_TO_PATH, END_PATH.
 # These are metadata or printer-driver operations, not bitmap GDI paths.
 # This RGB memory device has no PostScript channel. Unknown escapes remain
@@ -128,23 +151,7 @@ class RasterContext(TraceContext):
         self._text_state = TextState()
         self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height), surface_width=width)
         self._clip = ClipRegion()
-        self._saved: list[
-            tuple[
-                Mapping,
-                Pen,
-                Brush,
-                tuple[int, int],
-                ClipRegion,
-                int,
-                int,
-                int,
-                tuple[int, int, int] | PaletteIndex,
-                tuple[int, int, int] | PaletteIndex,
-                int,
-                LogicalPalette,
-                TextState,
-            ]
-        ] = []
+        self._saved: list[SavedDC] = []
 
     def _point(self, x: int, y: int) -> tuple[int, int]:
         return self.mapping.device_point(x, y)
@@ -479,38 +486,36 @@ class RasterContext(TraceContext):
             )
         elif name == "save_dc":
             self._saved.append(
-                (
-                    replace(self.mapping),
-                    self._pen,
-                    self._brush,
-                    self._position,
-                    self._clip,
-                    self._polygon_fill_mode,
-                    self._rop2,
-                    self._background_mode,
-                    self._background_color,
-                    self._text_color,
-                    self._stretch_mode,
-                    self._palette,
-                    self._text_state,
+                SavedDC(
+                    mapping=replace(self.mapping),
+                    pen=self._pen,
+                    brush=self._brush,
+                    position=self._position,
+                    clip=self._clip,
+                    polygon_fill_mode=self._polygon_fill_mode,
+                    rop2=self._rop2,
+                    background_mode=self._background_mode,
+                    background_color=self._background_color,
+                    text_color=self._text_color,
+                    stretch_mode=self._stretch_mode,
+                    palette=self._palette,
+                    text_state=self._text_state,
                 )
             )
         elif name == "restore_dc":
-            (
-                self.mapping,
-                self._pen,
-                self._brush,
-                self._position,
-                self._clip,
-                self._polygon_fill_mode,
-                self._rop2,
-                self._background_mode,
-                self._background_color,
-                self._text_color,
-                self._stretch_mode,
-                self._palette,
-                self._text_state,
-            ) = snapshot
+            self.mapping = snapshot.mapping
+            self._pen = snapshot.pen
+            self._brush = snapshot.brush
+            self._position = snapshot.position
+            self._clip = snapshot.clip
+            self._polygon_fill_mode = snapshot.polygon_fill_mode
+            self._rop2 = snapshot.rop2
+            self._background_mode = snapshot.background_mode
+            self._background_color = snapshot.background_color
+            self._text_color = snapshot.text_color
+            self._stretch_mode = snapshot.stretch_mode
+            self._palette = snapshot.palette
+            self._text_state = snapshot.text_state
             del self._saved[target - 1 :]
         elif name in ("intersect_clip_rect", "exclude_clip_rect"):
             left, top = self.mapping.clip_point(a["left"], a["top"])

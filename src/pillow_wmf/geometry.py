@@ -233,6 +233,7 @@ def contains(polygons: tuple[Polygon, ...], x: int, y: int, *, fill_mode: int = 
             if (y1 > py) == (y2 > py):
                 continue
             cross = (px - x1) * (y2 - y1) - (py - y1) * (x2 - x1)
-            if (cross < 0) if y2 > y1 else (cross > 0):
-                winding += 1 if y2 > y1 else -1
+            direction = 1 if y2 > y1 else -1
+            if cross * direction < 0:
+                winding += direction
     return winding != 0 if fill_mode == 2 else winding % 2 != 0

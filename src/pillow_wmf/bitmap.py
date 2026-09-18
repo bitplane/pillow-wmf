@@ -102,7 +102,10 @@ def encode_dib(
         raise ValueError("Core RGB24 has no colour table")
     if rle and (depth not in (4, 8) or top_down or masks):
         raise ValueError("RLE requires bottom-up indexed pixels")
-    compression = (1 if depth == 8 else 2) if rle else 3 if masks else 0
+    if rle:
+        compression = 1 if depth == 8 else 2
+    else:
+        compression = 3 if masks else 0
     payload = bytearray()
     for y in range(height) if top_down else range(height - 1, -1, -1):
         row = samples[y * width : (y + 1) * width]
@@ -363,7 +366,10 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
         if colors > 1 << depth:
             raise FormatError("DIB colour table exceeds bit depth")
         colors = colors or 1 << depth
-    entry_size = (3 if header_size == 12 else 4) if color_usage == 0 else 2 if color_usage == 1 else 0
+    if color_usage == 0:
+        entry_size = 3 if header_size == 12 else 4
+    else:
+        entry_size = 2 if color_usage == 1 else 0
     table_start = offset
     offset += colors * entry_size
     # biSizeImage may be zero for BI_RGB. Compute the required extent rather

@@ -21,7 +21,11 @@ def decode_rle(data, width, height, depth):
     while cursor < len(data):
         count, value = take(2)
         if count:
-            values = bytes(value if depth == 8 else (value >> (4 if i % 2 == 0 else 0)) & 15 for i in range(count))
+            if depth == 8:
+                values = bytes((value,)) * count
+            else:
+                pair = bytes((value >> 4, value & 15))
+                values = (pair * ((count + 1) // 2))[:count]
         elif value == 0:
             x, y = 0, y + 1
             if y > height:
@@ -39,9 +43,10 @@ def decode_rle(data, width, height, depth):
             count = value
             size = (count * depth + 7) // 8
             literal = take((size + 1) & ~1)
-            values = bytes(
-                literal[i] if depth == 8 else (literal[i // 2] >> (4 if i % 2 == 0 else 0)) & 15 for i in range(count)
-            )
+            if depth == 8:
+                values = literal[:count]
+            else:
+                values = bytes(nibble for byte in literal for nibble in (byte >> 4, byte & 15))[:count]
         if x + count > width or y >= height:
             raise FormatError("DIB RLE run outside bitmap")
         output[y * width + x : y * width + x + count] = values

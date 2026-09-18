@@ -8,6 +8,7 @@ from bisect import bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import cached_property
+from itertools import pairwise
 from math import ceil, floor
 
 type Rectangle = tuple[int, int, int, int]
@@ -82,7 +83,7 @@ class RegionMask:
         rectangles = []
         for top, bottom, endpoints in self.bands:
             boundaries = sorted({top, bottom} | {y for band in other.bands for y in band[:2] if top < y < bottom})
-            for y0, y1 in zip(boundaries, boundaries[1:]):
+            for y0, y1 in pairwise(boundaries):
                 index = bisect_right(other.tops, y0) - 1
                 cuts = other.bands[index][2] if index >= 0 and y0 < other.bands[index][1] else ()
                 for left, right in zip(endpoints[::2], endpoints[1::2], strict=True):

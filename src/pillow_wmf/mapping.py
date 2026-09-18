@@ -3,12 +3,8 @@
 from dataclasses import dataclass
 from fractions import Fraction
 from math import floor
-from struct import pack, unpack
 
-
-def single(value: float) -> float:
-    """Round a transform intermediate to IEEE-754 binary32."""
-    return unpack("f", pack("f", value))[0]
+from .numeric import float32
 
 
 def rounded(value: float) -> int:
@@ -29,7 +25,7 @@ def scaled(value: int, numerator: int, denominator: int) -> int:
     return sign * (abs(product) // abs(denominator))
 
 
-# Measured on the project's windows-2025 reference DC, run 35071353163.
+# Extents for the reference bitmap device; independent of the canvas size.
 PHYSICAL_EXTENTS = {
     2: ((2709, 2032), (1024, -768)),
     3: ((27093, 20320), (1024, -768)),
@@ -80,9 +76,11 @@ class Mapping:
                 window_origin += last
                 viewport = -viewport
                 viewport_origin = -viewport_origin
-            # vUpdateWtoDXform realizes each FLOAT operation separately.
+            # Realize each FLOAT operation separately.
             # Rounding only the completed translation moves boundary pixels.
-            origin = single(single(-window_origin * single(viewport / window)) + viewport_origin)
+            scale = float32(viewport / window)
+            window_translation = float32(-window_origin * scale)
+            origin = float32(window_translation + viewport_origin)
             yield viewport, window, origin
 
     def point(self, x: int, y: int) -> tuple[int, int]:
@@ -125,10 +123,12 @@ class Mapping:
         fixed-point conversion; retaining Python doubles can miss a tie.
         ``point`` retains the separate LPtoDP-style integer conversion.
         """
-        return tuple(
-            (fixed(single(value * single(viewport / window))) + fixed(single(origin)) + 8) // 16
-            for value, (viewport, window, origin) in zip((x, y), self._axes(), strict=True)
-        )
+        result = []
+        for value, (viewport, window, origin) in zip((x, y), self._axes(), strict=True):
+            product = float32(value * float32(viewport / window))
+            coordinate = fixed(product) + fixed(origin)
+            result.append((coordinate + 8) // 16)
+        return tuple(result)
 
     def clip_displacement(self, x: int, y: int) -> tuple[int, int]:
         """OffsetClipRgn rounds transformed distances symmetrically at ties."""
