@@ -79,9 +79,9 @@ def main():
             winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontLink\SystemLink"
         ) as key:
             print("system_links=", winreg.QueryValueEx(key, "Microsoft Sans Serif")[0], flush=True)
-        for path in sorted((Path(os.environ["WINDIR"]) / "Fonts").glob("*.ttf")):
+        for path in sorted((Path(os.environ["WINDIR"]) / "Fonts").glob("*.tt[fc]")):
             try:
-                with TTFont(path, lazy=True) as font:
+                with TTFont(path, fontNumber=0, lazy=True) as font:
                     cmap = font.getBestCmap() or {}
                     if 0 in cmap or 0x81 in cmap:
                         print(
