@@ -12,7 +12,7 @@ from pillow_wmf.ellipse import arc_figure
     ),
 )
 def test_native_pie_control_points_and_closure(null_pen, expected):
-    # GetPath captured before implementation, Windows run 35145099841.
+    # Native controls include the closing radial segments in figure order.
     path = arc_figure(5, 6, 28, 27, (36, 16), (36, -4), closure="pie", null_pen=null_pen)
     assert path.closed
     assert path.commands == expected

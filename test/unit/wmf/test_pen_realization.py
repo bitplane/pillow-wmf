@@ -11,7 +11,7 @@ from pillow_wmf.stroke import realize_pen, widen_segment
 @pytest.mark.parametrize("sign", (1, -1))
 @pytest.mark.parametrize("width", (511, 512, 513))
 def test_native_thin_pen_size_limit(width, sign):
-    # WidenPath, run 35329745361. bThicken rejects half-basis components
+    # Native pen thickening rejects half-basis components
     # >=4096 fixed units before testing the collapsed minor axis.
     pen = realize_pen(width, sign, Fraction(1, 1024))
     outline = widen_segment(StrokeSegment.line((0, 0), (0, 0)), pen)
@@ -84,7 +84,7 @@ def test_circular_table_selection_uses_fixed_diameters(window):
 
 
 def test_fractional_pen_matches_native_widened_contour():
-    # Exact device sixteenths from pen-support run 35311068688, not inferred
+    # Exact device sixteenths measured from the widened path, not inferred
     # from the final raster pixels. No unrounded logical tangent is needed.
     pen = realize_pen(176, Fraction(128, 8118), Fraction(128, 8035))
     assert widen_segment(StrokeSegment.line((1024, 1024), (1200, 592)), pen) == [

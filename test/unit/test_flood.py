@@ -21,7 +21,7 @@ def test_scanlines_match_independent_four_neighbour_search():
                 continue
             expected.add((x, y))
             pending.extend(((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)))
-        spans = flood_spans(23, 19, seed, lambda x, y: (x, y) in eligible)
+        spans = flood_spans(23, 19, seed, lambda x, y, eligible=eligible: (x, y) in eligible)
         actual = [(x, y) for y, left, right in spans for x in range(left, right)]
         assert len(actual) == len(set(actual))
         assert set(actual) == expected

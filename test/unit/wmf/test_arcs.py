@@ -25,8 +25,8 @@ def test_native_float_lookup_before_quadrant_reduction(angle, expected):
 
 @pytest.mark.parametrize("offset", ((0, 0), (17, -13)))
 def test_native_tiny_elliptical_loop_controls_and_flattening(offset):
-    # Native controls: run 35111160259. Native FlattenPath emits a vertex
-    # at X=1005, not 1006; the former lookup precision lost that distinction.
+    # Native flattening emits a vertex at X=1005, not 1006; lookup
+    # interpolation must preserve the intermediate precision at this boundary.
     ox, oy = offset
     curve = arc_cubics(8 + ox, 16 + oy, 120 + ox, 112 + oy, (62 + ox, 16364 + oy), (62 + ox, 16365 + oy))[0]
     expected = ((1016, 1776), (1001, 1776), (1002, 1776), (1016, 1776))
@@ -42,8 +42,8 @@ def test_native_arc_endpoint_precision_modes(accurate, expected):
 
 
 def test_native_short_arc_tangent_intersection_controls():
-    # Original device controls captured in run 35104558437. Analytically
-    # equivalent tan(sweep/4) handles are NOT equivalent with table arithmetic.
+    # Analytically equivalent tan(sweep/4) handles do not reproduce these
+    # native device controls with finite-precision table arithmetic.
     assert arc_cubics(8, 8, 120, 120, (61, 65), (61, 66)) == (((174, 1297), (198, 1371), (233, 1442), (277, 1509)),)
 
 

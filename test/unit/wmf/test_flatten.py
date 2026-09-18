@@ -78,7 +78,7 @@ def test_native_adaptive_ellipse_vertices(control, expected):
     assert flatten_cubic(control) == expected
 
 
-# Captured controls and vertices: native run 35328303288. PolyBezier maps
+# PolyBezier maps
 # inputs to whole device pixels; these are GetPath controls, not requested ones.
 @pytest.mark.parametrize("swap", [False, True])
 @pytest.mark.parametrize(

@@ -12,7 +12,7 @@ from pillow_wmf.ellipse import round_rect_figure
     ),
 )
 def test_native_round_rect_first_corner(null_pen, expected):
-    # Pre-implementation native GetPath capture, run 35147100299.
+    # Native controls distinguish null-pen and outlined rectangle bounds.
     path = round_rect_figure(8, 16, 120, 112, 17, 29, null_pen=null_pen)
     assert path.commands[0] == expected
 

@@ -7,7 +7,7 @@ from pillow_wmf.stroke import cosmetic_line
 
 
 def test_equal_radials_keep_native_terminal_quadrant_arithmetic():
-    # Native GetPath, run 35114870764: identical points follow the same
+    # Identical radial points follow the same native path
     # construction as distinct points on the same ray, not Ellipse's shortcut.
     curves = arc_cubics(8, 16, 120, 112, (120, 64), (120, 64))
     assert curves == arc_cubics(8, 16, 120, 112, (120, 64), (176, 64))

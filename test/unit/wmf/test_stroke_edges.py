@@ -1,7 +1,7 @@
 """Native-confirmed clipping behaviour for connected styled paths.
 
-All 32 crop pairs were rendered independently by Windows GDI in workflow run
-35102667643. See scripts/probe-windows-edge-cases.py for that oracle check.
+All 32 crop pairs were rendered independently by Windows GDI.
+See scripts/probe-windows-edge-cases.py for the oracle check.
 """
 
 import pytest
@@ -49,8 +49,8 @@ def test_round_join_distinguishes_reversal_from_straight_continuation(direction)
     ),
 )
 def test_native_support_at_half_contour_seams(width, delta, expected):
-    # First WidenPath vertex, measured in original 28.4 device coordinates
-    # in run 35104558437. These ties used to select the wrong half-contour.
+    # First widened-path vertex in original 28.4 device coordinates.
+    # Support ties must select the same half-contour as the native traversal.
     start = (1024, 1024)
     end = (start[0] + delta[0], start[1] + delta[1])
     assert widen_segment(StrokeSegment.line(start, end), realize_pen(width))[0] == expected

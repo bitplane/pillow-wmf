@@ -9,7 +9,7 @@ from pillow_wmf.gdi_math import circle_control
 @pytest.mark.parametrize("extent,control_x", [(88281, 1096286), (88282, 1096299), (88283, 1096311)])
 @pytest.mark.parametrize("shape", ("ellipse", "roundrect"))
 def test_native_large_circle_controls(extent, control_x, shape):
-    # GetPath, Windows run 35329745361. Direct GDI coordinates deliberately
+    # Direct GDI coordinates deliberately
     # exceed WMF's signed 16-bit bounds; mapped WMFs use the same constructor.
     curves = (
         ellipse_cubics(0, 0, extent, 100)

@@ -7,7 +7,7 @@ from pillow_wmf.stroke import cosmetic_line, line_outline, realize_pen, widen_se
 
 
 def test_subdivided_cubic_retains_endpoint_tangents() -> None:
-    # Native widened-path measurements in run 35098165992 distinguish both
+    # Native widened-path measurements distinguish both
     # endpoint tangents from their chords, not just a cardinal Arc endpoint.
     cubic = ((256, 256), (768, 768), (768, 256), (1024, 256))
     path = DevicePath((cubic,))
