@@ -103,37 +103,21 @@ def cases():
             r.stretch_blt(2, 2, 52, 28, 0, 0, 13, 7, 0xCC0020, bitmap)
         yield f"bitmap16-version100-{operation}", r
 
-    for depth, operation in product((1, 4, 8, 16, 24, 32), ("bit_blt", "stretch_blt", "brush")):
+    # Source-transfer rejection across depths and stretch modes is a unit
+    # contract; the embedded depth/ROP atlases above retain its native oracle.
+    for depth in (1, 4, 8, 16, 24, 32):
         r = Recorder()
         r.set_text_color(0x713519)
         r.set_background_color(0xABCDEF)
-        dib = source(depth, pattern=operation == "brush")
-        if operation == "brush":
-            r.select_object(r.create_pattern_brush(dib))
-            r.pat_blt(2, 2, 54, 42, 0xF00021)
-            r.set_text_color(0x371953)
-            r.set_background_color(0xB7D3E1)
-            r.pat_blt(64, 2, 54, 42, 0xF00021)
-            r.set_rop2(7)
-            r.select_object(r.create_pen(5, 0, 0))
-            r.rectangle(2, 64, 118, 110)
-        else:
-            for i, mode in enumerate((1, 2, 3, 4)):
-                r.set_stretch_mode(mode)
-                if operation == "bit_blt":
-                    r.bit_blt(2 + i * 30, 2, 13, 7, 0, 0, 0xCC0020, dib)
-                    r.bit_blt(2 + i * 30, 18, 9, 5, 2, 1, 0x660046, dib)
-                    r.save_dc()
-                    r.set_window_extent(1, 1)
-                    r.set_viewport_extent(2, 3)
-                    r.bit_blt(1 + i * 15, 15, 13, 7, 0, 0, 0xCC0020, dib)
-                    r.restore_dc(-1)
-                else:
-                    r.stretch_blt(2 + i * 30, 2, 27, 21, 0, 0, 13, 7, 0xCC0020, dib)
-                    r.stretch_blt(2 + i * 30, 30, 9, 5, 0, 0, 13, 7, 0xCC0020, dib)
-                    r.stretch_blt(28 + i * 30, 46, -27, 21, 2, 1, 9, 5, 0x660046, dib)
-                    r.stretch_blt(2 + i * 30, 76, 27, 21, -2, -1, 13, 7, 0xCC0020, dib)
-        yield f"bitmap16-{depth}-{operation}", r
+        r.select_object(r.create_pattern_brush(source(depth, pattern=True)))
+        r.pat_blt(2, 2, 54, 42, 0xF00021)
+        r.set_text_color(0x371953)
+        r.set_background_color(0xB7D3E1)
+        r.pat_blt(64, 2, 54, 42, 0xF00021)
+        r.set_rop2(7)
+        r.select_object(r.create_pen(5, 0, 0))
+        r.rectangle(2, 64, 118, 110)
+        yield f"bitmap16-{depth}-brush", r
 
 
 def self_copy_cases():

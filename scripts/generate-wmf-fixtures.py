@@ -745,16 +745,19 @@ def stroke_cases():
         recorder.ellipse(24, 24, 96, 80)
         yield f"stroke-ellipse-null-width-{width}", recorder
     transforms = (
-        ("identity", (128, 128), (128, 128)),
-        ("scale-x", (128, 128), (256, 128)),
-        ("scale-y", (128, 128), (128, 256)),
-        ("half", (256, 256), (128, 128)),
-        ("reflect-x", (128, 128), (-128, 128)),
-        ("fractional", (256, 384), (384, 256)),
+        ("identity", (128, 128), (128, 128), (1, 2, 3, 4, 5, 6, 7, 12)),
+        ("scale-x", (128, 128), (256, 128), (1, 3, 7)),
+        ("scale-y", (128, 128), (128, 256), (1, 3, 7)),
+        ("half", (256, 256), (128, 128), (2, 3, 12)),
+        ("reflect-x", (128, 128), (-128, 128), (1, 6, 7)),
+        ("fractional", (256, 384), (384, 256), (1, 3, 7)),
     )
+    # Identity covers every small-pen silhouette and the cubic transition.
+    # Transforms exercise cosmetic, table and cubic paths without repeating
+    # the full width cross-product; realization arithmetic has unit coverage.
     directions = ((24, 0), (24, 6), (24, 12), (24, 24), (12, 24), (6, 24), (0, 24))
-    for width in (1, 2, 3, 4, 5, 6, 7, 12):
-        for name, window, viewport in transforms:
+    for name, window, viewport, widths in transforms:
+        for width in widths:
             recorder = mapped()
             recorder.set_window_extent(*window)
             recorder.set_viewport_extent(*viewport)

@@ -2,7 +2,7 @@ from struct import pack, pack_into
 
 import pytest
 
-from pillow_wmf import FormatError, RasterContext, UnsupportedOperation
+from pillow_wmf import FormatError, Metafile, RasterContext, Recorder, UnsupportedOperation, play
 from pillow_wmf.bitmap16 import encode_bitmap16, read_bitmap16
 from pillow_wmf.wmf.objects import BitmapData
 
@@ -151,11 +151,36 @@ def test_bitmap_limit_failure_does_not_allocate_a_brush():
 
 
 @pytest.mark.parametrize("depth", (1, 4, 8, 16, 24, 32))
-def test_embedded_selection_result_controls_whether_pattern_rop_is_reached(depth):
+@pytest.mark.parametrize("operation", ("bit_blt", "stretch_blt"))
+def test_embedded_selection_result_controls_whether_pattern_rop_is_reached(depth, operation):
     dc = RasterContext(4, 4)
     source = encode_bitmap16(1, 1, (0,), depth=depth)
-    dc.bit_blt(0, 0, 4, 4, 0, 0, 0x000042, source)
+    if operation == "bit_blt":
+        dc.bit_blt(0, 0, 4, 4, 0, 0, 0x000042, source)
+    else:
+        dc.stretch_blt(0, 0, 4, 4, 0, 0, 1, 1, 0x000042, source)
     assert dc.image.getpixel((0, 0)) == ((255, 255, 255) if depth in (1, 32) else (0, 0, 0))
+
+
+@pytest.mark.parametrize("depth", (1, 4, 8, 16, 24, 32))
+@pytest.mark.parametrize("operation", ("bit_blt", "stretch_blt"))
+@pytest.mark.parametrize("mode", (1, 2, 3, 4))
+def test_recorded_embedded_source_transfers_leave_destination_unchanged(depth, operation, mode):
+    # Embedded Bitmap16 sources are not selected into the playback DC.
+    # Source-dependent transfers therefore do nothing, unlike source-free ROPs.
+    recorder = Recorder()
+    recorder.set_stretch_mode(mode)
+    source = encode_bitmap16(3, 2, (0, 1, 0, 1, 0, 1), depth=depth)
+    for rop in (0xCC0020, 0x660046):  # SRCCOPY, SRCINVERT
+        if operation == "bit_blt":
+            recorder.bit_blt(1, 1, 3, 2, 0, 0, rop, source)
+        else:
+            recorder.stretch_blt(1, 1, 6, 4, 0, 0, 3, 2, rop, source)
+    dc = RasterContext(8, 8)
+    dc.image.putdata([(x * 29, y * 31, (x ^ y) * 17) for y in range(8) for x in range(8)])
+    before = dc.image.tobytes()
+    assert play(Metafile.from_bytes(recorder.to_bytes()), dc, strict=True) == ()
+    assert dc.image.tobytes() == before
 
 
 def test_short_embedded_bitmap_fails_before_pattern_rop_dispatch():

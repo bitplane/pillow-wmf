@@ -8,6 +8,21 @@ from pillow_wmf.geometry import StrokeSegment
 from pillow_wmf.stroke import realize_pen, widen_segment
 
 
+@pytest.mark.parametrize("width", (1, 2, 3, 4, 5, 6, 7, 12))
+@pytest.mark.parametrize("scale", (Fraction(1, 2), 1, 2))
+def test_uniform_scale_selects_the_same_device_pen(width, scale):
+    # These scales have exact integral/half-integral diameters. Circular
+    # table selection rounds half upward, but the hairline stays cosmetic.
+    device_width = (width * scale * 2 + 1) // 2
+    assert realize_pen(width, scale, scale) == realize_pen(device_width)
+
+
+@pytest.mark.parametrize("scale_y", (Fraction(1, 2), 1, 2, 20))
+@pytest.mark.parametrize("scale_x,cosmetic", ((Fraction(5, 4), True), (Fraction(3, 2), False), (Fraction(7, 4), False)))
+def test_hairline_transition_depends_on_rounded_x_width(scale_x, scale_y, cosmetic):
+    assert realize_pen(1, scale_x, scale_y).cosmetic is cosmetic
+
+
 @pytest.mark.parametrize("sign", (1, -1))
 @pytest.mark.parametrize("width", (511, 512, 513))
 def test_native_thin_pen_size_limit(width, sign):
