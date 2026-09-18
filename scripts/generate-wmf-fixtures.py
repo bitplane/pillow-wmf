@@ -141,6 +141,19 @@ def region_clip_cases():
 
 
 def inside_frame_cases():
+    for name, window in (("xy", (2048, 2048)), ("x", (2048, 2004)), ("y", (2004, 2048))):
+        for operation in ("rectangle", "ellipse", "round_rect", "arc", "chord", "pie"):
+            recorder = mapped()
+            recorder.set_window_extent(*window)
+            recorder.select_object(recorder.create_pen(6, 45, 0x00402010))
+            recorder.select_object(recorder.create_brush(0, 0x00CC8844, 0))
+            args = (256, 256, 1792, 1792)
+            if operation == "round_rect":
+                args += (768, 1024)
+            elif operation in ("arc", "chord", "pie"):
+                args += (1792, 512, 0, 1792)
+            getattr(recorder, operation)(*args)
+            yield f"insideframe-odd-{name}-{operation}", recorder
     for operation in ("rectangle", "ellipse", "round_rect", "arc", "chord", "pie"):
         recorder = mapped()
         recorder.set_viewport_extent(192, 96)
