@@ -1,4 +1,4 @@
-"""Native centreline, flattening and widening for two corpus ellipse strokes."""
+"""Native ellipse paths and cubic flattening across the 32/64-bit boundary."""
 
 import ctypes
 from ctypes import wintypes
@@ -6,7 +6,45 @@ from ctypes import wintypes
 from windows_wmf_render import bind, check, reference_surface
 
 
+def probe_cubic_range():
+    # Controls are expressed directly in 28.4 units. Native BEZIER32 accepts
+    # a bounding-box span below 16384 on both axes; larger spans use BEZIER64.
+    for span in (16383, 16384, 16385, 65537):
+        control = ((0, 0), (span, 731), (span // 3, 1199), (span - 37, 1777))
+        for swap in (False, True):
+            points_in = tuple((y, x) if swap else (x, y) for x, y in control)
+            with reference_surface(128, 128) as (gdi, dc, _bits):
+                ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
+                for name in ("BeginPath", "EndPath", "FlattenPath"):
+                    bind(gdi, name, boolean, ptr)
+                bind(gdi, "PolyBezier", boolean, ptr, ctypes.POINTER(wintypes.POINT), wintypes.DWORD)
+                bind(
+                    gdi,
+                    "GetPath",
+                    integer,
+                    ptr,
+                    ctypes.POINTER(wintypes.POINT),
+                    ctypes.POINTER(ctypes.c_ubyte),
+                    integer,
+                )
+                check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                check(gdi.BeginPath(dc), "BeginPath")
+                check(
+                    gdi.PolyBezier(dc, (wintypes.POINT * 4)(*(wintypes.POINT(*p) for p in points_in)), 4), "PolyBezier"
+                )
+                check(gdi.EndPath(dc), "EndPath")
+                check(gdi.FlattenPath(dc), "FlattenPath")
+                count = gdi.GetPath(dc, None, None, 0)
+                if count < 0:
+                    raise RuntimeError("GetPath failed")
+                points = (wintypes.POINT * count)()
+                kinds = (ctypes.c_ubyte * count)()
+                assert gdi.GetPath(dc, points, kinds, count) == count
+                print("cubic-range", span, swap, points_in, [(p.x, p.y) for p in points], flush=True)
+
+
 def main():
+    probe_cubic_range()
     profiles = (
         ("switch", (128, 128), 96, (-1008, -854), (2021, 2092), (-905, -726, 921, 1111)),
         ("nopark", (128, 128), 79, (-1003, -931), (1987, 2078), (-961, -889, 940, 1107)),
