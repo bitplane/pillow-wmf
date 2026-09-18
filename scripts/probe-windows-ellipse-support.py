@@ -8,12 +8,13 @@ from windows_wmf_render import bind, check, reference_surface
 
 def main():
     profiles = (
-        ("switch", 96, (-1008, -854), (2021, 2092), (-905, -726, 921, 1111)),
-        ("nopark", 79, (-1003, -931), (1987, 2078), (-961, -889, 940, 1107)),
+        ("switch", (128, 128), 96, (-1008, -854), (2021, 2092), (-905, -726, 921, 1111)),
+        ("nopark", (128, 128), 79, (-1003, -931), (1987, 2078), (-961, -889, 940, 1107)),
+        ("nopark-odd", (257, 193), 79, (-1003, -931), (1987, 2078), (-961, -889, 940, 1107)),
     )
-    for label, width, origin, window, box in profiles:
+    for label, surface, width, origin, window, box in profiles:
         for stage in ("curves", "flat", "wide", "pen"):
-            with reference_surface(128, 128) as (gdi, dc, _bits):
+            with reference_surface(*surface) as (gdi, dc, _bits):
                 ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
                 for name in ("BeginPath", "EndPath", "FlattenPath", "WidenPath"):
                     bind(gdi, name, boolean, ptr)
@@ -50,7 +51,7 @@ def main():
                     elif stage in ("wide", "pen"):
                         check(gdi.WidenPath(dc), "WidenPath")
                     check(gdi.SetWindowOrgEx(dc, 0, 0, None), "SetWindowOrgEx")
-                    check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                    check(gdi.SetWindowExtEx(dc, surface[0] * 16, surface[1] * 16, None), "SetWindowExtEx")
                     count = gdi.GetPath(dc, None, None, 0)
                     if count < 0:
                         raise RuntimeError("GetPath failed")
