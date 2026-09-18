@@ -9,6 +9,19 @@ records controls, flattened vertices, widened outlines and isolated pen contours
 for `switch`, `nopark`, and odd-sized `nopark`. All four odd-sized quarters'
 native vertices are retained in `test/unit/wmf/test_flatten.py`.
 
+## Shared circle controls
+
+Ellipse, RoundRect, full Arc quadrants and cubic pen outlines share a signed
+integer circle coefficient. Windows 26100.9444 multiplies the oriented radius
+by `0x729d7775` and arithmetically shifts by 32 to obtain the control inset.
+This approximates `1 - 4*(sqrt(2)-1)/3`; recomputing the irrational expression
+is not equivalent at large radii. `gdi_math.circle_control` expresses that
+multiply as an oriented handle length for all three constructors.
+[Run 35329745361](https://github.com/bitplane/pillow-wmf/actions/runs/35329745361)
+captures Ellipse and RoundRect controls for widths 88281–88283; width 88282
+distinguishes the integer coefficient by one fixed unit without allocating
+a large bitmap.
+
 ## Recovered arithmetic
 
 The public-symbol Windows 10.0.26100.9444 `win32kbase.sys` identifies

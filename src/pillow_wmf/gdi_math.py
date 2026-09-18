@@ -8,6 +8,17 @@ from math import atan, atan2, cos, floor, pi, sin
 from struct import pack, unpack
 
 
+def circle_control(radius: int, *, upward: bool) -> int:
+    """GDI's signed 0.32 circle-inset multiply, expressed as a handle length.
+
+    The complement of the usual cubic circle coefficient is stored as
+    0x729d7775, not recomputed from sqrt(2). Arithmetic shifts preserve the
+    oriented rounding used by ellipse, rounded-rectangle and pen constructors.
+    """
+    inset = ((radius if upward else -radius) * 0x729D7775) >> 32
+    return radius - inset if upward else radius + inset
+
+
 def float32(value: float) -> float:
     return unpack("<f", pack("<f", value))[0]
 

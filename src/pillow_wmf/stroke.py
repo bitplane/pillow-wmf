@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from math import ceil, floor, sqrt
+from math import ceil, floor
 from struct import pack, unpack
 
+from .gdi_math import circle_control
 from .geometry import Point, Polygon, StrokeSegment, flatten_cubic
-
-_CIRCLE_CONTROL = 4 * (sqrt(2) - 1) / 3
 
 # Native circular pen silhouettes, in half-pixel units. Only one half is
 # stored; each opposite vertex is its exact negation. These are pen shapes,
@@ -89,7 +88,7 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
             # half-contour seam layout used by the ordinary pen constructor.
             half = [(rx, 0), (0, -ry), (-rx, 0)]
         else:
-            cx, cy = ceil(rx * _CIRCLE_CONTROL), floor(ry * _CIRCLE_CONTROL)
+            cx, cy = circle_control(rx, upward=True), circle_control(ry, upward=False)
             half = [(rx, 0)]
             half += flatten_cubic(((rx, 0), (rx, -cy), (cx, -ry), (0, -ry)))
             half += flatten_cubic(((0, -ry), (-cx, -ry), (-rx, -cy), (-rx, 0)))

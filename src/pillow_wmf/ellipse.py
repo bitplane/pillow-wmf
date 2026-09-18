@@ -1,14 +1,13 @@
 """Construct the exclusive-bound ellipse as a fixed-point device path."""
 
 from itertools import pairwise
-from math import ceil, floor, sqrt
+from math import floor
 from typing import Literal
 
-from .gdi_math import SHORT_ANGLE, atan2_degrees, sincos_degrees
+from .gdi_math import SHORT_ANGLE, atan2_degrees, circle_control, sincos_degrees
 from .geometry import DevicePath, Point, Polygon, flatten_cubic
 
 _SCALE = 16
-_CUBIC_CIRCLE_CONTROL = 4 * (sqrt(2) - 1) / 3
 
 
 def box_corners(bounds):
@@ -51,10 +50,10 @@ def ellipse_cubics(
     rx, lx, ry = right_fixed - cx, cx - left_fixed, cy - top_fixed
     if clockwise:
         ry = -ry
-    cy_control = floor(_CUBIC_CIRCLE_CONTROL * ry)
+    cy_control = circle_control(ry, upward=False)
     # Translate the same horizontal control inset from both upper corners.
     # An odd box span must not independently round its shorter left radius.
-    x_inset = rx - ceil(rx * _CUBIC_CIRCLE_CONTROL)
+    x_inset = rx - circle_control(rx, upward=True)
     upper = (
         ((rx, 0), (rx, -cy_control), (rx - x_inset, -ry), (0, -ry)),
         ((0, -ry), (-lx + x_inset, -ry), (-lx, -cy_control), (-rx, 0)),
@@ -89,10 +88,10 @@ def round_rect_figure(
     def control(point, corner):
         # Apply oriented X/Y control rounding before reflecting the lower
         # half. Rounding final transformed coordinates loses that bias.
-        rounding = (ceil if horizontal[0] >= 0 else floor, floor if (vertical[1] >= 0) != clockwise else ceil)
+        rounding = (horizontal[0] >= 0, (vertical[1] >= 0) == clockwise)
         return tuple(
-            a + (1 if b >= a else -1) * quantize(abs(b - a) * _CUBIC_CIRCLE_CONTROL)
-            for a, b, quantize in zip(point, corner, rounding)
+            a + (1 if b >= a else -1) * circle_control(abs(b - a), upward=upward)
+            for a, b, upward in zip(point, corner, rounding)
         )
 
     upper = []
