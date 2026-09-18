@@ -1,6 +1,7 @@
 """Targeted native paths for the four binary-review arithmetic findings."""
 
 import ctypes
+import subprocess
 from ctypes import wintypes
 
 from windows_wmf_render import bind, check, reference_surface
@@ -36,6 +37,16 @@ def read_path(gdi, dc):
 
 
 def main():
+    subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Get-Item C:/Windows/System32/win32kbase.sys, C:/Windows/System32/win32kfull.sys | "
+            "ForEach-Object { $_.Name; $_.VersionInfo.FileVersion }",
+        ],
+        check=True,
+    )
     for layout in (0, 1):
         with reference_surface(128, 128) as (gdi, dc, _):
             bind_paths(gdi)
@@ -82,7 +93,7 @@ def main():
                 check(gdi.EndPath(dc), "EndPath")
                 print("control", operation, extent, read_path(gdi, dc), flush=True)
 
-    for size in (128, 8192):
+    for size in (128, 8192, 131071, 1000000):
         for start, end in (
             ((10000, -1), (0, -10000)),
             ((10000, -490), (10000, -1000)),
@@ -97,6 +108,13 @@ def main():
                 check(gdi.Arc(dc, *box, *start, *end), "Arc")
                 check(gdi.EndPath(dc), "EndPath")
                 print("arc", size, start, end, read_path(gdi, dc), flush=True)
+
+    with reference_surface(128, 128) as (gdi, dc, _):
+        bind_paths(gdi)
+        check(gdi.BeginPath(dc), "BeginPath")
+        check(gdi.Arc(dc, 8, 16, 120, 112, 62, 16364, 62, 16365), "Arc")
+        check(gdi.EndPath(dc), "EndPath")
+        print("tiny-loop", read_path(gdi, dc), flush=True)
 
 
 if __name__ == "__main__":
