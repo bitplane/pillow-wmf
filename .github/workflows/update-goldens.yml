@@ -8,10 +8,6 @@ on:
         type: choice
         default: all
         options: [all, corpus]
-      size:
-        description: "Optional new WIDTHxHEIGHT profile; blank updates existing profiles"
-        type: string
-        default: ""
       probe:
         description: "Optional native probe (all is expensive; explicit approval required)"
         type: choice
@@ -46,7 +42,6 @@ on:
 
 env:
   REFERENCE_SET: ${{ inputs.reference_set || 'all' }}
-  REFERENCE_SIZE: ${{ inputs.size }}
 
 permissions:
   contents: read
@@ -70,8 +65,7 @@ jobs:
         run: |
           root=test/compatibility/wmf
           if [[ "$REFERENCE_SET" == corpus ]]; then root="$root/corpus"; fi
-          args=(--root "$root")
-          if [[ -n "$REFERENCE_SIZE" ]]; then args+=(--size "$REFERENCE_SIZE"); fi
+          args=(--root "$root" --size 128x128)
           python scripts/update-goldens.py --check "${args[@]}"
 
   update:
@@ -137,8 +131,7 @@ jobs:
         run: |
           root=test/compatibility/wmf
           if [[ "$REFERENCE_SET" == corpus ]]; then root="$root/corpus"; fi
-          args=(--root "$root")
-          if [[ -n "$REFERENCE_SIZE" ]]; then args+=(--size "$REFERENCE_SIZE"); fi
+          args=(--root "$root" --size 128x128)
           python scripts/update-goldens.py "${args[@]}"
       - name: Verify native regions
         if: inputs.probe == 'regions' || inputs.probe == 'all'
