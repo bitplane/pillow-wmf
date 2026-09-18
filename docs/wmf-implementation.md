@@ -77,7 +77,10 @@ serve as a security validator for arbitrary nested payloads.
 Read records retain the original function word and uninterpreted trailing bytes.
 Known text records retain padding separately. Parsed header fields are preserved
 even where they are advisory (for example maximum record size); declared stream
-size still bounds record reads. Bytes after EOF are retained as the file trailer,
+size still bounds record reads. Overstated sizes are capped at the actual buffer
+length, matching complete Office/LibreOffice corpus streams accepted by Windows;
+records must still fit and EOF is required. The original size is preserved for
+round trips, without allocating from it. Bytes after EOF are retained as the file trailer,
 including any that fall within the declared size. Canonical output excludes that
 trailer from the recalculated stream size while retaining the bytes.
 
@@ -136,6 +139,27 @@ values, or raises in strict mode. SETRELABS is always ignored. Unsupported objec
 creations still occupy file slots, so subsequent objects cannot acquire the wrong
 index. References to those unavailable objects are reported and skipped; invalid
 or deleted file references raise `PlaybackError`.
+
+The RGB raster backend retains text alignment, character spacing, justification
+requests and mapper flags in saved DC state. This is bookkeeping only: font
+creation and both text-output calls still raise. Text layout, glyph metrics and
+justification realization remain deferred.
+
+Pen creation follows `CreatePenIndirect`/`CreatePen`, not `ExtCreatePen`:
+styles outside 0–6 realize as solid pens, rather than enabling extended cap/join
+flags. Requested styles remain intact in records and the call trace. This follows
+[Wine's creation normalization](https://github.com/wine-mirror/wine/blob/master/dlls/gdi32/objects.c)
+and unblocks `wmffuzz/fdo39256-2.wmf`. Its remaining nine pixels are an open
+[pen-realization investigation](gdi-strokes.md), retained as an exact native
+WMF/PNG regression rather than tolerated differences.
+
+For this bitmap device, MFCOMMENT (`0x000F`) is opaque metadata, including WMFC
+payloads; it does not switch playback to an embedded metafile. POSTSCRIPT_IGNORE
+(`0x0026`) and the printer path escapes (`0x1000`–`0x1002`) have no pixel effect.
+These are not GDI bitmap path operations. Unknown escapes still raise. This
+device-specific boundary follows the [Escape driver contract](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-escape)
+and [PostScript escape definitions](https://learn.microsoft.com/en-us/windows-hardware/drivers/print/pscript-supported-escapes),
+with pixel comparisons against the corpus's native RGB references.
 
 The caller owns the supplied backend. Playback inserts no implicit reset or
 cleanup calls into the command trace. A future native/raster backend will need a

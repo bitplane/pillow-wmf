@@ -62,6 +62,7 @@ def cases():
 
     yield from foundation_cases()
     yield from stroke_cases()
+    yield from pen_radius_probe_cases()
     yield from polygon_cases()
     yield from rop2_cases()
     yield from brush_cases()
@@ -670,6 +671,38 @@ def foundation_cases():
     recorder.offset_clip_region(8, 4)
     filled_box(recorder, (-16, -16, 48, 48))
     yield "state-clip-offset-vector", recorder
+
+
+def pen_radius_probe_cases():
+    """Small native matrix distinguishing fractional pen-radius models."""
+    profiles = (
+        ("fdo", 176, (8118, 8035), (128, 128)),
+        ("lady6", 6, (412, 1915), (128, 128)),
+        ("lady8", 8, (412, 1915), (128, 128)),
+        ("x-below", 4, (3200, 3200), (2224, 2300)),
+        ("x-above", 4, (3200, 3200), (2226, 2300)),
+        ("y-below", 4, (3200, 3200), (2220, 324)),
+        ("y-above", 4, (3200, 3200), (2220, 326)),
+    )
+    for name, width, window, viewport in profiles:
+        for style in (0, 6):
+            recorder = mapped()
+            recorder.set_window_extent(*window)
+            recorder.set_viewport_extent(*viewport)
+            recorder.select_object(recorder.create_pen(style, width, 0))
+            recorder.select_object(recorder.create_brush(1, 0, 0))
+            dx, dy = (round(16 * w / v) for w, v in zip(window, viewport, strict=True))
+            recorder.set_viewport_origin(32, 32)
+            recorder.move_to(0, 0)
+            recorder.line_to(0, 0)
+            recorder.set_viewport_origin(96, 32)
+            recorder.move_to(-dx, -dy)
+            recorder.line_to(dx, dy)
+            recorder.set_viewport_origin(32, 96)
+            recorder.polyline(((-dx, dy), (0, -dy), (dx, dy)))
+            recorder.set_viewport_origin(96, 96)
+            recorder.polygon(((-dx, dy), (0, -dy), (dx, dy)))
+            yield f"pen-radius-probe-{name}-style{style}", recorder
 
 
 def stroke_cases():

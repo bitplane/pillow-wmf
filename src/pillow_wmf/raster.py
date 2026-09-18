@@ -80,6 +80,23 @@ class SourceTransfer:
     pad_bounds: tuple[int, int, int, int] | None = None
 
 
+@dataclass(frozen=True)
+class TextState:
+    """Logical text setup retained until glyph rendering is implemented."""
+
+    alignment: int = 0
+    character_extra: int = 0
+    justification: tuple[int, int] = (0, 0)
+    mapper_flags: int = 0
+
+
+# MFCOMMENT, POSTSCRIPT_IGNORE, BEGIN_PATH, CLIP_TO_PATH, END_PATH.
+# These are metadata or printer-driver operations, not bitmap GDI paths.
+# This RGB memory device has no PostScript channel. Unknown escapes remain
+# unsupported rather than being silently treated as harmless comments.
+BITMAP_NOOP_ESCAPES = frozenset({0x000F, 0x0026, 0x1000, 0x1001, 0x1002})
+
+
 class RasterContext(TraceContext):
     """Draw the currently supported GDI calls into an RGB Pillow image.
 
@@ -108,6 +125,7 @@ class RasterContext(TraceContext):
         self._background_mode = 2
         self._background_color = (255, 255, 255)
         self._text_color = (0, 0, 0)
+        self._text_state = TextState()
         self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height), surface_width=width)
         self._clip = ClipRegion()
         self._saved: list[
@@ -124,6 +142,7 @@ class RasterContext(TraceContext):
                 tuple[int, int, int] | PaletteIndex,
                 int,
                 LogicalPalette,
+                TextState,
             ]
         ] = []
 
@@ -155,7 +174,10 @@ class RasterContext(TraceContext):
         call = self._prepare(call)
         name = call.name
         a = call.kwargs
-        if name in ("create_palette", "set_palette_entries", "animate_palette"):
+        if name == "escape":
+            if a["escape_function"] not in BITMAP_NOOP_ESCAPES:
+                raise UnsupportedOperation(f"escape {a['escape_function']:#06x}")
+        elif name in ("create_palette", "set_palette_entries", "animate_palette"):
             a["palette"].to_bytes()
             if name == "create_palette" and a["palette"].start != 0x300:
                 raise ValueError("New palettes require version 0x0300")
@@ -188,8 +210,8 @@ class RasterContext(TraceContext):
             if a["mode"] not in (0, 1):
                 raise UnsupportedOperation(f"Flood fill mode {a['mode']}")
         elif name == "create_pen":
-            if a["style"] not in range(7) or a["width"] < 0:
-                raise UnsupportedOperation("Only solid, dashed, dotted, null and inside-frame pens are supported")
+            if a["width"] < 0:
+                raise UnsupportedOperation("Negative pen width")
         elif name == "create_brush":
             if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
@@ -308,6 +330,10 @@ class RasterContext(TraceContext):
             "set_rop2",
             "set_background_color",
             "set_text_color",
+            "set_text_alignment",
+            "set_text_character_extra",
+            "set_text_justification",
+            "set_mapper_flags",
             "rectangle",
             "ellipse",
             "arc",
@@ -354,6 +380,14 @@ class RasterContext(TraceContext):
             self._background_color = logical_color(a["color"])
         elif name == "set_text_color":
             self._text_color = logical_color(a["color"])
+        elif name == "set_text_alignment":
+            self._text_state = replace(self._text_state, alignment=a["alignment"])
+        elif name == "set_text_character_extra":
+            self._text_state = replace(self._text_state, character_extra=a["extra"])
+        elif name == "set_text_justification":
+            self._text_state = replace(self._text_state, justification=(a["break_count"], a["break_extra"]))
+        elif name == "set_mapper_flags":
+            self._text_state = replace(self._text_state, mapper_flags=a["flags"])
         elif name == "set_window_origin":
             self.mapping.window_origin = a["x"], a["y"]
         elif name == "set_viewport_origin":
@@ -377,7 +411,11 @@ class RasterContext(TraceContext):
                 yd=a["y_denominator"],
             )
         elif name == "create_pen":
-            self._objects[result] = Pen(logical_color(a["color"]), a["width"], a["style"])
+            # CreatePenIndirect uses CreatePen, not ExtCreatePen: unrecognized
+            # styles become PS_SOLID, including styles with join/cap bits.
+            # Normalize the realized object only; preserve the requested call.
+            style = a["style"] if a["style"] in range(7) else 0
+            self._objects[result] = Pen(logical_color(a["color"]), a["width"], style)
         elif name == "create_brush":
             self._objects[result] = Brush(logical_color(a["color"]), a["style"], a["hatch"])
         elif name == "create_pattern_brush":
@@ -454,6 +492,7 @@ class RasterContext(TraceContext):
                     self._text_color,
                     self._stretch_mode,
                     self._palette,
+                    self._text_state,
                 )
             )
         elif name == "restore_dc":
@@ -470,6 +509,7 @@ class RasterContext(TraceContext):
                 self._text_color,
                 self._stretch_mode,
                 self._palette,
+                self._text_state,
             ) = snapshot
             del self._saved[target - 1 :]
         elif name in ("intersect_clip_rect", "exclude_clip_rect"):

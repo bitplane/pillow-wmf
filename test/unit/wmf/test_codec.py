@@ -110,6 +110,47 @@ def test_placeable_checksum_and_stream_size():
     assert Metafile.from_bytes(corrupted, validate_checksum=False).to_bytes(canonical=True) == data
 
 
+@pytest.mark.parametrize("placeable", [None, PlaceableHeader(-10, -20, 100, 200)])
+@pytest.mark.parametrize("extra_words", [11, 8196, 0xFFFFFFFF - 17])
+@pytest.mark.parametrize("trailing", [b"", b"\xa5\x5a"])
+def test_overstated_stream_size_preserves_complete_records_and_metadata(placeable, extra_words, trailing):
+    # Native corpus files include both placeable-header accounting errors (+22
+    # bytes) and much larger overstatements. Neither implies truncated records.
+    prefix = placeable.to_bytes() if placeable else b""
+    data = bytearray(prefix + MINIMAL_LINE + trailing)
+    struct.pack_into("<I", data, len(prefix) + 6, 17 + extra_words)
+    data = bytes(data)
+    parsed = Metafile.from_bytes(data)
+    assert parsed.records == Metafile.from_bytes(MINIMAL_LINE).records
+    assert parsed.header.size == 17 + extra_words
+    assert parsed.trailing == trailing
+    assert parsed.to_bytes() == data
+    assert parsed.to_bytes(canonical=True) == prefix + MINIMAL_LINE + trailing
+
+
+@pytest.mark.parametrize("length", range(18, len(MINIMAL_LINE)))
+def test_overstated_size_does_not_allow_truncated_records_or_missing_eof(length):
+    data = bytearray(MINIMAL_LINE[:length])
+    struct.pack_into("<I", data, 6, 0xFFFFFFFF)
+    with pytest.raises(FormatError):
+        Metafile.from_bytes(bytes(data))
+
+
+@pytest.mark.parametrize("word_count", [0, 9, 11, 12, 16])
+def test_understated_size_does_not_consume_records_from_trailing_data(word_count):
+    data = bytearray(MINIMAL_LINE)
+    struct.pack_into("<I", data, 6, word_count)
+    with pytest.raises(FormatError):
+        Metafile.from_bytes(bytes(data))
+
+
+def test_overstated_size_still_enforces_record_limit():
+    data = bytearray(MINIMAL_LINE)
+    struct.pack_into("<I", data, 6, 0xFFFFFFFF)
+    with pytest.raises(FormatError, match="Record count limit"):
+        Metafile.from_bytes(bytes(data), limits=Limits(max_records=1))
+
+
 def test_canonical_output_recalculates_metadata_after_edit():
     file = Metafile.from_bytes(MINIMAL_LINE)
     edited = replace(file, records=(variable.TextOut(1, 2, b"longer text"), fixed.Eof()))
@@ -141,6 +182,25 @@ def test_polygon_resource_limit():
     file = Metafile.build([variable.Polygon(((0, 0), (1, 1)))])
     with pytest.raises(FormatError, match="point count"):
         Metafile.from_bytes(file.to_bytes(), limits=Limits(max_points=1))
+
+
+@pytest.mark.parametrize("payload", [bytes.fromhex("0000"), bytes.fromhex("0100 0300 feff")])
+def test_short_polygon_is_structurally_valid_and_round_trips(payload):
+    # Independent wire payloads: empty and one-point polygons are representable
+    # records even though they cannot enclose an area.
+    data = Metafile.build([UnknownRecord(RecordType.POLYGON, payload)]).to_bytes()
+    parsed = Metafile.from_bytes(data)
+    assert isinstance(parsed.records[0], variable.Polygon)
+    assert parsed.records[0].points == (() if payload == b"\x00\x00" else ((3, -2),))
+    assert parsed.to_bytes() == data
+    assert parsed.to_bytes(canonical=True) == data
+
+
+@pytest.mark.parametrize("payload", [bytes.fromhex("ffff"), bytes.fromhex("0100 0300")])
+def test_polygon_still_rejects_negative_counts_and_incomplete_points(payload):
+    data = Metafile.build([UnknownRecord(RecordType.POLYGON, payload)]).to_bytes()
+    with pytest.raises(FormatError, match="point count"):
+        Metafile.from_bytes(data)
 
 
 def test_scan_counts_must_match():

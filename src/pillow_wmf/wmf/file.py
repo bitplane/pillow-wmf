@@ -163,8 +163,14 @@ class Metafile:
         if header.object_count > limits.max_objects:
             raise FormatError("Object capacity limit exceeded")
         end = start + header.size * 2
-        if end < reader.position + 6 or end > len(data):
+        if end < reader.position + 6:
             raise FormatError("Invalid declared metafile size")
+        # Windows accepts complete streams with an overstated mtSize (seen in
+        # both Office clipart and the LibreOffice corpus). Keep the original
+        # header for round trips, but never read past the available bytes or
+        # allocate from this untrusted size. Record bounds and EOF remain
+        # mandatory; a smaller declared size still bounds the record stream.
+        end = min(end, len(data))
         records = []
         while reader.position < end:
             if len(records) >= limits.max_records:

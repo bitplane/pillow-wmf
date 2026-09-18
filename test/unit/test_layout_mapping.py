@@ -10,6 +10,14 @@ from pillow_wmf.mapping import Mapping
 from pillow_wmf.stroke import frame_footprint
 
 
+@pytest.mark.parametrize("coordinate,expected", [(19254, 90), (19255, 91), (19256, 91)])
+def test_driver_single_precision_boundary(coordinate, expected):
+    # his99012's brown PolyPolygon has a vertex at y=19255. The native
+    # reference distinguishes its mapped y=91 from double precision's y=90.
+    mapping = Mapping(window_extent=(27243, 27243), viewport_extent=(128, 128))
+    assert mapping.device_point(coordinate, coordinate) == (expected, expected)
+
+
 @pytest.mark.parametrize(
     "layout,extent,expected", ((0, 48, 4), (1, 48, Fraction(7, 2)), (0, -48, Fraction(7, 2)), (1, -48, 4))
 )

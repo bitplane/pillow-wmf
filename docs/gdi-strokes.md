@@ -109,6 +109,14 @@ The transformed radii are quantized to 28.4 units. Cubic control quantization
 preserves the orientation of the transformed first basis vector; reflection
 can consequently change a boundary vertex by one fixed-point unit.
 
+Open investigation: `corpus-fdo39256-2.wmf` has nine differing stroke pixels.
+Diameter-first rounding changes its pen radii from (23, 23) to (22, 23) in fixed
+units and makes it exact, but regresses `corpus-lady4.wmf` by 104 pixels. Retaining
+transformed logical stroke directions also fixes the first image but regresses
+other corpus files. Neither change is implemented. The `pen-radius-probe-*`
+fixtures distinguish these models near fractional-radius boundaries and compare
+solid with inside-frame pens; their native PNGs are pending.
+
 Cubic subdivision uses the standard second-difference chord-error bound:
 three quarters of the largest second difference must be at most half a pixel.
 In 28.4 units this is `3 * difference <= 32`. Midpoint subdivision is dyadic;

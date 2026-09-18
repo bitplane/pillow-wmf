@@ -121,6 +121,16 @@ then round their sum to pixels with `(fixed + 8) // 16`. This is implemented by
 `Mapping.device_point`; it is distinct from `Mapping.point`'s LPtoDP-style
 integer calculation and from pen-size or clip-displacement realization.
 
+The LibreOffice corpus case `his99012.wmf` exposes intermediate precision at this
+boundary: `19255 * 128 / 27243` is about `90.4687442646` in double precision,
+just below a 28.4 half-unit tie. With binary32 scale and product rounding it is
+`90.46875`, producing device coordinate 91 rather than 90. This accounts for all
+three differing pixels in its native RGB reference. `device_point` therefore
+realizes scale, product and translation in binary32 before the existing fixed
+conversion; it does not change polygon coverage or the other mapping contracts.
+This is a model supported by the pixel oracle, not a claim that Wine's LPtoDP
+helper reproduces the Windows driver's intermediate arithmetic.
+
 GDI's driver path interface can carry 28.4 fixed-point coordinates. That is
 evidence that subpixel precision exists, not proof that every WMF primitive goes
 through a single 1/16-pixel engine. [PATHOBJ][pathobj]. The existing 1:1 ellipse

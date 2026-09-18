@@ -3,6 +3,12 @@
 from dataclasses import dataclass
 from fractions import Fraction
 from math import floor
+from struct import pack, unpack
+
+
+def single(value: float) -> float:
+    """Round a transform intermediate to IEEE-754 binary32."""
+    return unpack("f", pack("f", value))[0]
 
 
 def rounded(value: float) -> int:
@@ -111,10 +117,12 @@ class Mapping:
         The translation is realized separately, not reassociated with the
         logical coordinate as (value - window_origin) * scale. Both stages
         precede pixel rounding, which matters near half-pixel boundaries.
+        Driver scale coefficients and products are single precision before
+        fixed-point conversion; retaining Python doubles can miss a tie.
         ``point`` retains the separate LPtoDP-style integer conversion.
         """
         return tuple(
-            (fixed(value * viewport / window) + fixed(origin) + 8) // 16
+            (fixed(single(value * single(viewport / window))) + fixed(single(origin)) + 8) // 16
             for value, (viewport, window, origin) in zip((x, y), self._axes(), strict=True)
         )
 

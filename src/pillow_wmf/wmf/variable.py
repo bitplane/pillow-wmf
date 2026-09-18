@@ -20,15 +20,11 @@ class PointsRecord(Record):
     points: tuple[tuple[int, int], ...]
 
     def payload(self) -> bytes:
-        if self.kind == RecordType.POLYGON and len(self.points) < 2:
-            raise ValueError("Polygon needs at least two points")
         return pack("h", len(self.points)) + b"".join(pack("hh", *point) for point in self.points)
 
     @classmethod
     def read(cls, reader: Reader, function: int, limits: Limits):
         count = reader.unpack("h")[0]
-        if cls.kind == RecordType.POLYGON and count < 2:
-            raise FormatError("Polygon needs at least two points")
         points = read_points(reader, count, limits)
         return cls(points, wire_function=function, trailing=reader.rest())
 

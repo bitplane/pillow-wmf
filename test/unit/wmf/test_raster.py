@@ -1,16 +1,37 @@
 import pytest
 
-from pillow_wmf import RasterContext, UnsupportedOperation
+from pillow_wmf import Metafile, RasterContext, Recorder, UnsupportedOperation, play
 from pillow_wmf.ellipse import ellipse_path
 from pillow_wmf.stroke import cosmetic_line, dash_is_foreground
 
 
-def test_raster_rejects_unimplemented_pen_style_before_changing_context() -> None:
+def test_raster_rejects_negative_pen_width_before_changing_context() -> None:
     context = RasterContext(8, 8)
-    with pytest.raises(UnsupportedOperation, match="dashed"):
-        context.create_pen(style=7, width=1, color=0)
+    with pytest.raises(UnsupportedOperation, match="width"):
+        context.create_pen(style=0, width=-1, color=0)
     assert context.calls == []
     assert context.image.getpixel((0, 0)) == (255, 255, 255)
+
+
+@pytest.mark.parametrize("style", [7, 8, 0x0100, 0x0200, 0x1000, 0x2000, 0x1100, 0x2200, 0x1001, 0x1005, 0xFFFF])
+@pytest.mark.parametrize("width", [0, 1, 5])
+def test_create_pen_indirect_falls_back_to_solid_without_changing_wire_style(style, width):
+    images = []
+    for requested in (0, style):
+        recorder = Recorder()
+        pen = recorder.create_pen(requested, width, 0x000000FF)
+        recorder.select_object(pen)
+        recorder.polyline(((2, 2), (13, 2), (8, 13)))
+        source = recorder.to_bytes()
+        parsed = Metafile.from_bytes(source)
+        assert parsed.records[0].style == requested
+        assert parsed.to_bytes() == source
+        context = RasterContext(16, 16)
+        assert play(parsed, context, strict=True) == ()
+        assert context._pen.style == 0
+        assert context.calls[0].kwargs["style"] == requested
+        images.append(context.image.tobytes())
+    assert images[0] == images[1]
 
 
 @pytest.mark.parametrize(
@@ -112,6 +133,28 @@ def test_invalid_polygon_fill_mode_does_not_change_context() -> None:
     with pytest.raises(UnsupportedOperation, match="Polygon fill mode"):
         context.set_polygon_fill_mode(3)
     assert context.calls == []
+
+
+@pytest.mark.parametrize(("pen_style", "pen_width"), [(0, 1), (0, 5), (1, 1), (5, 0)])
+@pytest.mark.parametrize("fill_mode", [1, 2])
+def test_recorded_empty_polygon_leaves_pixels_and_subsequent_drawing_unchanged(pen_style, pen_width, fill_mode):
+    images = []
+    for insert_empty in (False, True):
+        recorder = Recorder()
+        recorder.select_object(recorder.create_pen(pen_style, pen_width, 0x000000FF))
+        recorder.select_object(recorder.create_brush(0, 0x0000FF00, 0))
+        recorder.set_polygon_fill_mode(fill_mode)
+        recorder.move_to(2, 3)
+        if insert_empty:
+            recorder.polygon(())
+        recorder.line_to(13, 3)
+        recorder.polygon(((2, 7), (13, 7), (8, 13)))
+        if insert_empty:
+            recorder.polygon(())
+        context = RasterContext(16, 16, background=(20, 30, 40))
+        assert play(Metafile.from_bytes(recorder.to_bytes()), context, strict=True) == ()
+        images.append(context.image.tobytes())
+    assert images[0] == images[1]
 
 
 def test_invalid_background_mode_does_not_change_context() -> None:
