@@ -8,7 +8,7 @@ from windows_wmf_render import bind, check, reference_surface
 
 def main():
     for width, window in ((176, (8118, 8035)), (6, (412, 1915))):
-        for endpoint in ((0, 0), (744, -1681), (698, -1695), (698, -1632)):
+        for endpoint in ((0, 0), (744, -1681), (698, -1695), (698, -1632), (0, 1000), (1000, 0)):
             with reference_surface(128, 128) as (gdi, dc, _bits):
                 ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
                 for name in ("BeginPath", "EndPath", "WidenPath"):
