@@ -104,14 +104,17 @@ def test_scan_reader_priming_and_replay_are_independent_of_access_order(rows, fi
     assert reader.pixel(0, reader.row(1)) == ((0, 0, 0) if expected is None else (31, 71, 113))
 
 
-def test_destination_clipping_retains_filter_phase_and_neighbours():
+@pytest.mark.parametrize("operation", ("dib_stretch_blt", "stretch_dib"))
+@pytest.mark.parametrize("size", ((3, 3), (1, 3), (3, 1)))
+def test_destination_clipping_retains_filter_phase_and_neighbours(operation, size):
     source = encode_dib24(RGBBitmap(9, 9, bytes((i * 37) % 256 for i in range(243))))
     whole = RasterContext(5, 5)
-    clipped = RasterContext(3, 3)
+    clipped = RasterContext(*size)
     for context, origin in ((whole, 0), (clipped, -1)):
         context.set_stretch_mode(4)
-        context.dib_stretch_blt(origin, origin, 5, 5, 0, 0, 9, 9, 0xCC0020, source)
-    assert clipped.image.tobytes() == whole.image.crop((1, 1, 4, 4)).tobytes()
+        extra = {"color_usage": 0} if operation == "stretch_dib" else {}
+        getattr(context, operation)(origin, origin, 5, 5, 0, 0, 9, 9, 0xCC0020, source=source, **extra)
+    assert clipped.image.tobytes() == whole.image.crop((1, 1, 1 + size[0], 1 + size[1])).tobytes()
 
 
 def test_lazy_view_does_not_allocate_an_intermediate_surface():
