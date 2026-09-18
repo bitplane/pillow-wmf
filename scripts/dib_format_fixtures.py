@@ -27,6 +27,7 @@ def formats():
 
 
 def cases():
+    yield from rle_clip_cases()
     yield from conversion_cases()
     for name, header, depth, masks, rle in formats():
         for top_down in (False,) if header == 12 or rle else (False, True):
@@ -90,6 +91,34 @@ def cases():
         r.stretch_dib(64, 2, 52, 28, 0, 0, 13, 7, 0xCC0020, 0, source)
         r.set_dib_to_device(2, 48, 13, 7, 0, 0, 0, 7, 0, source)
         yield f"dib-format-rle{depth}-commands", r
+
+
+def rle_clip_cases():
+    """Separate encoded-pair phase from literal phase at odd clip boundaries."""
+    colors = ((15, 31, 63), (223, 47, 79), (37, 211, 101))
+    header = bytearray(encode_dib(12, 4, (0,) * 48, depth=4, colors=colors, rle=True).data[:52])
+    encoded = bytes((12, 0x12, 0, 0, 0, 12, 0x12, 0x12, 0x12, 0x12, 0x12, 0x12, 0, 0)) * 2 + bytes((0, 1))
+    pack_into("<I", header, 20, len(encoded))
+    source = BitmapData("dib", bytes(header) + encoded)
+    for operation in ("dib_bit_blt", "dib_stretch_blt", "stretch_dib", "set_dib_to_device"):
+        recorder = Recorder()
+        recorder.set_stretch_mode(3)
+        for row, source_x in enumerate((0, 1, 2, 3)):
+            for column, clipped in enumerate((False, True)):
+                x, y = 8 + column * 32, 8 + row * 12
+                recorder.save_dc()
+                if clipped:
+                    recorder.intersect_clip_rect(x + 1, y, x + 9, y + 4)
+                if operation == "dib_bit_blt":
+                    recorder.dib_bit_blt(x, y, 9, 4, source_x, 0, 0xCC0020, source)
+                elif operation == "dib_stretch_blt":
+                    recorder.dib_stretch_blt(x, y, 9, 4, source_x, 0, 9, 4, 0xCC0020, source)
+                elif operation == "stretch_dib":
+                    recorder.stretch_dib(x, y, 9, 4, source_x, 0, 9, 4, 0xCC0020, 0, source)
+                else:
+                    recorder.set_dib_to_device(x, y, 9, 4, source_x, 0, 0, 4, 0, source)
+                recorder.restore_dc(-1)
+        yield f"dib-rle4-clip-phase-{operation}", recorder
 
 
 def conversion_cases():
