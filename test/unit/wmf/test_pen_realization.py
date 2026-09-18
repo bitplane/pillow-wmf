@@ -8,6 +8,27 @@ from pillow_wmf.geometry import StrokeSegment
 from pillow_wmf.stroke import realize_pen, widen_segment
 
 
+@pytest.mark.parametrize("sign", (1, -1))
+@pytest.mark.parametrize("width", (511, 512, 513))
+def test_native_thin_pen_size_limit(width, sign):
+    # WidenPath, run 35329745361. bThicken rejects half-basis components
+    # >=4096 fixed units before testing the collapsed minor axis.
+    pen = realize_pen(width, sign, Fraction(1, 1024))
+    outline = widen_segment(StrokeSegment.line((0, 0), (0, 0)), pen)
+    if width == 511:
+        assert outline == [(0, -8), (-4087, 0), (0, 8), (0, 8), (4087, 0), (0, -8)]
+    else:
+        expected = {
+            (512, 1): [(4072, 0), (4095, 0), (4074, 0), (4012, 0), (3911, 0), (3773, 0), (3601, -1)],
+            (512, -1): [(-4072, 0), (-4095, 0), (-4074, 0), (-4012, 0), (-3911, 0), (-3773, 1), (-3601, 1)],
+            (513, 1): [(4080, 0), (4103, 0), (4082, 0), (4020, 0), (3919, 0), (3781, 0), (3608, -1)],
+            (513, -1): [(-4080, 0), (-4103, 0), (-4082, 0), (-4020, 0), (-3918, 0), (-3780, 1), (-3608, 1)],
+        }
+        assert outline[:7] == expected[width, sign]
+        assert len(outline) == 62
+        assert (0, -3) in outline and (0, 3) in outline
+
+
 @pytest.mark.parametrize(
     "width,scale_x,scale_y,radii",
     (

@@ -110,12 +110,25 @@ loses that boundary vertex. Native widened nearly-collapsed arcs in
 expose the distinction; the measured join is retained as a unit test.
 The transformed diameters are quantized to 28.4 units before halving outward.
 For CreatePen, a diameter of at most 8 fixed units (half a pixel) selects a
-diamond contour with that axis replaced by a one-pixel diameter. It does not
+diamond contour with that axis replaced by a one-pixel diameter, provided all
+half-basis components are below 4096 fixed units. Larger pens bypass thickening
+and retain their subpixel cubic silhouette. It does not
 construct a cubic ellipse at the enlarged thickness. Larger subpixel diameters
 keep the ordinary cubic contour. Geometric frame pens retain subpixel axes.
 Cubic control quantization preserves the orientation of the transformed first
 basis vector; reflection
 can consequently change a boundary vertex by one fixed-point unit.
+
+The size guard is present in `pathwide::WIDEPENOBJ::bThicken` (Windows
+26100.9444, `win32kfull` RVA `0x16375c`). Its `vDetermineDrawVertex`
+(`0x16631c`) bisects edge cross-product signs on the semicircle, with reflected
+seam neighbours. This is not a global support maximum when flattening yields
+collinear edges. The shared support search models this traversal for every
+stroke, including the horizontal surrogate used for zero-length strokes.
+[Run 35329745361](https://github.com/bitplane/pillow-wmf/actions/runs/35329745361)
+captures exact widened paths immediately below, at, and above the size guard,
+in both X orientations. These path assertions are necessary: the initial
+128x128 and 257x193 raster probes alone do not distinguish the silhouettes.
 
 This construction is inferred from the native `pen-radius-probe-*` PNGs and
 the [pen-support probe](https://github.com/bitplane/pillow-wmf/actions/runs/35311068688).

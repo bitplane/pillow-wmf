@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import chain
 from math import ceil, floor, sqrt
 from struct import pack, unpack
 
@@ -77,11 +76,14 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
             rx = half_fixed(width * scale_x * 16)
             ry = sign * abs(half_fixed(-width * scale_y * 16))
         else:
-            # Quantize the full diameter before halving outward. An axis
-            # collapsing to zero at nearest-pixel (ties down) precision is
-            # replaced by one pixel; other subpixel axes survive unchanged.
-            rx, ry = (sign * (((16 if diameter <= 8 else diameter) + 1) // 2) for diameter in diameters)
-        if not geometric and min(diameters) <= 8:
+            # Quantize the full diameter before halving outward.
+            rx, ry = (sign * ((diameter + 1) // 2) for diameter in diameters)
+        # bThicken uses bounded integer products: half-basis components must
+        # fit in 12 bits. Larger pens retain their ordinary cubic silhouette,
+        # including subpixel minor axes, rather than being thickened.
+        thicken = not geometric and max(abs(rx), abs(ry)) < 4096 and min(abs(rx), abs(ry)) <= 4
+        if thicken:
+            rx, ry = (sign * max(8, abs(radius)) for radius in (rx, ry))
             # A collapsed CreatePen axis selects a diamond, not a cubic
             # ellipse enlarged to the minimum thickness. Retain the same
             # half-contour seam layout used by the ordinary pen constructor.
@@ -141,13 +143,28 @@ def _support_index(pen: PenGeometry, dx: int, dy: int) -> int:
     vertices = pen.vertices
     half = len(vertices) // 2
 
-    # The two centrally reflected half-contours are walked in opposite
-    # directions. Preserve that traversal order at equal cross products,
-    # including the seams: screen-coordinate sorting changes seam ownership.
-    # A stored half-contour terminal is not another support candidate.
+    # Native support selection bisects edge cross-product signs on a stored
+    # semicircle, bracketed by reflected seam neighbours. A global maximum
+    # is not equivalent when fixed-point flattening produces collinear edges.
     terminal = int(vertices[half - 1] == vertices[half])
-    order = chain(range(len(vertices) - 1 - terminal, half - 1, -1), range(half - terminal))
-    return max(order, key=lambda index: vertices[index][0] * dy - vertices[index][1] * dx)
+    count = half - terminal
+
+    def point(index):
+        return vertices[half + count - 1] if index == 0 else vertices[index - 1]
+
+    def negative_edge(index):
+        a, b = point(index), point(index + 1)
+        return dx * (b[1] - a[1]) - dy * (b[0] - a[0]) < 0
+
+    negative = negative_edge(0)
+    low, high = 0, count
+    while high - low > 1:
+        middle = (low + high) // 2
+        if negative_edge(middle) == negative:
+            low = middle
+        else:
+            high = middle
+    return high - 1 + (0 if negative else half)
 
 
 def _body(value, *, miter=False):
