@@ -61,7 +61,7 @@ def test_diagnostics_fail_on_differences_without_writing_references(script, monk
 
 
 def test_foundation_inputs_are_unique_reproducible_and_lossless():
-    cases = runpy.run_path(str(SCRIPTS / "generate-wmf-fixtures.py"))["cases"]
+    cases = runpy.run_path(str(SCRIPTS / "generate-wmf-fixtures.py"))["all_cases"]
     first = list(cases())
     second = list(cases())
     names = [name for name, _ in first]
@@ -70,7 +70,9 @@ def test_foundation_inputs_are_unique_reproducible_and_lossless():
     for (name, recorder), (again, repeated) in zip(first, second, strict=True):
         source = recorder.to_bytes()
         assert name == again
-        assert source == repeated.to_bytes() == (ROOT / "test/compatibility/wmf" / f"{name}.wmf").read_bytes()
+        # Committed local bytes are checked by the compatibility suite. The
+        # full generator must remain deterministic without an external corpus.
+        assert source == repeated.to_bytes()
         metafile = Metafile.from_bytes(source)
         assert metafile.to_bytes() == source
         trace = TraceContext()

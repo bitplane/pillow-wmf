@@ -1,5 +1,6 @@
-"""Regenerate the small, deterministic WMF compatibility inputs."""
+"""Generate local regressions or the external synthetic WMF corpus."""
 
+import argparse
 import runpy
 from itertools import product
 from pathlib import Path
@@ -10,9 +11,23 @@ from pillow_wmf.bitmap import RGBBitmap, encode_dib24
 from pillow_wmf.wmf.objects import BitmapData, Region, Scan
 
 FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
+LOCAL_CASES = runpy.run_path(str(Path(__file__).with_name("local_regressions.py")))["LOCAL_CASES"]
 
 
-def cases():
+def cases(*, corpus=False):
+    """Partition generated fixtures; local test discovery still checks every file."""
+    generated = set()
+    for name, recorder in all_cases():
+        if name in generated:
+            raise ValueError(f"Duplicate generated fixture: {name}")
+        generated.add(name)
+        if (name in LOCAL_CASES) != corpus:
+            yield name, recorder
+    if missing := LOCAL_CASES - generated:
+        raise ValueError(f"Unknown local regression names: {sorted(missing)}")
+
+
+def all_cases():
     yield from runpy.run_path(str(Path(__file__).with_name("precision_fixtures.py")))["cases"]()
     yield from runpy.run_path(str(Path(__file__).with_name("state_review_fixtures.py")))["cases"]()
     yield from runpy.run_path(str(Path(__file__).with_name("layout_fixtures.py")))["cases"]()
@@ -2050,11 +2065,19 @@ def halftone_boundary_cases():
 
 
 def main():
-    FIXTURES.mkdir(parents=True, exist_ok=True)
-    for name, recorder in cases():
-        path = FIXTURES / f"{name}.wmf"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--corpus", type=Path, help="Export the non-local cases into this external corpus directory")
+    args = parser.parse_args()
+    destination = args.corpus if args.corpus is not None else FIXTURES
+    if args.corpus is not None and destination.resolve().is_relative_to(FIXTURES.resolve()):
+        parser.error("The external corpus must not be inside the local compatibility suite")
+    # Validate the full selection before writing any outputs.
+    selected = list(cases(corpus=args.corpus is not None))
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, recorder in selected:
+        path = destination / f"{name}.wmf"
         path.write_bytes(recorder.to_bytes())
-        print(path.relative_to(FIXTURES.parent))
+        print(path)
 
 
 if __name__ == "__main__":
