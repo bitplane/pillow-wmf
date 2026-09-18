@@ -4,6 +4,8 @@ All 32 crop pairs were rendered independently by Windows GDI.
 See scripts/probe-windows-edge-cases.py for the oracle check.
 """
 
+from fractions import Fraction
+
 import pytest
 
 from pillow_wmf import RasterContext
@@ -37,6 +39,18 @@ def test_round_join_distinguishes_reversal_from_straight_continuation(direction)
     pen = realize_pen(7)
     assert join_outline(first, straight, pen) == []
     assert contains((join_outline(first, reverse, pen),), 64 + 2 * direction, 64)
+
+
+@pytest.mark.parametrize("reflection", (1, -1))
+def test_vertical_reversal_keeps_support_seams_out_of_the_round_cap(reflection):
+    pen = realize_pen(10, reflection * Fraction(257, 1079), Fraction(193, 996))
+    first = StrokeSegment.line((0, -784), (0, 0))
+    second = StrokeSegment.line((0, 0), (0, -32))
+    outline = join_outline(first, second, pen)
+    # Body supports are +/-16. The genuine cap interior is (0, 15);
+    # the repeated seam must not add a separately inset (18, 0).
+    assert not contains((outline,), 1, 0)
+    assert contains((outline,), 0, 0)
 
 
 @pytest.mark.parametrize(

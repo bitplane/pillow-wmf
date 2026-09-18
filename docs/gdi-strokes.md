@@ -73,7 +73,10 @@ of the pen at each open endpoint. Zero-length wide segments retain both caps.
 
 Connected segments add the exterior wedge between support vertices. Round
 joins traverse the pen contour, including a half-contour at a 180-degree
-reversal. Miter joins intersect the two offset segment lines. Curve segments
+reversal. Turn direction compares product signs before magnitudes, retaining
+the factors' signs even for zero products. A zero cross product alone cannot
+choose the contour walk for an axial reversal; that choice controls seam
+ownership and can change a boundary pixel. Miter joins intersect the two offset segment lines. Curve segments
 retain endpoint tangents through [flattening](gdi-curves.md).
 
 Direct Rectangle uses mitered corners. Recording a Rectangle in a path and

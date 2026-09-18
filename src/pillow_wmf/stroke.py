@@ -203,10 +203,17 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
     # A round reversal walks half the pen contour, just like any other turn.
     if not turn and (dx1 * dx2 + dy1 * dy2 >= 0 or miter):
         return []
+    # Compare the signed products before their magnitudes. In particular,
+    # a zero product retains the signs of its factors: axial reversals can
+    # turn either way despite having the same zero determinant. Choosing
+    # that direction also chooses ownership of the half-contour seams.
+    negative_first = (dx1 < 0) != (dy2 < 0)
+    negative_second = (dy1 < 0) != (dx2 < 0)
+    clockwise = negative_first if negative_first != negative_second else turn < 0
     vertices = pen.vertices
     count = len(vertices)
-    i = (_support_index(pen, dx1, dy1) + (count // 2 if turn < 0 else 0)) % count
-    j = (_support_index(pen, dx2, dy2) + (count // 2 if turn < 0 else 0)) % count
+    i = (_support_index(pen, dx1, dy1) + (count // 2 if clockwise else 0)) % count
+    j = (_support_index(pen, dx2, dy2) + (count // 2 if clockwise else 0)) % count
     start = tuple(vertex[axis] + _body(vertices[i][axis], miter=miter and axis == 0) for axis in (0, 1))
     end = tuple(vertex[axis] + _body(vertices[j][axis], miter=miter and axis == 0) for axis in (0, 1))
     outline = [vertex, start]
@@ -214,7 +221,7 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
         t = Fraction((end[0] - start[0]) * dy2 - (end[1] - start[1]) * dx2, turn)
         outline.append((start[0] + dx1 * t, start[1] + dy1 * t))
     else:
-        step = 1 if turn < 0 else -1
+        step = 1 if clockwise else -1
         while i != j:
             i = (i + step) % count
             if i != j:
