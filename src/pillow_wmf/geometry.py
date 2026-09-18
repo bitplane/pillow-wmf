@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from itertools import pairwise
-from math import floor
 
 type Point = tuple[int, int]
 type Polygon = list[Point]
@@ -71,35 +70,157 @@ class DevicePath:
         return DevicePath.polyline(points, closed=self.closed)
 
 
-def flatten_cubic(control: tuple[Point, Point, Point, Point]) -> Polygon:
-    """Subdivide a cubic to a half-pixel chord-error bound.
+_INITIAL_CURVE_PRECISION = 10
+_CURVE_PRECISION = 13
+_INITIAL_CURVE_ERROR = 0xFFC0
+_CURVE_ERROR = _INITIAL_CURVE_ERROR << (_CURVE_PRECISION - _INITIAL_CURVE_PRECISION)
+_LARGE_CURVE_PRECISION = 28
+_LARGE_CURVE_ERROR = 64 << _LARGE_CURVE_PRECISION
+_COARSE_CURVE_ERROR = 196608 << _LARGE_CURVE_PRECISION
+_SMALL_CURVE_SPAN = 16384
 
-    A cubic's deviation is bounded by 3/4 of its largest second difference.
-    Eight fixed-point units are half a pixel, hence 3 * difference <= 32.
-    Subdivision uses exact dyadic values; only emitted vertices are rounded.
+
+@dataclass
+class _CurveAxis:
+    """One axis of an adaptive forward-difference cubic.
+
+    Curvature terms describe the end and start of the current interval.
+    Keeping them alongside position and advance lets us walk the curve or
+    change interval size without repeatedly evaluating its polynomial.
     """
+
+    position: int
+    advance: int
+    end_curvature: int
+    start_curvature: int
+    precision: int = _INITIAL_CURVE_PRECISION
+
+    @classmethod
+    def from_controls(cls, a: int, b: int, c: int, d: int, *, precision: int = _INITIAL_CURVE_PRECISION):
+        scale = 1 << precision
+        return cls(a * scale, (d - a) * scale, 6 * (b - 2 * c + d) * scale, 6 * (a - 2 * b + c) * scale, precision)
+
+    @property
+    def error(self) -> int:
+        return max(abs(self.start_curvature), abs(self.end_curvature))
+
+    @property
+    def parent_error(self) -> int:
+        return 4 * max(abs(self.start_curvature), abs(2 * self.end_curvature - self.start_curvature))
+
+    @property
+    def rounded_position(self) -> int:
+        return (self.position + (1 << (self.precision - 1))) >> self.precision
+
+    def controls(self) -> tuple[int, int, int, int]:
+        """Recover rounded controls for one coarse interval of a large curve."""
+        common = 6 * self.advance - self.end_curvature
+        numerators = (common - 2 * self.start_curvature, 2 * common - self.start_curvature)
+        # The inverse basis divides towards zero, before fixed-point rounding.
+        handles = tuple(value // 18 if value >= 0 else -(-value // 18) for value in numerators)
+        rounding = 1 << (self.precision - 1)
+        return tuple((self.position + delta + rounding) >> self.precision for delta in (0, *handles, self.advance))
+
+    def step(self):
+        self.position += self.advance
+        self.advance += self.end_curvature
+        self.end_curvature, self.start_curvature = 2 * self.end_curvature - self.start_curvature, self.end_curvature
+
+    def halve_initial(self, deferred_shift: int):
+        # Delay rescaling the curvature terms while finding the first step.
+        self.end_curvature = (self.end_curvature + self.start_curvature) >> 1
+        self.advance = (self.advance - (self.end_curvature >> deferred_shift)) >> 1
+
+    def finish_initializing(self, deferred_shift: int):
+        extra_bits = _CURVE_PRECISION - _INITIAL_CURVE_PRECISION
+        self.precision = _CURVE_PRECISION
+        self.position <<= extra_bits
+        self.advance <<= extra_bits
+        shift = deferred_shift - extra_bits
+        if shift >= 0:
+            self.end_curvature >>= shift
+            self.start_curvature >>= shift
+        else:
+            self.end_curvature <<= -shift
+            self.start_curvature <<= -shift
+
+    def halve(self):
+        self.end_curvature = (self.end_curvature + self.start_curvature) >> 3
+        self.advance = (self.advance - self.end_curvature) >> 1
+        self.start_curvature >>= 2
+
+    def double(self):
+        self.advance = 2 * self.advance + self.end_curvature
+        self.start_curvature *= 4
+        self.end_curvature = 8 * self.end_curvature - self.start_curvature
+
+
+def _advance_curve(x: _CurveAxis, y: _CurveAxis, steps: int, error: int) -> int:
+    """Walk one interval, then adapt the next interval on the dyadic grid."""
+    x.step()
+    y.step()
+    steps -= 1
+    if not steps:
+        return 0
+    if max(x.error, y.error) > error:
+        x.halve()
+        y.halve()
+        steps *= 2
+    while steps % 2 == 0 and max(x.parent_error, y.parent_error) <= error:
+        x.double()
+        y.double()
+        steps //= 2
+    return steps
+
+
+def _initial_curve_steps(x: _CurveAxis, y: _CurveAxis, error: int) -> int:
+    steps = 1
+    while max(x.error, y.error) > error:
+        x.halve()
+        y.halve()
+        steps *= 2
+    return steps
+
+
+def _flatten_large_cubic(control: Cubic) -> Polygon:
+    """GDI's two-level walk: round coarse controls, then flatten each interval."""
+    x, y = (_CurveAxis.from_controls(*(p[axis] for p in control), precision=_LARGE_CURVE_PRECISION) for axis in (0, 1))
+    steps = _initial_curve_steps(x, y, _COARSE_CURVE_ERROR)
     points: Polygon = []
+    while steps:
+        inner_x = _CurveAxis.from_controls(*x.controls(), precision=_LARGE_CURVE_PRECISION)
+        inner_y = _CurveAxis.from_controls(*y.controls(), precision=_LARGE_CURVE_PRECISION)
+        inner_steps = _initial_curve_steps(inner_x, inner_y, _LARGE_CURVE_ERROR)
+        while inner_steps:
+            inner_steps = _advance_curve(inner_x, inner_y, inner_steps, _LARGE_CURVE_ERROR)
+            points.append((inner_x.rounded_position, inner_y.rounded_position))
+        steps = _advance_curve(x, y, steps, _COARSE_CURVE_ERROR)
+    return points
 
-    def recurse(curve):
-        deviation = max(
-            abs(curve[index][axis] - 2 * curve[index + 1][axis] + curve[index + 2][axis])
-            for index in (0, 1)
-            for axis in (0, 1)
-        )
-        if 3 * deviation <= 32:
-            points.append((floor(curve[3][0] + 0.5), floor(curve[3][1] + 0.5)))
-            return
 
-        def midpoint(a, b):
-            return (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+def flatten_cubic(control: Cubic) -> Polygon:
+    """Flatten using GDI's integer adaptive curve walk; see gdi-curves.md.
 
-        a, b, c = (midpoint(curve[i], curve[i + 1]) for i in range(3))
-        d, e = midpoint(a, b), midpoint(b, c)
-        middle = midpoint(d, e)
-        recurse((curve[0], a, d, middle))
-        recurse((middle, e, c, curve[3]))
+    Arithmetic shifts during step changes are observable. Exact recursive
+    subdivision can choose identical sample parameters but different vertices.
+    """
+    if any(max(p[axis] for p in control) - min(p[axis] for p in control) >= _SMALL_CURVE_SPAN for axis in (0, 1)):
+        return _flatten_large_cubic(control)
+    x, y = (_CurveAxis.from_controls(*(point[axis] for point in control)) for axis in (0, 1))
+    deferred_shift = 0
+    steps = 1
+    while max(x.error, y.error) > (_INITIAL_CURVE_ERROR << deferred_shift):
+        deferred_shift += 2
+        x.halve_initial(deferred_shift)
+        y.halve_initial(deferred_shift)
+        steps *= 2
+    x.finish_initializing(deferred_shift)
+    y.finish_initializing(deferred_shift)
 
-    recurse(control)
+    points: Polygon = []
+    while steps:
+        steps = _advance_curve(x, y, steps, _CURVE_ERROR)
+        points.append((x.rounded_position, y.rounded_position))
     return points
 
 

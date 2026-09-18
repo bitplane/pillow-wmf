@@ -149,10 +149,10 @@ Against the 3,367 existing native corpus pairs at data-repository commit
 leaving 24 pixel differences and 17 font-creation failures. No previously exact
 image regresses and no remaining pixel difference increases.
 
-Cubic subdivision uses the standard second-difference chord-error bound:
-three quarters of the largest second difference must be at most half a pixel.
-In 28.4 units this is `3 * difference <= 32`. Midpoint subdivision is dyadic;
-only emitted vertices are rounded. This replaces the unexplained constant 10.
+Cubic flattening uses integer hybrid forward differencing with a near-half-pixel
+error bound. The shifts used when changing step size matter: exact midpoint
+subdivision can choose the same samples but round them differently. See
+[the curve algorithm and native evidence](gdi-curves.md).
 
 For segment vector `(dx, dy)`, maximize `px * dy - py * dx` over the pen's
 vertices. The opposite vertex gives the other side. The two body offsets round
