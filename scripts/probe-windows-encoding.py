@@ -93,6 +93,7 @@ def main():
                         print(
                             f"control_face={font['name'].getBestFamilyName()!r} "
                             f"em={font['head'].unitsPerEm} "
+                            f"tables={font.keys()} "
                             f"coverage={[(c, cmap.get(c), glyph_metrics(c)) for c in (0, 1, 0x81)]}",
                             flush=True,
                         )
@@ -113,6 +114,15 @@ def main():
             characters="".join(map(chr, sample)),
             shaping=True,
         )
+        for family in ("MS UI Gothic", "PMingLiU", "Gulim"):
+            recorder = Recorder()
+            recorder.select_object(
+                recorder.create_font(
+                    Font(height=-24, weight=400, quality=3, face_name=family.encode().ljust(32, b"\0"))
+                )
+            )
+            print(f"[linked-face-{family}]", flush=True)
+            probe.observe(recorder.to_bytes(), family=family, sample=b"\0\x01\x81", characters="\0\x01\x81")
         return
     # Native installed fonts are queried, never uploaded or silently replaced.
     for family in ("Symbol", "Wingdings"):
