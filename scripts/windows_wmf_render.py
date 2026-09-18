@@ -44,6 +44,24 @@ def check(handle, name):
 
 
 @contextmanager
+def private_fonts(paths):
+    """Make supplied oracle fonts available only to this process."""
+    gdi = ctypes.WinDLL("gdi32", use_last_error=True)
+    add = bind(gdi, "AddFontResourceExW", ctypes.c_int, ctypes.c_wchar_p, wintypes.DWORD, ctypes.c_void_p)
+    remove = bind(gdi, "RemoveFontResourceExW", wintypes.BOOL, ctypes.c_wchar_p, wintypes.DWORD, ctypes.c_void_p)
+    loaded = []
+    try:
+        for path in paths:
+            path = str(path.resolve())
+            check(add(path, 0x10, None), "AddFontResourceExW")  # FR_PRIVATE
+            loaded.append(path)
+        yield
+    finally:
+        for path in reversed(loaded):
+            check(remove(path, 0x10, None), "RemoveFontResourceExW")
+
+
+@contextmanager
 def reference_surface(width: int, height: int):
     """The shared native DC/DIB and initial mapping for images and probes."""
     if os.name != "nt":

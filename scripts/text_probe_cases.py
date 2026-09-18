@@ -1,9 +1,12 @@
 """Small WMF experiments for font realization and text placement."""
 
-from test_font import FAMILY
+import runpy
+from pathlib import Path
 
 from pillow_wmf import Recorder
 from pillow_wmf.wmf.objects import Font
+
+FAMILY = runpy.run_path(str(Path(__file__).with_name("test_font.py")))["FAMILY"]
 
 
 def cases():

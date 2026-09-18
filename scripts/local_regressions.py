@@ -7,6 +7,8 @@ generator outputs, never exclude files from compatibility test discovery.
 
 # Driver rounding, mode transitions, extent ordering and pen algorithm limits.
 MAPPING = """
+text-em-height
+text-layout-and-clip
 mapping-translation-precision-0
 mapping-translation-precision-1
 coords-mode-switch

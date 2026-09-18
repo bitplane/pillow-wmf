@@ -30,13 +30,14 @@ def main(argv=None) -> int:
         return 0
     if os.name != "nt":
         raise SystemExit("Native reference rendering requires Windows")
-    from windows_wmf_render import render_wmf
+    from windows_wmf_render import private_fonts, render_wmf
 
-    for fixture, png, size in missing:
-        image = render_wmf(fixture.read_bytes(), *size)
-        png.parent.mkdir(parents=True, exist_ok=True)
-        image.save(png, format="PNG")
-        print(f"rendered: {png}")
+    with private_fonts(sorted((ROOT / "test/fonts").glob("*.ttf"))):
+        for fixture, png, size in missing:
+            image = render_wmf(fixture.read_bytes(), *size)
+            png.parent.mkdir(parents=True, exist_ok=True)
+            image.save(png, format="PNG")
+            print(f"rendered: {png}")
     print(f"Updated {len(missing)} of {len(cases)} reference images")
     return 0
 

@@ -2,6 +2,7 @@ import ctypes
 import importlib
 import runpy
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,6 +84,15 @@ def test_foundation_inputs_are_unique_reproducible_and_lossless():
 def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(SCRIPTS))
     calls = []
+    installed = []
+
+    @contextmanager
+    def private_fonts(paths):
+        installed.extend(paths)
+        try:
+            yield
+        finally:
+            installed.clear()
 
     class Output:
         def save(self, path, *, format):
@@ -90,10 +100,13 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
             path.write_bytes(b"new-reference")
 
     def render(source, width, height):
+        assert [path.name for path in installed] == ["layout.ttf"]
         calls.append((source, width, height))
         return Output()
 
-    monkeypatch.setitem(sys.modules, "windows_wmf_render", SimpleNamespace(render_wmf=render))
+    monkeypatch.setitem(
+        sys.modules, "windows_wmf_render", SimpleNamespace(render_wmf=render, private_fonts=private_fonts)
+    )
     script = runpy.run_path(str(SCRIPTS / "update-goldens.py"))
     main = script["main"]
     monkeypatch.setitem(main.__globals__, "os", SimpleNamespace(name="nt"))
