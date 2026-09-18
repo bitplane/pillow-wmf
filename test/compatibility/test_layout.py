@@ -9,6 +9,8 @@ from pillow_wmf import Metafile, TraceContext, play
 ROOT = Path(__file__).resolve().parents[2]
 WMF_ROOT = Path(__file__).parent / "wmf"
 compare_reference = runpy.run_path(str(ROOT / "scripts" / "reference_compare.py"))["compare_reference"]
+discover_pairs = runpy.run_path(str(ROOT / "scripts" / "reference_cases.py"))["discover_pairs"]
+PAIRS = discover_pairs(WMF_ROOT)
 
 
 def test_wmf_suite_is_present() -> None:
@@ -29,20 +31,18 @@ def test_generated_fixtures_are_reproducible_and_playable() -> None:
 
 
 def test_committed_references_are_valid() -> None:
-    for source_path in sorted(WMF_ROOT.glob("*.wmf")):
-        png_path = source_path.with_suffix(".png")
+    for source_path, png_path in PAIRS:
         assert png_path.is_file(), f"Missing Windows reference: {png_path.name}"
         with Image.open(png_path) as image:
             assert image.format == "PNG"
             assert image.mode == "RGB"
-            assert image.size == (128, 128)
+            assert image.width > 0 and image.height > 0
 
 
-@pytest.mark.parametrize("source_path", sorted(WMF_ROOT.glob("*.wmf")), ids=lambda path: path.stem)
-def test_windows_pixels(source_path: Path) -> None:
-    png_path = source_path.with_suffix(".png")
+@pytest.mark.parametrize("source_path,png_path", PAIRS, ids=[png.relative_to(WMF_ROOT).as_posix() for _, png in PAIRS])
+def test_windows_pixels(source_path: Path, png_path: Path) -> None:
     assert png_path.is_file(), f"Missing Windows reference: {png_path.name}"
-    result = compare_reference(source_path)
+    result = compare_reference(source_path, png_path)
     assert result.differing_pixels == 0, (
         f"{source_path.name}: {result.differing_pixels} pixels differ from Windows; "
         f"first (x, y, actual, Windows): {result.first}"

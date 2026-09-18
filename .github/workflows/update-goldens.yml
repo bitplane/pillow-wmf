@@ -3,6 +3,15 @@ name: Update Windows reference images
 on:
   workflow_dispatch:
     inputs:
+      reference_set:
+        description: "Reference inputs to generate"
+        type: choice
+        default: all
+        options: [all, corpus]
+      size:
+        description: "Optional new WIDTHxHEIGHT profile; blank updates existing profiles"
+        type: string
+        default: ""
       probe:
         description: "Optional native probe (all is expensive; explicit approval required)"
         type: choice
@@ -31,8 +40,12 @@ on:
   push:
     branches: [master]
     paths:
-      - "test/compatibility/wmf/*.wmf"
-      - "test/compatibility/wmf/*.png"
+      - "test/compatibility/wmf/**/*.wmf"
+      - "test/compatibility/wmf/**/*.png"
+
+env:
+  REFERENCE_SET: ${{ inputs.reference_set || 'all' }}
+  REFERENCE_SIZE: ${{ inputs.size }}
 
 permissions:
   contents: read
@@ -52,16 +65,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check for missing reference images
         id: references
-        shell: python
+        shell: bash
         run: |
-          import os
-          from pathlib import Path
-
-          root = Path("test/compatibility/wmf")
-          missing = [p for p in root.glob("*.wmf") if not p.with_suffix(".png").is_file()]
-          print(f"{len(missing)} missing Windows reference images")
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write(f"missing={str(bool(missing)).lower()}\n")
+          root=test/compatibility/wmf
+          if [[ "$REFERENCE_SET" == corpus ]]; then root="$root/corpus"; fi
+          args=(--root "$root")
+          if [[ -n "$REFERENCE_SIZE" ]]; then args+=(--size "$REFERENCE_SIZE"); fi
+          python scripts/update-goldens.py --check "${args[@]}"
 
   update:
     needs: preflight
@@ -119,7 +129,13 @@ jobs:
         run: python scripts/probe-windows-edge-cases.py
       - name: Render missing reference images
         if: needs.preflight.outputs.missing == 'true'
-        run: python scripts/update-goldens.py
+        shell: bash
+        run: |
+          root=test/compatibility/wmf
+          if [[ "$REFERENCE_SET" == corpus ]]; then root="$root/corpus"; fi
+          args=(--root "$root")
+          if [[ -n "$REFERENCE_SIZE" ]]; then args+=(--size "$REFERENCE_SIZE"); fi
+          python scripts/update-goldens.py "${args[@]}"
       - name: Verify native regions
         if: inputs.probe == 'regions' || inputs.probe == 'all'
         run: python scripts/probe-windows-regions.py
@@ -145,7 +161,7 @@ jobs:
         if: needs.preflight.outputs.missing == 'true'
         shell: bash
         run: |
-          git add -- 'test/compatibility/wmf/*.png'
+          git add -- ':(glob)test/compatibility/wmf/**/*.png'
           if git diff --cached --quiet; then
             echo "Reference images are already current"
             exit 0

@@ -92,7 +92,15 @@ def reference_surface(width: int, height: int):
 
 
 def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
-    """Render standard WMF bytes; records may change the initial 1:1 mapping."""
+    """Render WMF bytes; records may change the initial 1:1 mapping.
+
+    The optional 22-byte placeable wrapper is not passed to SetMetaFileBitsEx.
+    As in local playback, its suggested bounds do not override the DC profile.
+    """
+    if source.startswith(bytes.fromhex("d7cdc69a")):
+        if len(source) < 22:
+            raise ValueError("Truncated placeable WMF header")
+        source = source[22:]
     if not source:
         raise ValueError("Expected nonempty WMF bytes")
     with reference_surface(width, height) as (gdi, dc, bits):

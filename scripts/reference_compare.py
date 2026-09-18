@@ -1,6 +1,8 @@
 """Read-only, exact whole-metafile comparison shared by tests and diagnostics."""
 
+import argparse
 from dataclasses import dataclass
+from pathlib import Path
 
 from PIL import Image
 
@@ -16,8 +18,10 @@ class Comparison:
     first: tuple | None
 
 
-def compare_reference(source_path):
-    with Image.open(source_path.with_suffix(".png")) as reference:
+def compare_reference(source_path, png_path=None):
+    source_path = Path(source_path)
+    png_path = Path(png_path) if png_path is not None else source_path.with_suffix(".png")
+    with Image.open(png_path) as reference:
         expected = reference.convert("RGB")
     context = RasterContext(expected.width, expected.height)
     issues = play(Metafile.from_bytes(source_path.read_bytes()), context, strict=True)
@@ -41,13 +45,38 @@ def compare_reference(source_path):
 
 def run_comparisons(paths):
     failed = False
-    for path in paths:
-        result = compare_reference(path)
+    for item in paths:
+        path, png = item if isinstance(item, tuple) else (item, item.with_suffix(".png"))
+        try:
+            result = compare_reference(path, png)
+        except (OSError, ValueError, RuntimeError) as error:
+            print(f"{png}: {type(error).__name__}: {error}")
+            failed = True
+            continue
         print(
-            f"{path.stem}: {result.differing_pixels}/{result.pixels} pixels differ, "
+            f"{png}: {result.differing_pixels}/{result.pixels} pixels differ, "
             f"{result.differing_channels} channels, max error {result.largest_error}"
         )
         if result.first is not None:
             print(f"  first (x, y, actual, Windows): {result.first}")
         failed |= result.differing_pixels != 0
     return int(failed)
+
+
+def main(argv=None):
+    from reference_cases import discover_pairs
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("roots", nargs="+", type=Path, help="One or more corpus directories")
+    args = parser.parse_args(argv)
+    pairs = []
+    for root in args.roots:
+        found = discover_pairs(root)
+        if not found:
+            parser.error(f"No WMFs found in {root}")
+        pairs.extend(found)
+    return run_comparisons(pairs)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

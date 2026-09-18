@@ -75,6 +75,7 @@ def test_foundation_inputs_are_unique_reproducible_and_lossless():
 
 
 def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
     calls = []
 
     class Output:
@@ -94,13 +95,114 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
     (tmp_path / "existing.wmf").write_bytes(b"changed-input")
     (tmp_path / "existing.png").write_bytes(b"leave-this-alone")
     (tmp_path / "missing.wmf").write_bytes(b"new-input")
-    assert main() == 0
+    assert main([]) == 0
     assert calls == [(b"new-input", 128, 128)]
     assert (tmp_path / "existing.png").read_bytes() == b"leave-this-alone"
     assert (tmp_path / "missing.png").read_bytes() == b"new-reference"
-    assert main() == 0
+    assert main([]) == 0
     assert len(calls) == 1
     assert sorted(path.suffix for path in tmp_path.iterdir()) == [".png", ".png", ".wmf", ".wmf"]
+    assert main(["--size", "257x193"]) == 0
+    assert calls[1:] == [(b"changed-input", 257, 193), (b"new-input", 257, 193)]
+    assert (tmp_path / "257x193/existing.png").read_bytes() == b"new-reference"
+    assert (tmp_path / "existing.png").read_bytes() == b"leave-this-alone"
+    assert main([]) == 0
+    assert len(calls) == 3
+
+
+def test_explicit_pair_uses_png_dimensions_not_directory_label(tmp_path):
+    source = tmp_path / "input.wmf"
+    recorder = Recorder()
+    recorder.select_object(recorder.create_brush(0, 0x332211, 0))
+    recorder.pat_blt(0, 0, 1000, 1000, 0xF00021)
+    source.write_bytes(recorder.to_bytes())
+    png = tmp_path / "different-name.png"
+    Image.new("RGB", (257, 193), (17, 34, 51)).save(png)
+    compare = runpy.run_path(str(SCRIPTS / "reference_compare.py"))["compare_reference"]
+    result = compare(source, png)
+    assert result.pixels == 257 * 193
+    assert result.differing_pixels == 0
+
+
+def test_discovery_requires_each_input_at_each_active_size(tmp_path):
+    discover = runpy.run_path(str(SCRIPTS / "reference_cases.py"))["discover_pairs"]
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "one.wmf").touch()
+    (corpus / "one.png").touch()
+    (corpus / "two.WMF").touch()
+    (corpus / "257x193").mkdir()
+    (corpus / "257x193/one.png").touch()
+    pairs = discover(tmp_path)
+    assert {(a.name, b.relative_to(corpus).as_posix()) for a, b in pairs} == {
+        ("one.wmf", "one.png"),
+        ("two.WMF", "two.png"),
+        ("one.wmf", "257x193/one.png"),
+        ("two.WMF", "257x193/two.png"),
+    }
+    (corpus / "257x193/orphan.png").touch()
+    with pytest.raises(ValueError, match="without a matching WMF"):
+        discover(tmp_path)
+
+
+def test_discovery_supports_only_sized_profiles(tmp_path):
+    discover = runpy.run_path(str(SCRIPTS / "reference_cases.py"))["discover_pairs"]
+    (tmp_path / "one.wmf").touch()
+    for size in ("128x128", "257x193"):
+        (tmp_path / size).mkdir()
+    assert [p.relative_to(tmp_path).as_posix() for _, p in discover(tmp_path)] == [
+        "128x128/one.png",
+        "257x193/one.png",
+    ]
+
+
+def test_discovery_rejects_ambiguous_input_names(tmp_path):
+    discover = runpy.run_path(str(SCRIPTS / "reference_cases.py"))["discover_pairs"]
+    (tmp_path / "one.wmf").touch()
+    (tmp_path / "one.WMF").touch()
+    with pytest.raises(ValueError, match="Ambiguous"):
+        discover(tmp_path)
+
+
+def test_comparison_cli_checks_multiple_roots_and_reports_missing(monkeypatch, tmp_path, capsys):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    main = runpy.run_path(str(SCRIPTS / "reference_compare.py"))["main"]
+    roots = [tmp_path / "first", tmp_path / "second"]
+    for root in roots:
+        root.mkdir()
+        (root / "blank.wmf").write_bytes(Recorder().to_bytes())
+    Image.new("RGB", (7, 3), "white").save(roots[1] / "blank.png")
+    assert main([str(root) for root in roots]) == 1
+    output = capsys.readouterr().out
+    assert "FileNotFoundError" in output
+    assert "0/21 pixels differ" in output
+    Image.new("RGB", (3, 7), "white").save(roots[0] / "blank.png")
+    assert main([str(root) for root in roots]) == 0
+
+
+def test_size_preflight_is_linux_safe_and_records_missing(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    script = runpy.run_path(str(SCRIPTS / "update-goldens.py"))
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "input.wmf").touch()
+    (root / "input.png").touch()
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    assert script["main"](["--root", str(root), "--size", "257x193", "--check"]) == 0
+    assert output.read_text() == "missing=true\n"
+    assert not (root / "257x193").exists()
+    assert script["main"](["--root", str(root), "--check"]) == 0
+    assert output.read_text().endswith("missing=false\n")
+
+
+@pytest.mark.parametrize("value", ("0x193", "257x0", "-1x2", "257", "../../tmp", "1x2x3"))
+def test_invalid_reference_size(value):
+    import argparse
+
+    parse = runpy.run_path(str(SCRIPTS / "reference_cases.py"))["image_size"]
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse(value)
 
 
 def test_native_profile_rejects_environment_drift(monkeypatch):
@@ -116,7 +218,8 @@ def test_native_profile_rejects_environment_drift(monkeypatch):
 @pytest.mark.parametrize(
     "failure", [None, "CreateCompatibleDC", "CreateDIBSection", "SetMapMode", "PlayMetaFile", "GdiFlush"]
 )
-def test_native_surface_cleanup(monkeypatch, failure):
+@pytest.mark.parametrize("placeable", (False, True))
+def test_native_surface_cleanup(monkeypatch, failure, placeable):
     """Check Python ownership/error paths, not native rendering semantics."""
     monkeypatch.syspath_prepend(str(SCRIPTS))
     renderer = importlib.import_module("windows_wmf_render")
@@ -142,13 +245,19 @@ def test_native_surface_cleanup(monkeypatch, failure):
     monkeypatch.setattr(renderer, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: FakeGDI(), raising=False)
     monkeypatch.setattr(ctypes, "get_last_error", lambda: 123, raising=False)
+    source = (bytes.fromhex("d7cdc69a") + bytes(18) if placeable else b"") + b"fake-metafile"
     if failure:
         with pytest.raises(OSError, match=failure):
-            renderer.render_wmf(b"fake-metafile", 2, 3)
+            renderer.render_wmf(source, 2, 3)
     else:
-        image = renderer.render_wmf(b"fake-metafile", 2, 3)
+        image = renderer.render_wmf(source, 2, 3)
         assert image.size == (2, 3)
         assert image.tobytes() == b"\xff" * 18
+        for name, args in calls:
+            if name in ("SetWindowExtEx", "SetViewportExtEx"):
+                assert args[1:3] == (2, 3)
+            if name == "SetMetaFileBitsEx":
+                assert args[0] == len(b"fake-metafile")
     names = [name for name, _ in calls]
     assert names.count("DeleteDC") == (failure != "CreateCompatibleDC")
     assert names.count("DeleteObject") == (failure not in {"CreateCompatibleDC", "CreateDIBSection"})
