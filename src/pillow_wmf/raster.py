@@ -959,16 +959,15 @@ class RasterContext(TraceContext):
             or request.orientation
             or request.underline
             or request.strikeout
-            or request.charset != 0
             or request.quality not in (0, 3)
         ):
-            raise UnsupportedOperation("Font realization: requires unrotated monochrome ANSI text")
+            raise UnsupportedOperation("Unsupported font transform, decoration or quality")
         if self._text_state.mapper_flags:
             raise UnsupportedOperation("Text mapper flags")
         origin = self._position if self._text_state.alignment & 1 else (args["x"], args["y"])
         origin = self._point(*origin)
         layout = layout_text(
-            face.realize(request, (sx, sy)),
+            face.realize(request, (sx, sy), missing_glyph=self.fonts.missing_glyph),
             args["text"],
             *origin,
             self._text_state.alignment,
@@ -978,6 +977,7 @@ class RasterContext(TraceContext):
             scale=sx,
             extra=self._text_state.character_extra,
             justification=self._text_state.justification,
+            characters=self.fonts.decode(request, face, args["text"]),
         )
         if layout.position is not None:
             logical_origin = self._position

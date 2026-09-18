@@ -15,7 +15,7 @@ PAIRS = discover_pairs(WMF_ROOT)
 
 @pytest.fixture(scope="module")
 def fonts():
-    return FontCollection([FontFace.from_path(ROOT / "test/fonts/layout.ttf")])
+    return FontCollection(FontFace.from_path(path) for path in sorted((ROOT / "test/fonts").glob("*.ttf")))
 
 
 def test_wmf_suite_is_present() -> None:

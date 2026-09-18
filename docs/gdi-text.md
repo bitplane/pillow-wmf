@@ -9,13 +9,14 @@ Font creation, selection and saved state retain the logical request. Text
 drawing resolves an exact family, weight and italic style from caller-supplied
 TrueType faces; it never searches host font directories or silently substitutes.
 
-The supported rendering slice is printable ASCII and ANSI charset, with
+The supported rendering slice is single-byte Western/Cyrillic and symbol text, with
 positive or negative heights, zero-height realization, explicit average width,
 positive axis scaling and translation. It supports natural or signed explicit
 advances, character extra, justification, horizontal/vertical alignment,
 TA_UPDATECP, opaque backgrounds, ETO_OPAQUE, ETO_CLIPPED and the DC clip.
 Rotation, reflection, synthesized styles, decorations, default-font selection
-and other encodings remain explicitly unsupported. Missing glyphs also raise.
+and other encodings remain explicitly unsupported. Missing glyphs raise by
+default; callers may explicitly choose the supplied face's `.notdef` glyph.
 
 NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY currently uses a
 fixed RGB-subpixel profile matching the oracle's smoothing mode; it does not
@@ -36,8 +37,8 @@ play(metafile, context, strict=True)
 ```
 
 FontTools reads Windows ascent/descent and face metadata. The `freetype-py`
-binding supplies individual masks, actual bitmap bearings, glyph
-indices and advances; GDI alignment, positioning, clipping and composition remain
+binding supplies individual masks, actual bitmap bearings and advances; glyph
+indices come from the selected font cmap. GDI alignment, positioning, clipping and composition remain
 in this renderer. TrueType instructions are honoured, with automatic hint
 synthesis and embedded bitmap strikes disabled for this outline-only slice.
 Odd-width centred runs choose the lower integer origin in monochrome output.
@@ -118,16 +119,32 @@ and font smoothing, rather than inheriting the host's locale or desktop settings
 
 ## Encoding and font mapping
 
-The WMF specification ties text decoding to the playback font. Start with
-Windows-1252 and Windows-1251, then symbol fonts and the remaining single-byte
-charsets. DEFAULT_CHARSET and OEM_CHARSET require an explicit environment;
-they are not aliases for UTF-8. Font face-name decoding is a separate question
-from the encoding of text drawn with that font.
+The WMF specification ties text decoding to the playback font. ANSI_CHARSET
+uses Windows-1252; RUSSIAN_CHARSET uses Windows-1251. DEFAULT_CHARSET uses the
+collection's `ansi_codepage` (1252 by default, or explicitly 1251). Face names
+always use that environment code page, independently of the text charset.
+Undefined single-byte values retain their same-valued control code points;
+embedded NULs and tabs are not stripped or expanded. Explicit advances remain
+byte-indexed. Other code pages, including OEM and DBCS, are not implemented.
 
-Keep requested and selected charsets distinct. In particular, a Symbol face
-requested with DEFAULT_CHARSET cannot safely be treated as Western text merely
-from its request. Determine symbol cmap selection and fallback through probes.
+A supplied face with a Microsoft symbol cmap uses that cmap under SYMBOL_CHARSET
+or DEFAULT_CHARSET: bytes select U+F000–U+F0FF, not Unicode lookalike icons.
+Glyph identity depends on the actual font file, including for Symbol/Wingdings.
+For ordinary faces the requested code page must be advertised by the font;
+unsupported charset/face combinations fail rather than silently substituting.
 See the [WMF text record contract](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/7d07c44a-a828-4b82-9af0-e0a81cced5a8).
+
+`FontCollection(..., aliases={"Requested family": "Supplied family"})` allows
+deliberate substitution while retaining exact weight/style selection.
+`missing_glyph="notdef"` opts into glyph zero of the selected face; the default
+`"error"` preserves missing-glyph diagnostics. Neither policy implements Windows
+font linking, registry substitution or host-font discovery.
+
+The named `text-encoding` probe checks native byte conversion, glyph indices
+and Western/Cyrillic/symbol WMF playback. Its controlled fonts are original test
+geometry. Installed Symbol/Wingdings are queried without redistributing their
+font files. Use `text-gallery.py --missing-glyph notdef` for the intentional
+missing-glyph review; that choice is shown in the page.
 
 For DBCS, ANSI ExtTextOut advances are byte-indexed: the two entries belonging
 to a double-byte character are combined. Preserve that relationship instead of

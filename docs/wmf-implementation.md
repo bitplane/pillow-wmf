@@ -13,7 +13,7 @@ metrics and rounding boundaries.
 | File framing | Standard/placeable headers, checksum, EOF, original metadata and file trailer preservation | Native compatibility probes for unusual headers |
 | Fixed records | 51 record classes with explicit field widths, signedness and wire order | See operation-specific rendering limits |
 | Variable records | 19 record classes, including all six bitmap transfer envelopes | Native probes for ambiguous layouts |
-| Text | Lossless raw records; explicit-font ASCII layout, sizing, positive mapping scales, spacing, alignment, signed advances and clipping; monochrome and approximate default-quality masks | Other encodings, font mapping, rotation/reflection and styles |
+| Text | Lossless raw records; explicit-font Western/Cyrillic and symbol layout, sizing, positive mapping scales, spacing, alignment, signed advances and clipping; monochrome and approximate default-quality masks | Other encodings, automatic font mapping/linking, rotation/reflection and styles |
 | Objects | Pen/brush record fields, font, palette, region/scan structures; raster object realization and retained selections | General font realization |
 | Bitmap payloads | Explicit `BitmapData` values; Core/Info/V4/V5 DIB codecs, RGB and logical-palette tables, 1/4/8/16/24/32-bit RGB, bitfields and RLE4/RLE8; Bitmap16 device-sample codecs and deterministic writers | Colour management, embedded image codecs, other historical device formats |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
@@ -142,11 +142,12 @@ or deleted file references raise `PlaybackError`.
 
 The RGB raster backend retains text alignment, character spacing, justification
 requests, mapper flags and selected logical fonts in saved DC state. Font
-creation does not resolve a physical face. Horizontal ASCII text uses explicitly
+creation does not resolve a physical face. Horizontal Western/Cyrillic and symbol text uses explicitly
 supplied TrueType faces, with sizing, positive mapping scales, spacing,
 alignment, signed advances, clipping and current-position updates. Monochrome
 masks and an approximate RGB-subpixel default-quality profile are available.
-Other encodings, rotation/reflection and styles remain unsupported; see
+Aliases and missing-glyph fallback are explicit caller policies. Other encodings,
+automatic font linking, rotation/reflection and styles remain unsupported; see
 [text support](gdi-text.md) for the exact boundary.
 
 Pen creation follows `CreatePenIndirect`/`CreatePen`, not `ExtCreatePen`:

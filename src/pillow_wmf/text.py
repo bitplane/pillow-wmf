@@ -1,7 +1,7 @@
 """Explicit font inputs, glyph masks and horizontal GDI layout.
 
-This first slice deliberately has no host-font discovery, substitution or
-automatic shaping. Font files are supplied by the caller, not by a WMF.
+Font files, aliases and missing-glyph policy are supplied by the caller, not by
+a WMF. There is no host-font discovery, font linking or automatic shaping.
 """
 
 from dataclasses import dataclass, field
@@ -16,6 +16,14 @@ from fontTools.ttLib import TTFont
 from .gdi import UnsupportedOperation
 from .mapping import rounded
 from .numeric import float32
+
+
+def decode_single_byte(data, codepage):
+    """Windows preserves undefined SBCS bytes as their same-valued controls."""
+    if codepage not in (1252, 1251):
+        raise UnsupportedOperation(f"Unsupported text code page: {codepage}")
+    decoded = data.decode(f"cp{codepage}", errors="surrogateescape")
+    return "".join(chr(ord(c) - 0xDC00) if 0xDC80 <= ord(c) <= 0xDCFF else c for c in decoded)
 
 
 @dataclass(frozen=True)
@@ -35,17 +43,22 @@ class RasterFont:
     font: ft.Face
     ascent: int
     descent: int
-    characters: frozenset[int]
     hinted: bool = True
     design_advances: dict[int, int] = field(default_factory=dict)
     advance_scale: float = 1
     quality: int = 3
     break_character: int = 32
+    cmap: dict[int, int] = field(default_factory=dict)
+    symbol: bool = False
+    missing_glyph: str = "error"
     _glyphs: dict[str, Glyph] = field(default_factory=dict)
 
     def glyph(self, character, max_pixels):
-        index = self.font.get_char_index(ord(character))
-        if ord(character) not in self.characters or not index:
+        codepoint = ord(character)
+        index = self.cmap.get(codepoint, 0)
+        if not index and self.symbol and 0xF000 <= codepoint <= 0xF0FF:
+            index = self.cmap.get(codepoint - 0xF000, 0)
+        if not index and self.missing_glyph == "error":
             raise UnsupportedOperation(f"Missing glyph for U+{ord(character):04X}")
         if character not in self._glyphs:
             # Honour TrueType instructions without inventing auto-hints for
@@ -113,14 +126,22 @@ class FontFace:
                 getattr(glyph, "program", None) and glyph.program.getBytecode()
                 for glyph in (font["glyf"][name] for name in font.getGlyphOrder())
             )
-            self.characters = frozenset(font.getBestCmap() or ())
+            symbol_map = next(
+                (table.cmap for table in font["cmap"].tables if table.platformID == 3 and table.platEncID == 0), None
+            )
+            self.symbol = symbol_map is not None
+            if self.symbol:
+                self.break_character |= 0xF000
+            mapping = symbol_map if self.symbol else font.getBestCmap() or {}
+            self.cmap = {codepoint: font.getGlyphID(name) for codepoint, name in mapping.items()}
+            self.codepages = getattr(font["OS/2"], "ulCodePageRange1", 0)
         self._sizes = {}
 
     @classmethod
     def from_path(cls, path, *, index=0):
         return cls(Path(path).read_bytes(), index=index)
 
-    def realize(self, request, scale):
+    def realize(self, request, scale, *, missing_glyph="error"):
         """Classic compatible-mode realization; natural width follows height."""
         sx, sy = scale
         height = abs(request.height) * sy if request.height else 16
@@ -132,20 +153,22 @@ class FontFace:
         if request.width and self.average_width <= 0:
             raise UnsupportedOperation("Font has no usable average-width metric")
         width = abs(request.width) * sx * Fraction(self.units_per_em, self.average_width) if request.width else None
-        return self.at_size(height, width=width, quality=request.quality)
+        return self.at_size(height, width=width, quality=request.quality, missing_glyph=missing_glyph)
 
-    def at_size(self, size, *, width=None, quality=3):
+    def at_size(self, size, *, width=None, quality=3, missing_glyph="error"):
+        if missing_glyph not in ("error", "notdef"):
+            raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
         if size <= 0:
             raise ValueError("Font pixel size must be positive")
         mask_width = rounded(size) if width is None else width
         width = size if width is None else width
-        key = size, width, mask_width, quality
+        key = size, width, mask_width, quality, missing_glyph
         if key not in self._sizes:
             # Bound the cache independently of the number of WMF font objects.
             if len(self._sizes) >= 32:
                 self._sizes.pop(next(iter(self._sizes)))
             font = ft.Face.from_bytes(self.data, index=self.index)
-            font.select_charmap(ft.FT_ENCODING_UNICODE)
+            # Glyph IDs come from the selected cmap; FreeType only rasterizes.
             font.set_char_size(max(1, int(mask_width * 64)), max(1, rounded(size) * 64), 72, 72)
 
             def metric(units):
@@ -155,20 +178,29 @@ class FontFace:
                 font,
                 metric(self.ascent),
                 metric(self.descent),
-                self.characters,
                 self.hinted,
                 self.design_advances,
                 float32(width / self.units_per_em),
                 quality,
                 self.break_character,
+                self.cmap,
+                self.symbol,
+                missing_glyph,
             )
         return self._sizes[key]
 
 
 class FontCollection:
-    """Exact family/style resolution among supplied faces; never substitute."""
+    """Supplied faces and explicit aliases; never discover or silently replace."""
 
-    def __init__(self, faces=()):
+    def __init__(self, faces=(), *, ansi_codepage=1252, aliases=None, missing_glyph="error"):
+        if ansi_codepage not in (1252, 1251):
+            raise ValueError("ANSI environment must be Windows-1252 or Windows-1251")
+        if missing_glyph not in ("error", "notdef"):
+            raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
+        self.ansi_codepage = ansi_codepage
+        self.missing_glyph = missing_glyph
+        self.aliases = {name.casefold(): target.casefold() for name, target in (aliases or {}).items()}
         self._faces = {}
         for face in faces:
             key = (face.family.casefold(), face.weight, face.italic)
@@ -179,10 +211,8 @@ class FontCollection:
     def resolve(self, request):
         if request is None:
             raise UnsupportedOperation("Default font resolution")
-        try:
-            family = request.face_name.split(b"\0", 1)[0].decode("ascii").casefold()
-        except UnicodeDecodeError as error:
-            raise UnsupportedOperation("Non-ASCII font face-name encoding") from error
+        family = decode_single_byte(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).casefold()
+        family = self.aliases.get(family, family)
         key = family, request.weight or 400, bool(request.italic)
         try:
             return self._faces[key]
@@ -190,6 +220,19 @@ class FontCollection:
             raise UnsupportedOperation(
                 f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}"
             ) from error
+
+    def decode(self, request, face, data):
+        if face.symbol:
+            if request.charset not in (1, 2):
+                raise UnsupportedOperation("Unsupported symbol font charset request")
+            return "".join(chr(0xF000 | byte) for byte in data)
+        codepage = {0: 1252, 1: self.ansi_codepage, 204: 1251}.get(request.charset)
+        if codepage is None:
+            raise UnsupportedOperation(f"Unsupported text charset: {request.charset}")
+        bit = 0 if codepage == 1252 else 2
+        if not face.codepages & (1 << bit):
+            raise UnsupportedOperation("Font does not advertise the requested charset; explicit selection is required")
+        return decode_single_byte(data, codepage)
 
 
 @dataclass(frozen=True)
@@ -199,16 +242,32 @@ class TextLayout:
     position: tuple[int | Fraction, int | Fraction] | None = None
 
 
-def layout_text(font, text, x, y, alignment, advances, *, opaque, max_pixels, scale=1, extra=0, justification=(0, 0)):
+def layout_text(
+    font,
+    text,
+    x,
+    y,
+    alignment,
+    advances,
+    *,
+    opaque,
+    max_pixels,
+    scale=1,
+    extra=0,
+    justification=(0, 0),
+    characters=None,
+):
     """Place independently realized glyphs; explicit advances replace metrics."""
-    if any(byte < 32 or byte > 126 for byte in text):
-        raise UnsupportedOperation("Only printable ASCII text is supported")
+    if characters is None:
+        characters = decode_single_byte(text, 1252)
+    if len(characters) != len(text):
+        raise UnsupportedOperation("Multibyte text layout is not implemented")
     horizontal, vertical = alignment & 6, alignment & 24
     if alignment & ~31 or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
         raise UnsupportedOperation("Text alignment")
     if advances and len(advances) != len(text):
         raise ValueError("Text advance count must match the byte count")
-    glyphs = tuple(font.glyph(chr(byte), max_pixels) for byte in text)
+    glyphs = tuple(font.glyph(character, max_pixels) for character in characters)
     offsets = [0]
     mapped_offsets = [0]
     total = 0
@@ -222,7 +281,7 @@ def layout_text(font, text, x, y, alignment, advances, *, opaque, max_pixels, sc
             mapped_offsets.append(total * scale)
         else:
             total += glyph.advance * 65536 + int(extra * scale * 65536)
-            if text[index] == getattr(font, "break_character", 32):
+            if ord(characters[index]) == getattr(font, "break_character", 32):
                 total += break_step
             mapped_offsets.append(rounded(Fraction(total, 65536) / scale) * scale)
         offsets.append(rounded(mapped_offsets[-1]))

@@ -9,10 +9,12 @@ from PIL import Image, ImageChops
 from pillow_wmf import FontCollection, FontFace, Metafile, RasterContext, UnsupportedOperation, play
 
 
-def gallery(source, output, *, title="Real-font mismatches"):
+def gallery(source, output, *, title="Real-font mismatches", missing_glyph="error"):
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    fonts = FontCollection(FontFace.from_path(path) for path in sorted((source / "fonts").glob("*.ttf")))
+    fonts = FontCollection(
+        (FontFace.from_path(path) for path in sorted((source / "fonts").glob("*.ttf"))), missing_glyph=missing_glyph
+    )
     entries, blocked = [], []
     exact = 0
     for wmf in sorted(source.glob("*.wmf")):
@@ -44,6 +46,12 @@ def gallery(source, output, *, title="Real-font mismatches"):
             note = "Default quality: RGB subpixel coverage; filtering and contrast remain approximate."
         else:
             note = "Monochrome: inspect ink shape and placement; differences are not automatically waived."
+        if wmf.stem == "encoding-missing":
+            note = (
+                "Policy difference, not a rasterizer comparison: Windows links missing letters to another font "
+                "and treats controls specially. Ours deliberately uses glyph zero of the supplied face. "
+                "Automatic linking and control-character layout are not implemented."
+            )
         entries.append(
             f"<section><h2>{escape(wmf.stem)} — {count} differing pixels</h2>"
             f"<p>{note}</p><div>{''.join(cells)}</div></section>"
@@ -59,6 +67,7 @@ figcaption{{padding:8px 0}}section{{margin:32px 0}}pre{{white-space:pre-wrap}}</
 <h1>{escape(title)}</h1><p>{summary}</p>
 <p>Windows left, ours middle, pink mismatches right. Exact cases are omitted.
 Both sides use identical font files. Unsupported cases are listed separately.</p>
+<p>Missing-glyph policy: {escape(missing_glyph)} (notdef uses the supplied face's glyph zero, not font linking).</p>
 <label>Pixel zoom <select onchange="document.body.style.setProperty('--zoom',this.value)">
 <option>1</option><option>2</option><option>4</option></select></label>
 {"".join(entries)}<h2>Blocked cases</h2><pre>{escape(chr(10).join(blocked) or "None")}</pre>"""
@@ -73,8 +82,9 @@ def main():
     parser.add_argument("source", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--title", default="Real-font mismatches")
+    parser.add_argument("--missing-glyph", choices=("error", "notdef"), default="error")
     args = parser.parse_args()
-    gallery(args.source, args.output, title=args.title)
+    gallery(args.source, args.output, title=args.title, missing_glyph=args.missing_glyph)
 
 
 if __name__ == "__main__":

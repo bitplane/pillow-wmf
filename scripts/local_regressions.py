@@ -11,6 +11,8 @@ text-em-height
 text-layout-and-clip
 text-cell-height
 text-scaled-spacing
+text-codepages
+text-symbols
 mapping-translation-precision-0
 mapping-translation-precision-1
 coords-mode-switch

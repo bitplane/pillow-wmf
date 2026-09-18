@@ -51,3 +51,23 @@ def cases():
     for name, _, recorder in namespace["cases"]():
         if name in promoted:
             yield promoted[name], recorder
+
+    for name, family, charsets, sample in (
+        ("text-codepages", b"Pillow WMF Encoding", (0, 204), b"\xe9\x80\xc6 A B"),
+        ("text-symbols", b"Pillow WMF Symbols", (1, 2), b"AB \x80\xe9\xff"),
+    ):
+        recorder = Recorder()
+        recorder.set_background_mode(1)
+        recorder.set_text_alignment(24)
+        for row, charset in enumerate(charsets):
+            recorder.select_object(
+                recorder.create_font(
+                    Font(height=-16, weight=400, quality=3, charset=charset, face_name=family.ljust(32, b"\0"))
+                )
+            )
+            recorder.text_out(5, 20 + row * 60, sample)
+            recorder.ext_text_out(5, 40 + row * 60, sample, advances=tuple(13 + i % 2 for i in range(len(sample))))
+            recorder.set_text_justification(sample.count(b" "), 9)
+            recorder.text_out(5, 58 + row * 60, sample)
+            recorder.set_text_justification(0, 0)
+        yield name, recorder
