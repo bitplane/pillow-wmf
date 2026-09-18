@@ -1,5 +1,11 @@
 # Polygon and PolyPolygon fills
 
+`PolyPolygon` rejects the whole operation if any contour has fewer than two
+points. Validate before painting: omitting only the short contour incorrectly
+draws the others. A two-point contour is accepted, even though it has no fill
+area. Rejected calls leave the current position and selected drawing state
+unchanged.
+
 `RasterContext` maps each record's logical points to device paths. `Polygon`
 provides one contour; `PolyPolygon` provides several. It fills all contours in
 one pass using the selected alternate or winding rule, then strokes each

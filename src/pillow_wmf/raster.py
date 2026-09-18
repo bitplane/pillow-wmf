@@ -433,6 +433,10 @@ class RasterContext(TraceContext):
             self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
         elif name in {"polygon", "poly_polygon"}:
             polygons = (a["points"],) if name == "polygon" else a["polygons"]
+            # PolyPolygon validates the entire contour list before painting.
+            # Dropping short contours would incorrectly draw the valid ones.
+            if name == "poly_polygon" and any(len(points) < 2 for points in polygons):
+                return result
             paths = tuple(self._mapped_path(points) for points in polygons)
             self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))
         elif name == "set_pixel":

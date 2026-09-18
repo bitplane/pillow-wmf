@@ -157,6 +157,26 @@ def test_recorded_empty_polygon_leaves_pixels_and_subsequent_drawing_unchanged(p
     assert images[0] == images[1]
 
 
+@pytest.mark.parametrize("short", ((), ((4, 4),)))
+@pytest.mark.parametrize("position", (0, 1, 2))
+@pytest.mark.parametrize("fill_mode", (1, 2))
+@pytest.mark.parametrize("width", (0, 7))
+def test_polypolygon_rejects_all_contours_if_any_has_fewer_than_two_points(short, position, fill_mode, width):
+    dc = RasterContext(32, 32)
+    dc.select_object(dc.create_pen(0, width, 0))
+    dc.select_object(dc.create_brush(0, 0x335577, 0))
+    dc.set_polygon_fill_mode(fill_mode)
+    dc.move_to(3, 29)
+    before = dc.image.tobytes()
+    valid = ((8, 8), (24, 8), (24, 24), (8, 24))
+    polygons = [valid, valid]
+    polygons.insert(position, short)
+    dc.poly_polygon(tuple(polygons))
+    assert dc.image.tobytes() == before
+    dc.line_to(29, 29)
+    assert dc.image.getpixel((16, 29)) == (0, 0, 0)
+
+
 def test_invalid_background_mode_does_not_change_context() -> None:
     context = RasterContext(8, 8)
     with pytest.raises(UnsupportedOperation, match="Background mode"):
