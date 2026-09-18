@@ -17,6 +17,7 @@ on:
           - strokes
           - pen-support
           - ellipse-support
+          - polygon-support
           - arcs
           - edge-cases
           - regions
@@ -107,6 +108,9 @@ jobs:
       - name: Inspect native ellipse stroke support
         if: inputs.probe == 'ellipse-support'
         run: python scripts/probe-windows-ellipse-support.py
+      - name: Inspect native polygon stroke support
+        if: inputs.probe == 'polygon-support'
+        run: python scripts/probe-windows-polygon-support.py
       - name: Probe native Arc paths
         if: inputs.probe == 'arcs' || inputs.probe == 'all'
         run: python scripts/probe-windows-arcs.py

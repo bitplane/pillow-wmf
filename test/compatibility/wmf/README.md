@@ -31,6 +31,8 @@ WMF/PNG pairs from that same MS Office 97 corpus commit. They cover fractional
 inside-frame ellipse rims; their lettering consists of polygons, not fonts.
 `corpus-switch` and `corpus-nopark` are unchanged pairs from the same corpus,
 covering anisotropic stroke-only ellipses.
+`corpus-screwdrv` is an unchanged pair from the same corpus, covering shallow
+polygon strokes with a highly anisotropic pen.
 
 The `pen-radius-probe-*` WMFs compare solid/inside-frame pens at the corpus
 scales, fractional-radius boundaries, axis collapse and fixed-point circularity.
