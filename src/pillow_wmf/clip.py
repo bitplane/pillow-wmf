@@ -108,6 +108,9 @@ class RegionMask:
                         rectangles.append((cursor, y0, right, y1))
         return RegionMask.from_rectangles(rectangles)
 
+    def intersection(self, other):
+        return self.difference(self.difference(other))
+
     def frame(self, width, height, *, point=None):
         """Inner rectangular border: subtract the rectangular erosion.
 
@@ -148,7 +151,7 @@ class RegionMask:
             )
         expanded = RegionMask.from_rectangles(rectangles)
         region = self.transformed(point) if point is not None else self
-        return region.difference(region.difference(expanded))
+        return region.intersection(expanded)
 
 
 @dataclass(frozen=True)
@@ -160,10 +163,10 @@ class ClipRegion:
         """Resolve the application clip inside finite device bounds."""
         region = RegionMask.from_rectangles((bounds,))
         if self.mask is not None:
-            region = region.difference(region.difference(self.mask))
+            region = region.intersection(self.mask)
         for include, rectangle in self.constraints:
             other = RegionMask.from_rectangles((rectangle,))
-            region = region.difference(region.difference(other) if include else other)
+            region = region.intersection(other) if include else region.difference(other)
         return region
 
     def contains(self, x: int, y: int) -> bool:
