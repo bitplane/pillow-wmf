@@ -7,7 +7,13 @@ from windows_wmf_render import bind, check, reference_surface
 
 
 def main():
-    for width, window in ((176, (8118, 8035)), (6, (412, 1915))):
+    for width, window, viewport in (
+        (176, (8118, 8035), (128, 128)),
+        (6, (412, 1915), (128, 128)),
+        (6, (412, 1536), (128, 128)),
+        (6, (412, 1280), (128, 128)),
+        (1, (128, 128), (192, 96)),
+    ):
         for endpoint in ((0, 0), (744, -1681), (698, -1695), (698, -1632), (0, 1000), (1000, 0)):
             with reference_surface(128, 128) as (gdi, dc, _bits):
                 ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
@@ -31,9 +37,11 @@ def main():
                 bind(gdi, "MoveToEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.POINT))
                 bind(gdi, "LineTo", boolean, ptr, integer, integer)
                 bind(gdi, "SetWindowExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
+                bind(gdi, "SetViewportExtEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.SIZE))
                 bind(gdi, "SetViewportOrgEx", boolean, ptr, integer, integer, ctypes.POINTER(wintypes.POINT))
                 bind(gdi, "SetMapMode", integer, ptr, integer)
                 check(gdi.SetWindowExtEx(dc, *window, None), "SetWindowExtEx")
+                check(gdi.SetViewportExtEx(dc, *viewport, None), "SetViewportExtEx")
                 check(gdi.SetViewportOrgEx(dc, 64, 64, None), "SetViewportOrgEx")
                 pen = check(gdi.CreatePen(0, width, 0), "CreatePen")
                 old = gdi.SelectObject(dc, pen)
@@ -49,7 +57,11 @@ def main():
                 check(gdi.LineTo(dc, *endpoint), "LineTo")
                 check(gdi.EndPath(dc), "EndPath")
                 check(gdi.WidenPath(dc), "WidenPath")
-                for coordinates in ("logical", "device"):
+                for coordinates in ("logical", "fixed", "device"):
+                    if coordinates == "fixed":
+                        check(gdi.SetWindowExtEx(dc, 2048, 2048, None), "SetWindowExtEx")
+                        check(gdi.SetViewportExtEx(dc, 128, 128, None), "SetViewportExtEx")
+                        check(gdi.SetViewportOrgEx(dc, 0, 0, None), "SetViewportOrgEx")
                     if coordinates == "device":
                         check(gdi.SetMapMode(dc, 1), "SetMapMode")
                         check(gdi.SetViewportOrgEx(dc, 0, 0, None), "SetViewportOrgEx")
