@@ -17,6 +17,7 @@ on:
           - mapping
           - precision
           - text
+          - real-text
           - layout
           - patblt
           - dib-brush
@@ -105,6 +106,19 @@ jobs:
         with:
           name: text-probe
           path: text-probe/
+          retention-days: 7
+      - name: Render pinned real-font samples
+        if: inputs.probe == 'real-text'
+        shell: bash
+        run: |
+          mkdir -p real-text-probe
+          python scripts/probe-windows-real-text.py --output real-text-probe | tee real-text-probe/observations.txt
+      - name: Upload real-font samples
+        if: inputs.probe == 'real-text'
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-text-probe
+          path: real-text-probe/
           retention-days: 7
       - name: Verify native PatBlt
         if: inputs.probe == 'patblt' || inputs.probe == 'all'

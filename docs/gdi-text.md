@@ -42,6 +42,28 @@ Run the focused native experiment with
 `gh workflow run update-goldens.yml -f probe=text`. It measures WMF playback and
 uploads its input/output pairs without replacing committed references.
 
+## Real-font visual comparisons
+
+The named `real-text` probe downloads checksum-pinned, SIL Open Font License
+Noto Sans and Noto Serif files and renders a small horizontal Latin size sweep.
+It verifies the selected native face and its metric, outline and character-map
+tables, and records glyph indices, advances and line metrics. It only generates
+oracle data; comparisons run locally. Font inputs, their license, observations
+and WMF/PNG pairs are uploaded together, not committed to this repository.
+
+```sh
+gh workflow run update-goldens.yml -f probe=real-text
+# Download the real-text-probe artifact into a scratch directory, then:
+python scripts/text-gallery.py /path/to/real-text-probe --output /path/to/gallery
+```
+
+Open `gallery/index.html` for Windows/local/difference images at selectable
+integer zoom. Exact matches are omitted, while unsupported cases are reported
+separately. The first batch uses explicit monochrome quality and negative
+character heights; it does not establish default-quality or cell-height support.
+Use the native observations to check glyph selection and spacing before treating
+a visible difference as a mask-quality judgment. No tolerance is applied.
+
 ## Boundaries
 
 Keep the parser lossless: font names, text bytes and advance arrays remain raw.

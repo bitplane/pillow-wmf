@@ -33,8 +33,8 @@ class TextMetrics(ctypes.Structure):
     )
 
 
-def observe(source):
-    with reference_surface(128, 128) as (gdi, dc, _):
+def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=None):
+    with reference_surface(*size) as (gdi, dc, _):
         ptr = ctypes.c_void_p
         callback_type = ctypes.WINFUNCTYPE(ctypes.c_int, ptr, ptr, ptr, ctypes.c_int, ctypes.c_ssize_t)
         enum = bind(gdi, "EnumMetaFile", wintypes.BOOL, ptr, ptr, callback_type, ctypes.c_ssize_t)
@@ -54,6 +54,11 @@ def observe(source):
             ctypes.POINTER(wintypes.SIZE),
         )
         errors = []
+        font_data = bind(gdi, "GetFontData", wintypes.DWORD, ptr, wintypes.DWORD, wintypes.DWORD, ptr, wintypes.DWORD)
+        glyph_indices = bind(
+            gdi, "GetGlyphIndicesW", wintypes.DWORD, ptr, ctypes.c_wchar_p, ctypes.c_int, ptr, wintypes.DWORD
+        )
+        char_width = bind(gdi, "GetCharWidth32W", wintypes.BOOL, ptr, wintypes.UINT, wintypes.UINT, ptr)
 
         @callback_type
         def callback(hdc, handles, record, count, _):
@@ -63,12 +68,30 @@ def observe(source):
                 if function in (0x012D, 0x0521, 0x0A32):  # SelectObject, TextOut, ExtTextOut
                     selected = ctypes.create_unicode_buffer(64)
                     check(face(hdc, len(selected), selected), "GetTextFaceW")
-                    if selected.value != FAMILY:
+                    if selected.value != family:
                         raise RuntimeError(f"Unexpected font substitution: {selected.value!r}")
+                    if function == 0x012D:
+                        for tag, expected in (tables or {}).items():
+                            buffer = ctypes.create_string_buffer(len(expected))
+                            length = font_data(hdc, int.from_bytes(tag.encode(), "little"), 0, buffer, len(expected))
+                            if length != len(expected) or buffer.raw != expected:
+                                raise RuntimeError(f"Selected font table differs: {tag}")
+                        characters = sample.decode("ascii")
+                        indices = (ctypes.c_ushort * len(characters))()
+                        if glyph_indices(hdc, characters, len(characters), indices, 1) == 0xFFFFFFFF:
+                            raise OSError("GetGlyphIndicesW failed")
+                        widths = []
+                        for character in characters:
+                            width = ctypes.c_int()
+                            check(
+                                char_width(hdc, ord(character), ord(character), ctypes.byref(width)), "GetCharWidth32W"
+                            )
+                            widths.append(width.value)
+                        print(f"characters={characters!r} glyphs={list(indices)} advances={widths}", flush=True)
                     value, point, size = TextMetrics(), wintypes.POINT(), wintypes.SIZE()
                     check(metrics(hdc, ctypes.byref(value)), "GetTextMetricsW")
                     check(position(hdc, ctypes.byref(point)), "GetCurrentPositionEx")
-                    check(extent(hdc, b"A B", 3, ctypes.byref(size)), "GetTextExtentPoint32A")
+                    check(extent(hdc, sample, len(sample), ctypes.byref(size)), "GetTextExtentPoint32A")
                     print(
                         f"record={function:04x} face={selected.value!r} "
                         f"metrics={{ {', '.join(f'{name}={getattr(value, name)}' for name, _ in value._fields_)} }} "
