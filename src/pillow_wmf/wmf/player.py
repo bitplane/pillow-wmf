@@ -93,6 +93,10 @@ def play(
                 value = slots[value]
             arguments[parameter] = value
 
+        for parameter in binding.signed_words:
+            value = arguments[parameter]
+            arguments[parameter] = value - 0x10000 if value & 0x8000 else value
+
         slot = None
         if record.kind in CREATION_TYPES:
             if not free:

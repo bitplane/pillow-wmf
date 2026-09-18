@@ -27,6 +27,11 @@ class Recorder(TraceContext):
         call = self._prepare(call)
         binding = BINDINGS[call.name]
         arguments = call.kwargs
+        for parameter in binding.signed_words:
+            value = arguments[parameter]
+            if not -32768 <= value <= 32767:
+                raise ValueError(f"{parameter} must fit a signed WMF word")
+            arguments[parameter] = value & 0xFFFF
         for parameter, field in binding.references:
             handle = arguments.pop(parameter)
             if call.name in ("select_object", "select_palette") and handle is None:

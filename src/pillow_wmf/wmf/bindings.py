@@ -11,6 +11,7 @@ class Binding:
     record: type[Record]
     parameters: tuple[str, ...]
     references: tuple[tuple[str, str], ...] = ()
+    signed_words: tuple[str, ...] = ()
 
 
 BINDINGS = {
@@ -21,7 +22,7 @@ BINDINGS = {
     "set_rop2": Binding(fixed.SetROP2, ("mode",), ()),
     "set_polygon_fill_mode": Binding(fixed.SetPolyFillMode, ("mode",), ()),
     "set_stretch_mode": Binding(fixed.SetStretchBltMode, ("mode",), ()),
-    "set_text_character_extra": Binding(fixed.SetTextCharExtra, ("extra",), ()),
+    "set_text_character_extra": Binding(fixed.SetTextCharExtra, ("extra",), signed_words=("extra",)),
     "restore_dc": Binding(fixed.RestoreDC, ("saved_dc",), ()),
     "resize_palette": Binding(fixed.ResizePalette, ("count",), ()),
     "delete_object": Binding(fixed.DeleteObject, ("handle",), (("handle", "object_index"),)),
@@ -290,6 +291,7 @@ BINDINGS = {
             "break_extra",
         ),
         (),
+        signed_words=("break_extra",),
     ),
     "set_layout": Binding(fixed.SetLayout, ("layout",), ()),
     "create_pen": Binding(

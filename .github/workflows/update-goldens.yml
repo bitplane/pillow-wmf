@@ -117,7 +117,7 @@ jobs:
           if [[ "${{ inputs.probe }}" == text-layout ]]; then args+=(--layout); fi
           python scripts/probe-windows-real-text.py --output real-text-probe "${args[@]}" | tee real-text-probe/observations.txt
       - name: Upload real-font samples
-        if: inputs.probe == 'real-text' || inputs.probe == 'text-layout'
+        if: always() && (inputs.probe == 'real-text' || inputs.probe == 'text-layout')
         uses: actions/upload-artifact@v4
         with:
           name: real-text-probe

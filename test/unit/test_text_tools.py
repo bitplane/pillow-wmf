@@ -28,6 +28,17 @@ def test_cached_font_bytes_are_verified_before_use(tmp_path):
         fetch(tmp_path)
 
 
+def test_layout_probe_records_signed_spacing_and_round_trips():
+    cases = runpy.run_path(str(SCRIPTS / "text_layout_cases.py"))["cases"]
+    for _, _, recorder in cases():
+        source = recorder.to_bytes()
+        metafile = Metafile.from_bytes(source)
+        assert metafile.to_bytes() == source
+        trace = TraceContext()
+        assert play(metafile, trace, strict=True) == ()
+        assert trace.calls == recorder.calls
+
+
 def test_gallery_omits_exact_cases_keeps_single_channel_differences_and_reports_blocked(tmp_path):
     gallery = runpy.run_path(str(SCRIPTS / "text-gallery.py"))["gallery"]
     source, output = tmp_path / "source", tmp_path / "gallery"
