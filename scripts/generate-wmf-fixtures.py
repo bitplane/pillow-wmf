@@ -705,7 +705,9 @@ def pen_radius_probe_cases():
         ("y-above", 4, (3200, 3200), (2220, 326)),
     )
     for name, width, window, viewport in profiles:
-        for style in (0, 6):
+        # Radius realization is shared by solid and inside-frame pens on
+        # these unfilled paths. Keep one paired style control, not every pair.
+        for style in (0, 6) if name == "fdo" else (0,):
             recorder = mapped()
             recorder.set_window_extent(*window)
             recorder.set_viewport_extent(*viewport)
@@ -1327,8 +1329,16 @@ def region_paint_probe_case(operation, style, mode, extent, size, scans, index):
 def flood_cases():
     """Flood topology and brush/ROP atlases, using only established setup calls."""
     for mode in (0, 1):
-        for state in ("solid", "null", "opaque", "transparent"):
-            for operation in range(1, 17):
+        # The shared ROP evaluator has exhaustive unit truth-table coverage.
+        # Here exercise composition with flood discovery: XOR, unchanged
+        # destination, copy, and null-brush rejection even for constant black.
+        for state, operations in (
+            ("solid", (7, 11, 13)),
+            ("null", (1, 13)),
+            ("opaque", (7, 13)),
+            ("transparent", (7, 11, 13)),
+        ):
+            for operation in operations:
                 r = mapped()
                 r.select_object(r.create_pen(5, 0, 0))
                 r.select_object(r.create_brush(0, 0x37598B, 0))
@@ -1408,7 +1418,9 @@ def pat_blt_cases():
             yield f"patblt-matrix-{index}-{kind}", filtered
     # One tile per truth table. Source-dependent operations must not silently
     # acquire an invented source colour. Noncanonical low words probe decoding.
-    for style, hatch, background in ((0, 0, 2), (1, 0, 2), *product((2,), range(6), (1, 2))):
+    # PatBlt ignores background mode. Cover every hatch, with one paired
+    # transparent/opaque control rather than repeating all 256 ROPs for each.
+    for style, hatch, background in ((0, 0, 2), (1, 0, 2), (2, 0, 1), *product((2,), range(6), (2,))):
         r = mapped()
         r.select_object(r.create_pen(5, 0, 0))
         r.select_object(r.create_brush(0, 0x37598B, 0))

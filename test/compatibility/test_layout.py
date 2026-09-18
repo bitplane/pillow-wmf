@@ -20,7 +20,10 @@ def test_wmf_suite_is_present() -> None:
 
 def test_generated_fixtures_are_reproducible_and_playable() -> None:
     cases = runpy.run_path(str(ROOT / "scripts" / "generate-wmf-fixtures.py"))["cases"]
+    generated = set()
     for name, recorder in cases():
+        assert name not in generated, f"Duplicate generated fixture: {name}"
+        generated.add(name)
         source = (WMF_ROOT / f"{name}.wmf").read_bytes()
         assert source == recorder.to_bytes()
         parsed = Metafile.from_bytes(source)
@@ -28,6 +31,8 @@ def test_generated_fixtures_are_reproducible_and_playable() -> None:
         trace = TraceContext()
         assert play(parsed, trace, strict=True) == ()
         assert trace.calls == recorder.calls
+    committed = {path.stem for path in WMF_ROOT.glob("*.wmf")}
+    assert committed == generated, f"Stale generated fixtures: {sorted(committed - generated)}"
 
 
 def test_committed_references_are_valid() -> None:
