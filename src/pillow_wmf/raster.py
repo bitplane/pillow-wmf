@@ -733,7 +733,7 @@ class RasterContext(TraceContext):
         direct = (
             copy
             and self._stretch_mode != 4
-            and self.mapping.linear_scale == (1, 1)
+            and self.mapping.translation_only
             and a["src_x"] == 0
             and a["src_y"] == 0
             and a["width"] == a.get("src_width", a["width"])

@@ -59,6 +59,11 @@ class Mapping:
         x, y = (Fraction(v, w) for v, w in zip(self.viewport_extent, self.window_extent, strict=True))
         return (-x if self.rtl else x), y
 
+    @property
+    def translation_only(self) -> bool:
+        """Whether the realized FLOAT transform leaves both axes unchanged."""
+        return all(float32(scale) == 1 for scale in self.linear_scale)
+
     def set_layout(self, layout):
         self.layout = layout
         if self.rtl:

@@ -12,8 +12,8 @@ from pillow_wmf.stroke import frame_footprint
 
 @pytest.mark.parametrize("layout,expected", [(0, [0, 0, 1, 40, 81]), (1, [127, 127, 126, 87, 46])])
 def test_native_translation_precision(layout, expected):
-    # GetPath, Windows run 35329745361: scale, origin product and addition
-    # are rounded separately before the translation becomes 28.4.
+    # Scale, origin product and addition are rounded separately before
+    # the translation becomes 28.4.
     mapping = Mapping(
         window_extent=(6316, 128),
         viewport_extent=(511, 128),
@@ -22,6 +22,22 @@ def test_native_translation_precision(layout, expected):
         layout=layout,
     )
     assert [mapping.device_point(x, 32)[0] for x in (20006, 20007, 20008, 20500, 21000)] == expected
+
+
+@pytest.mark.parametrize(
+    "viewport,layout,expected",
+    (
+        (100_000_000, 0, True),
+        (100_000_001, 0, True),
+        (100_000_010, 0, False),
+        (-100_000_000, 0, False),
+        (100_000_000, 1, False),
+        (-100_000_000, 1, True),
+    ),
+)
+def test_translation_only_uses_realized_precision_and_orientation(viewport, layout, expected):
+    mapping = Mapping(window_extent=(100_000_000, 128), viewport_extent=(viewport, 128), layout=layout)
+    assert mapping.translation_only is expected
 
 
 @pytest.mark.parametrize("coordinate,expected", [(19254, 90), (19255, 91), (19256, 91)])
