@@ -9,7 +9,7 @@ from PIL import Image, ImageChops
 from pillow_wmf import FontCollection, FontFace, Metafile, RasterContext, UnsupportedOperation, play
 
 
-def gallery(source, output):
+def gallery(source, output, *, title="Real-font mismatches"):
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     fonts = FontCollection(FontFace.from_path(path) for path in sorted((source / "fonts").glob("*.ttf")))
@@ -40,20 +40,25 @@ def gallery(source, output):
             filename = f"{wmf.stem}-{label.lower()}.png"
             image.save(output / filename)
             cells.append(f'<figure><figcaption>{label}</figcaption><img src="{escape(filename)}"></figure>')
+        if context._text_state.font and context._text_state.font.quality == 0:
+            note = "Default quality: RGB subpixel coverage; filtering and contrast remain approximate."
+        else:
+            note = "Monochrome: inspect ink shape and placement; differences are not automatically waived."
         entries.append(
-            f"<section><h2>{escape(wmf.stem)} — {count} differing pixels</h2><div>{''.join(cells)}</div></section>"
+            f"<section><h2>{escape(wmf.stem)} — {count} differing pixels</h2>"
+            f"<p>{note}</p><div>{''.join(cells)}</div></section>"
         )
     total = exact + len(entries) + len(blocked)
     if not total:
         raise ValueError("No WMF/PNG pairs found")
     summary = f"{total} cases: {exact} exact, {len(entries)} mismatches, {len(blocked)} blocked."
-    page = f"""<!doctype html><meta charset="utf-8"><title>Text mismatches</title>
+    page = f"""<!doctype html><meta charset="utf-8"><title>{escape(title)}</title>
 <style>body{{font:16px sans-serif;background:#eee;margin:24px}}section div{{display:flex;gap:16px;overflow:auto}}
 figure{{margin:0}}img{{image-rendering:pixelated;width:calc(640px * var(--zoom, 1));height:auto}}
 figcaption{{padding:8px 0}}section{{margin:32px 0}}pre{{white-space:pre-wrap}}</style>
-<h1>Real-font mismatches</h1><p>{summary}</p>
+<h1>{escape(title)}</h1><p>{summary}</p>
 <p>Windows left, ours middle, pink mismatches right. Exact cases are omitted.
-These samples use identical fonts, monochrome quality and negative character heights.</p>
+Both sides use identical font files. Unsupported cases are listed separately.</p>
 <label>Pixel zoom <select onchange="document.body.style.setProperty('--zoom',this.value)">
 <option>1</option><option>2</option><option>4</option></select></label>
 {"".join(entries)}<h2>Blocked cases</h2><pre>{escape(chr(10).join(blocked) or "None")}</pre>"""
@@ -67,8 +72,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--title", default="Real-font mismatches")
     args = parser.parse_args()
-    gallery(args.source, args.output)
+    gallery(args.source, args.output, title=args.title)
 
 
 if __name__ == "__main__":

@@ -945,8 +945,9 @@ class RasterContext(TraceContext):
         rectangle = args.get("rectangle")
         if options and rectangle is None:
             raise ValueError("Text output options require a rectangle")
-        if self.mapping.linear_scale != (1, 1) or self.mapping.rtl:
-            raise UnsupportedOperation("Scaled or reflected text mapping")
+        sx, sy = self.mapping.linear_scale
+        if sx <= 0 or sy <= 0 or self.mapping.rtl:
+            raise UnsupportedOperation("Reflected text mapping")
         if rectangle is not None:
             rectangle = (*self._point(*rectangle[:2]), *self._point(*rectangle[2:]))
         if not args["text"]:
@@ -954,33 +955,46 @@ class RasterContext(TraceContext):
         request = self._text_state.font
         face = self.fonts.resolve(request)
         if (
-            request.height >= 0
-            or request.width
-            or request.escapement
+            request.escapement
             or request.orientation
             or request.underline
             or request.strikeout
             or request.charset != 0
-            or request.quality != 3
+            or request.quality not in (0, 3)
         ):
-            raise UnsupportedOperation("Font realization: requires unrotated monochrome ANSI text with negative height")
-        if self._text_state.character_extra or any(self._text_state.justification) or self._text_state.mapper_flags:
-            raise UnsupportedOperation("Text spacing, justification or mapper flags")
+            raise UnsupportedOperation("Font realization: requires unrotated monochrome ANSI text")
+        if self._text_state.mapper_flags:
+            raise UnsupportedOperation("Text mapper flags")
         origin = self._position if self._text_state.alignment & 1 else (args["x"], args["y"])
         origin = self._point(*origin)
         layout = layout_text(
-            face.at_size(-request.height),
+            face.realize(request, (sx, sy)),
             args["text"],
             *origin,
             self._text_state.alignment,
             args.get("advances", ()),
             opaque=self._background_mode == 2,
             max_pixels=self.max_bitmap_pixels,
+            scale=sx,
+            extra=self._text_state.character_extra,
+            justification=self._text_state.justification,
         )
         if layout.position is not None:
-            # The supported mapping is translation only, so the same advance
-            # updates the logical current position without an inverse rounding.
-            layout = replace(layout, position=(self._position[0] + layout.position[0] - origin[0], self._position[1]))
+            logical_origin = self._position
+            device_position = []
+            for axis, scale in enumerate((sx, sy)):
+                coordinate = (
+                    logical_origin[axis] - self.mapping.window_origin[axis]
+                ) * scale + self.mapping.viewport_origin[axis]
+                delta = layout.position[axis] - origin[axis]
+                device_position.append(
+                    ((coordinate + delta) // 1 - self.mapping.viewport_origin[axis]) / scale
+                    + self.mapping.window_origin[axis]
+                )
+            layout = replace(
+                layout,
+                position=tuple(device_position),
+            )
         return layout, rectangle
 
     def _draw_text(self, layout, rectangle, options):
@@ -1008,8 +1022,20 @@ class RasterContext(TraceContext):
                 for x in range(max(0, left), min(self.image.width, left + width)):
                     if options & 4 and not (rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]):
                         continue
-                    if glyph.pixels[(y - top) * width + x - left]:
-                        self._pixel(x, y, self._text_color, operation=13)
+                    index = ((y - top) * width + x - left) * glyph.channels
+                    if glyph.channels == 1:
+                        if glyph.pixels[index]:
+                            self._pixel(x, y, self._text_color, operation=13)
+                    else:
+                        coverage = glyph.pixels[index : index + 3]
+                        foreground = self._palette.colorref(self._text_color)
+                        background = self.image.getpixel((x, y))
+                        color = tuple(
+                            (f * a + b * (255 - a) + 127) // 255
+                            for f, b, a in zip(foreground, background, coverage, strict=True)
+                        )
+                        if self._clip.contains(x, y):
+                            self.image.putpixel((x, y), color)
         if layout.position is not None:
             self._position = layout.position
 

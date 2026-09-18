@@ -9,13 +9,21 @@ Font creation, selection and saved state retain the logical request. Text
 drawing resolves an exact family, weight and italic style from caller-supplied
 TrueType faces; it never searches host font directories or silently substitutes.
 
-The supported rendering slice is printable ASCII, ANSI charset, explicit
-NONANTIALIASED_QUALITY and negative character height, with unit device scale
-and optional translation. It supports natural or nonnegative explicit advances,
-horizontal/vertical alignment, left-aligned TA_UPDATECP, opaque backgrounds,
-ETO_OPAQUE, ETO_CLIPPED and the DC clip. Rotation, width requests, synthesized
-styles, decorations, default fonts, other encodings and spacing/justification
-remain explicitly unsupported. Missing glyphs also raise.
+The supported rendering slice is printable ASCII and ANSI charset, with
+positive or negative heights, zero-height realization, explicit average width,
+positive axis scaling and translation. It supports natural or signed explicit
+advances, character extra, justification, horizontal/vertical alignment,
+TA_UPDATECP, opaque backgrounds, ETO_OPAQUE, ETO_CLIPPED and the DC clip.
+Rotation, reflection, synthesized styles, decorations, default-font selection
+and other encodings remain explicitly unsupported. Missing glyphs also raise.
+
+NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY currently uses a
+fixed RGB-subpixel profile matching the oracle's smoothing mode; it does not
+inherit the Linux desktop configuration. Its FreeType filtering and direct RGB
+coverage composition are an approximation, not an implementation of Windows'
+ClearType contrast/filtering. Explicit smoothing modes are deferred. Real-font
+mapped ink placement also remains subject to visual comparison even when native
+glyph indices and device advances agree.
 
 Supply fonts explicitly, for example:
 
@@ -28,7 +36,7 @@ play(metafile, context, strict=True)
 ```
 
 FontTools reads Windows ascent/descent and face metadata. The `freetype-py`
-binding supplies individual monochrome masks, actual bitmap bearings, glyph
+binding supplies individual masks, actual bitmap bearings, glyph
 indices and advances; GDI alignment, positioning, clipping and composition remain
 in this renderer. TrueType instructions are honoured, with automatic hint
 synthesis and embedded bitmap strikes disabled for this outline-only slice.
@@ -36,6 +44,19 @@ Odd-width centred runs choose the lower integer origin in monochrome output.
 Windows line metrics are not interchangeable with FreeType's default metrics.
 Glyph masks are checked against the context's bitmap-pixel budget before
 allocation, including when another context has already cached a glyph.
+
+Cell height is converted to fractional em size using the Windows ascent and
+descent. Outline ppem, fractional advance scaling and line metrics are separate:
+rounding one does not justify rounding all three. With no explicit width, classic
+GDI uses vertical scale for the font's natural proportions. An explicit width
+requests average character width, transformed on the horizontal axis.
+
+Text spacing retains fractional remainders until placement. Explicit advances
+replace natural widths and justification but retain character extra. Break
+character selection comes from native font metrics rather than assuming every
+font justifies ASCII spaces. Opaque bounds cover protruding glyphs as well as
+the run advance. Text-updated current positions retain sublogical precision so
+a subsequent line starts at the same device position.
 
 The controlled font lives in `test/fonts`.
 Run the focused native experiment with
@@ -63,6 +84,12 @@ separately. The first batch uses explicit monochrome quality and negative
 character heights; it does not establish default-quality or cell-height support.
 Use the native observations to check glyph selection and spacing before treating
 a visible difference as a mask-quality judgment. No tolerance is applied.
+
+Use `probe=text-layout` for the horizontal sizing/mapping/spacing batch. It
+includes controlled-font cases and records native device advances separately
+from logical prefix extents. Reuse the same gallery output directory and pass
+`--title` to identify the current review; previously approved size sweeps need
+not be included in every new review. Keep scratch data under `~/tmp`.
 
 ## Boundaries
 

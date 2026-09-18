@@ -42,3 +42,12 @@ def cases():
     recorder.set_background_color(0x22CC55)
     recorder.ext_text_out(0, 0, b"", options=2, rectangle=(110, 110, 123, 122))
     yield "text-layout-and-clip", recorder
+
+    namespace = runpy.run_path(str(Path(__file__).with_name("text_layout_cases.py")))
+    promoted = {
+        "layout-cell21-PillowWMFTest": "text-cell-height",
+        "layout-scaled-spacing-PillowWMFTest": "text-scaled-spacing",
+    }
+    for name, _, recorder in namespace["cases"]():
+        if name in promoted:
+            yield promoted[name], recorder

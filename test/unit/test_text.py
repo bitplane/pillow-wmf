@@ -1,6 +1,7 @@
 """Test font identity, GDI layout and DC effects separately from glyph pixels."""
 
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -75,7 +76,7 @@ def test_current_position_is_logical_and_saved_independently_of_glyph_cache(dc):
 
 
 @pytest.mark.parametrize(
-    "changes", [{"quality": 0}, {"charset": 2}, {"height": 20}, {"width": 10}, {"escapement": 900}]
+    "changes", [{"quality": 4}, {"charset": 2}, {"underline": 1}, {"orientation": 900}, {"escapement": 900}]
 )
 def test_unimplemented_realization_fails_before_painting_or_committing(dc, changes):
     dc.select_object(dc.create_font(replace(REQUEST, **changes)))
@@ -123,3 +124,72 @@ def test_bad_advance_array_is_atomic(dc):
     with pytest.raises(ValueError, match="advance count"):
         dc.ext_text_out(10, 20, b"AB", advances=(10,))
     assert dc.calls == before
+
+
+@pytest.mark.parametrize(
+    "height,width,scale,metrics,advances",
+    [
+        (20, 0, (1, 1), (15, 5), (10, 5, 7)),
+        (21, 0, (1, 1), (16, 5), (11, 5, 8)),
+        (0, 0, (1, 1), (14, 5), (10, 5, 7)),
+        (-20, 7, (1, 1), (18, 6), (9, 5, 7)),
+        (-20, 12, (1, 1), (18, 6), (16, 8, 12)),
+        (-20, 0, (2, 1), (18, 6), (12, 6, 9)),
+        (-20, 0, (1, 2), (36, 12), (24, 12, 18)),
+        (-20, 0, (Fraction(3, 2), Fraction(3, 2)), (27, 9), (18, 9, 13)),
+        (-20, 7, (Fraction(3, 2), Fraction(2, 3)), (12, 4), (14, 7, 10)),
+    ],
+)
+def test_realization_matches_native_metrics_and_device_advances(face, height, width, scale, metrics, advances):
+    font = face.realize(replace(REQUEST, height=height, width=width), scale)
+    assert (font.ascent, font.descent) == metrics
+    assert tuple(font.glyph(c, 10000).advance for c in "A B") == advances
+
+
+@pytest.mark.parametrize("alignment,position", [(25, (70, 30)), (27, (50, 30)), (31, None)])
+def test_current_position_alignment_uses_run_width(alignment, position):
+    result = layout_text(MetricFont(), b"AB", 60, 30, alignment, (), opaque=False, max_pixels=100)
+    assert result.position == position
+
+
+def test_explicit_signed_advances_override_justification_but_keep_character_extra():
+    result = layout_text(
+        MetricFont(),
+        b"A B",
+        20,
+        30,
+        25,
+        (9, 0, -7),
+        opaque=False,
+        max_pixels=100,
+        extra=2,
+        justification=(1, 100),
+        scale=Fraction(3, 2),
+    )
+    assert [x for x, _, _ in result.glyphs] == [19, 36, 39]
+    assert result.position == (32, 30)
+
+
+def test_default_quality_is_rgb_coverage_with_independent_cache(face):
+    mono = face.realize(REQUEST, (1, 1)).glyph("A", 10000)
+    rgb = face.realize(replace(REQUEST, quality=0), (1, 1)).glyph("A", 10000)
+    assert mono.channels == 1
+    assert rgb.channels == 3
+    assert len(rgb.pixels) == rgb.size[0] * rgb.size[1] * 3
+    assert any(value not in (0, 255) for value in rgb.pixels)
+
+
+def test_rgb_text_keeps_dc_clip_and_ignores_rop2(face):
+    dc = RasterContext(40, 40, fonts=FontCollection([face]))
+    dc.select_object(dc.create_font(replace(REQUEST, quality=0)))
+    dc.set_background_mode(1)
+    dc.set_rop2(1)
+    dc.set_text_color(0xFFFFFF)
+    dc.text_out(5, 5, b"A")
+    assert set(dc.image.get_flattened_data()) == {(255, 255, 255)}
+    dc.set_text_color(0)
+    dc.intersect_clip_rect(10, 10, 15, 20)
+    dc.text_out(5, 5, b"A")
+    changed = [(x, y) for y in range(40) for x in range(40) if dc.image.getpixel((x, y)) != (255, 255, 255)]
+    assert changed
+    assert all(10 <= x < 15 and 10 <= y < 20 for x, y in changed)

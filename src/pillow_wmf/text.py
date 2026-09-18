@@ -1,17 +1,21 @@
-"""Explicit font inputs, monochrome glyph masks and horizontal GDI layout.
+"""Explicit font inputs, glyph masks and horizontal GDI layout.
 
 This first slice deliberately has no host-font discovery, substitution or
 automatic shaping. Font files are supplied by the caller, not by a WMF.
 """
 
 from dataclasses import dataclass, field
+from fractions import Fraction
 from io import BytesIO
+from math import ceil
 from pathlib import Path
 
 import freetype as ft
 from fontTools.ttLib import TTFont
 
 from .gdi import UnsupportedOperation
+from .mapping import rounded
+from .numeric import float32
 
 
 @dataclass(frozen=True)
@@ -21,16 +25,22 @@ class Glyph:
     pixels: bytes
     advance: int
     index: int = 0
+    channels: int = 1
 
 
 @dataclass
-class MonochromeFont:
+class RasterFont:
     """Glyph generation is independent of GDI alignment and DC state."""
 
     font: ft.Face
     ascent: int
     descent: int
     characters: frozenset[int]
+    hinted: bool = True
+    design_advances: dict[int, int] = field(default_factory=dict)
+    advance_scale: float = 1
+    quality: int = 3
+    break_character: int = 32
     _glyphs: dict[str, Glyph] = field(default_factory=dict)
 
     def glyph(self, character, max_pixels):
@@ -40,27 +50,37 @@ class MonochromeFont:
         if character not in self._glyphs:
             # Honour TrueType instructions without inventing auto-hints for
             # unhinted glyphs. Keep bitmap strikes outside this outline slice.
-            self.font.load_glyph(index, ft.FT_LOAD_TARGET_MONO | ft.FT_LOAD_NO_AUTOHINT | ft.FT_LOAD_NO_BITMAP)
+            target = ft.FT_LOAD_TARGET_MONO if self.quality == 3 else ft.FT_LOAD_TARGET_LCD
+            self.font.load_glyph(index, target | ft.FT_LOAD_NO_AUTOHINT | ft.FT_LOAD_NO_BITMAP)
             slot = self.font.glyph
             bounds = slot.get_glyph().get_cbox(ft.FT_GLYPH_BBOX_PIXELS)
-            if max(1, bounds.xMax - bounds.xMin) * max(1, bounds.yMax - bounds.yMin) > max_pixels:
+            padding = 2 if self.quality != 3 else 0  # LCD filtering can extend the mask horizontally.
+            if (max(1, bounds.xMax - bounds.xMin) + padding) * max(1, bounds.yMax - bounds.yMin) > max_pixels:
                 raise ValueError("Glyph pixel limit exceeded")
-            slot.render(ft.FT_RENDER_MODE_MONO)
+            slot.render(ft.FT_RENDER_MODE_MONO if self.quality == 3 else ft.FT_RENDER_MODE_LCD)
             bitmap = slot.bitmap
-            if bitmap.pixel_mode != ft.FT_PIXEL_MODE_MONO:
-                raise UnsupportedOperation("Non-monochrome glyph bitmap")
             packed = bitmap.buffer
-            pixels = bytes(
-                255 if packed[y * bitmap.pitch + x // 8] & (128 >> (x % 8)) else 0
-                for y in range(bitmap.rows)
-                for x in range(bitmap.width)
-            )
+            channels = 1 if self.quality == 3 else 3
+            expected_mode = ft.FT_PIXEL_MODE_MONO if channels == 1 else ft.FT_PIXEL_MODE_LCD
+            if bitmap.pixel_mode != expected_mode:
+                raise UnsupportedOperation("Unexpected glyph bitmap format")
+            if channels == 1:
+                pixels = bytes(
+                    255 if packed[y * bitmap.pitch + x // 8] & (128 >> (x % 8)) else 0
+                    for y in range(bitmap.rows)
+                    for x in range(bitmap.width)
+                )
+            else:
+                pixels = bytes(packed[y * bitmap.pitch + x] for y in range(bitmap.rows) for x in range(bitmap.width))
             self._glyphs[character] = Glyph(
-                (bitmap.width, bitmap.rows),
+                (bitmap.width // channels, bitmap.rows),
                 (slot.bitmap_left, -slot.bitmap_top),
                 pixels,
-                (slot.advance.x + 32) // 64,
+                (slot.advance.x + 32) // 64
+                if self.hinted
+                else rounded(self.design_advances[index] * self.advance_scale),
                 index,
+                channels,
             )
         glyph = self._glyphs[character]
         if glyph.size[0] * glyph.size[1] > max_pixels:
@@ -83,6 +103,16 @@ class FontFace:
             self.units_per_em = font["head"].unitsPerEm
             self.ascent = font["OS/2"].usWinAscent
             self.descent = font["OS/2"].usWinDescent
+            if not self.ascent + self.descent:
+                self.ascent, self.descent = font["hhea"].ascent, -font["hhea"].descent
+            self.average_width = font["OS/2"].xAvgCharWidth
+            first = font["OS/2"].usFirstCharIndex
+            self.break_character = first + 2 if first <= 1 else 32
+            self.design_advances = {i: font["hmtx"][name][0] for i, name in enumerate(font.getGlyphOrder())}
+            self.hinted = "fpgm" in font or any(
+                getattr(glyph, "program", None) and glyph.program.getBytecode()
+                for glyph in (font["glyf"][name] for name in font.getGlyphOrder())
+            )
             self.characters = frozenset(font.getBestCmap() or ())
         self._sizes = {}
 
@@ -90,22 +120,49 @@ class FontFace:
     def from_path(cls, path, *, index=0):
         return cls(Path(path).read_bytes(), index=index)
 
-    def at_size(self, size):
+    def realize(self, request, scale):
+        """Classic compatible-mode realization; natural width follows height."""
+        sx, sy = scale
+        height = abs(request.height) * sy if request.height else 16
+        if request.height > 0:
+            # Cell-to-em conversion retains a fractional size for metrics;
+            # the outline grid is realized separately at integer ppem.
+            height *= Fraction(self.units_per_em, self.ascent + self.descent)
+            height = Fraction(int(height * 65536), 65536)
+        if request.width and self.average_width <= 0:
+            raise UnsupportedOperation("Font has no usable average-width metric")
+        width = abs(request.width) * sx * Fraction(self.units_per_em, self.average_width) if request.width else None
+        return self.at_size(height, width=width, quality=request.quality)
+
+    def at_size(self, size, *, width=None, quality=3):
         if size <= 0:
             raise ValueError("Font pixel size must be positive")
-        if size not in self._sizes:
+        mask_width = rounded(size) if width is None else width
+        width = size if width is None else width
+        key = size, width, mask_width, quality
+        if key not in self._sizes:
             # Bound the cache independently of the number of WMF font objects.
             if len(self._sizes) >= 32:
                 self._sizes.pop(next(iter(self._sizes)))
             font = ft.Face.from_bytes(self.data, index=self.index)
             font.select_charmap(ft.FT_ENCODING_UNICODE)
-            font.set_pixel_sizes(0, size)
+            font.set_char_size(max(1, int(mask_width * 64)), max(1, rounded(size) * 64), 72, 72)
 
-            def rounded(units):
+            def metric(units):
                 return (units * size * 2 + self.units_per_em) // (2 * self.units_per_em)
 
-            self._sizes[size] = MonochromeFont(font, rounded(self.ascent), rounded(self.descent), self.characters)
-        return self._sizes[size]
+            self._sizes[key] = RasterFont(
+                font,
+                metric(self.ascent),
+                metric(self.descent),
+                self.characters,
+                self.hinted,
+                self.design_advances,
+                float32(width / self.units_per_em),
+                quality,
+                self.break_character,
+            )
+        return self._sizes[key]
 
 
 class FontCollection:
@@ -139,33 +196,55 @@ class FontCollection:
 class TextLayout:
     glyphs: tuple[tuple[int, int, Glyph], ...] = ()
     background: tuple[int, int, int, int] | None = None
-    position: tuple[int, int] | None = None
+    position: tuple[int | Fraction, int | Fraction] | None = None
 
 
-def layout_text(font, text, x, y, alignment, advances, *, opaque, max_pixels):
+def layout_text(font, text, x, y, alignment, advances, *, opaque, max_pixels, scale=1, extra=0, justification=(0, 0)):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if any(byte < 32 or byte > 126 for byte in text):
         raise UnsupportedOperation("Only printable ASCII text is supported")
     horizontal, vertical = alignment & 6, alignment & 24
     if alignment & ~31 or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
         raise UnsupportedOperation("Text alignment")
-    if alignment & 1 and horizontal != 0:
-        raise UnsupportedOperation("Non-left TA_UPDATECP alignment")
     if advances and len(advances) != len(text):
         raise ValueError("Text advance count must match the byte count")
-    if any(value < 0 for value in advances):
-        raise UnsupportedOperation("Negative text advances")
     glyphs = tuple(font.glyph(chr(byte), max_pixels) for byte in text)
-    steps = advances or tuple(glyph.advance for glyph in glyphs)
-    width = sum(steps)
+    offsets = [0]
+    mapped_offsets = [0]
+    total = 0
+    break_count, break_extra = justification
+    # Spacing accumulates before pixel placement. Preserve fractional remainders
+    # instead of distributing rounded per-character additions.
+    break_step = int(Fraction(break_extra * scale * 65536, break_count)) if break_count > 0 else 0
+    for index, glyph in enumerate(glyphs):
+        if advances:
+            total += advances[index] + extra
+            mapped_offsets.append(total * scale)
+        else:
+            total += glyph.advance * 65536 + int(extra * scale * 65536)
+            if text[index] == getattr(font, "break_character", 32):
+                total += break_step
+            mapped_offsets.append(rounded(Fraction(total, 65536) / scale) * scale)
+        offsets.append(rounded(mapped_offsets[-1]))
+    run_width = total * scale if advances else rounded((total // 65536) / scale) * scale
+    width = rounded(run_width)
     # Monochrome GDI places cached glyphs at integer origins. Centering an
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
     origin_x = x - (width if horizontal == 2 else (width + 1) // 2 if horizontal == 6 else 0)
     baseline = y + (font.ascent if vertical == 0 else -font.descent if vertical == 8 else 0)
-    position = (x + width, y) if alignment & 1 else None
-    background = (origin_x, baseline - font.ascent, origin_x + width, baseline + font.descent) if opaque else None
+    position = (x + (run_width if horizontal == 0 else -run_width), y) if alignment & 1 and horizontal != 6 else None
     positioned = []
-    for glyph, advance in zip(glyphs, steps, strict=True):
-        positioned.append((origin_x + glyph.bearing[0], baseline + glyph.bearing[1], glyph))
-        origin_x += advance
+    for glyph, offset in zip(glyphs, offsets[:-1], strict=True):
+        positioned.append((origin_x + offset + glyph.bearing[0], baseline + glyph.bearing[1], glyph))
+    background_width = ceil(total * scale) if advances else ceil((Fraction(total, 65536) // scale) * scale)
+    # An opaque run must also cover protruding ink, even with negative spacing
+    # or a final explicit advance smaller than the glyph's black box.
+    right = max(
+        [origin_x + background_width]
+        + [
+            ceil(origin_x + offset + glyph.bearing[0] + glyph.size[0])
+            for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
+        ]
+    )
+    background = (origin_x, baseline - font.ascent, right, baseline + font.descent) if opaque else None
     return TextLayout(tuple(positioned), background, position)
