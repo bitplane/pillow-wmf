@@ -27,6 +27,18 @@ def test_region_clip_preserves_off_surface_data_and_constraints():
     assert clip.contains(-95, -95)
 
 
+def test_finite_clip_spans_match_membership_without_changing_application_clip():
+    clip = ClipRegion(mask=RegionMask.from_rectangles(((-4, -3, 8, 7), (10, 1, 14, 9))))
+    clip = clip.intersect((-2, -1, 12, 8)).exclude((3, 2, 5, 6))
+    bounded = clip.within((0, 0, 11, 8))
+    for y in range(-5, 12):
+        spans = tuple(bounded.spans(y))
+        for x in range(-5, 16):
+            expected = 0 <= x < 11 and 0 <= y < 8 and clip.contains(x, y)
+            assert any(left <= x < right for left, right in spans) == expected
+    assert clip.contains(-1, -1)
+
+
 def test_clip_selection_is_device_space_and_survives_object_deletion():
     context = RasterContext(128, 128)
     context.set_viewport_extent(256, 256)

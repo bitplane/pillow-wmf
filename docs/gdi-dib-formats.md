@@ -19,8 +19,9 @@ or channel-mask layout; it does not quantize colours or choose a palette.
   short tables are supported; out-of-table pixels are malformed.
 
 RLE decoding returns index data and a separate coverage mask. Skipped locations
-are not automatically black: bitmap realization fills them with colour-table
-entry zero, whereas direct device transfers preserve the destination there.
+depend on the consumer: indexed bitmap realization fills them with colour-table
+entry zero, ternary RGB realization uses black, and direct device transfers
+preserve the destination. See [compressed scan clipping](gdi-dib-transfers.md#compressed-scan-clipping).
 No allocation uses the untrusted `biSizeImage`; dimensions are budget-checked,
 and compressed data is bounded by its declared extent and actual payload.
 

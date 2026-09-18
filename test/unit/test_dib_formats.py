@@ -84,6 +84,27 @@ def test_rle_command_stream_and_coverage_have_independent_expected_values(depth)
     assert coverage == b"\1" * 8 + bytes(20) + b"\1" * 4 + bytes(59)
 
 
+@pytest.mark.parametrize("left", range(6))
+@pytest.mark.parametrize("encoded", (False, True))
+def test_rle4_clipping_restarts_only_encoded_pairs(left, encoded):
+    data = bytes((8, 0x12, 0, 1)) if encoded else bytes((0, 8, 0x12, 0x12, 0x12, 0x12, 0, 1))
+    indexes, coverage = decode_rle(data, 8, 1, 4, clip_spans=lambda y: ((left, 7),))
+    phase = 0 if encoded else left
+    assert indexes == bytes(left) + bytes(1 + (phase + i) % 2 for i in range(7 - left)) + b"\0"
+    assert coverage == bytes(left) + b"\1" * (7 - left) + b"\0"
+
+
+def test_rle4_each_clipped_span_restarts_at_the_encoded_high_nibble():
+    indexes, coverage = decode_rle(bytes((9, 0x12, 0, 1)), 9, 1, 4, clip_spans=lambda y: ((1, 4), (5, 8)))
+    assert indexes == bytes((0, 1, 2, 1, 0, 1, 2, 1, 0))
+    assert coverage == bytes((0, 1, 1, 1, 0, 1, 1, 1, 0))
+
+
+def test_clipped_rle_still_validates_the_entire_stream():
+    with pytest.raises(FormatError, match="outside bitmap"):
+        decode_rle(bytes((9, 0x12, 0, 1)), 8, 1, 4, clip_spans=lambda y: ())
+
+
 @pytest.mark.parametrize("depth", (4, 8))
 @pytest.mark.parametrize("width", (1, 3, 7, 256, 513))
 def test_rle_writer_roundtrip_runs_cross_255_boundary(depth, width):
@@ -122,19 +143,22 @@ def test_all_headers_check_pixel_budget_before_allocation(header):
         decode_dib(source, max_pixels=5)
 
 
-def test_rle_device_transfer_preserves_gaps_but_bitmap_realization_fills_them():
+@pytest.mark.parametrize("stretch_mode", (3, 4))
+def test_rle_device_transfer_preserves_gaps_but_bitmap_realization_fills_them(stretch_mode):
     colors = ((11, 22, 33), (44, 55, 66))
     header = pack("<IiiHHIIiiII", 40, 3, 2, 1, 8, 1, 4, 0, 0, 2, 0)
     source = BitmapData("dib", header + bytes((33, 22, 11, 0, 66, 55, 44, 0, 1, 1, 0, 1)))
     context = RasterContext(6, 2, background=(0, 0, 255))
+    context.set_stretch_mode(stretch_mode)
     context.set_dib_to_device(0, 0, 3, 2, 0, 0, 1, 1, 0, source)
     context.dib_bit_blt(3, 0, 3, 2, 0, 0, 0xCC0020, source)
     assert context.image.getpixel((0, 0)) == (0, 0, 255)
     assert context.image.getpixel((0, 1)) == colors[1]
     assert context.image.getpixel((1, 1)) == (0, 0, 255)
-    assert context.image.getpixel((3, 0)) == colors[0]
+    gap_color = (0, 0, 255) if stretch_mode == 3 else colors[0]
+    assert context.image.getpixel((3, 0)) == gap_color
     assert context.image.getpixel((3, 1)) == colors[1]
-    assert context.image.getpixel((4, 1)) == colors[0]
+    assert context.image.getpixel((4, 1)) == gap_color
 
 
 def test_fixup_scan_order_and_reflected_boundary_values_match_native_diagonal():

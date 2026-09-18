@@ -63,6 +63,14 @@ class RegionMask:
         _, bottom, endpoints = self.bands[index]
         return y < bottom and bisect_right(endpoints, x) % 2 == 1
 
+    def spans(self, y):
+        """Disjoint half-open intervals on a scan line."""
+        index = bisect_right(self.tops, y) - 1
+        if index >= 0:
+            _, bottom, endpoints = self.bands[index]
+            if y < bottom:
+                yield from zip(endpoints[::2], endpoints[1::2], strict=True)
+
     def offset(self, dx, dy):
         return RegionMask(
             tuple((top + dy, bottom + dy, tuple(x + dx for x in endpoints)) for top, bottom, endpoints in self.bands)
@@ -147,6 +155,16 @@ class RegionMask:
 class ClipRegion:
     constraints: tuple[tuple[bool, Rectangle], ...] = ()
     mask: RegionMask | None = None
+
+    def within(self, bounds: Rectangle) -> RegionMask:
+        """Resolve the application clip inside finite device bounds."""
+        region = RegionMask.from_rectangles((bounds,))
+        if self.mask is not None:
+            region = region.difference(region.difference(self.mask))
+        for include, rectangle in self.constraints:
+            other = RegionMask.from_rectangles((rectangle,))
+            region = region.difference(region.difference(other) if include else other)
+        return region
 
     def contains(self, x: int, y: int) -> bool:
         return (self.mask is None or self.mask.contains(x, y)) and all(

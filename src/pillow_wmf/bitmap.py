@@ -202,7 +202,14 @@ class DIBLayout:
         return len(self.data) >= self.offset + size
 
     def decode(
-        self, rows: int | None = None, *, replicate_channels=True, preserve_gaps=False, palette=None
+        self,
+        rows: int | None = None,
+        *,
+        replicate_channels=True,
+        preserve_gaps=False,
+        palette=None,
+        clip_spans=None,
+        gap_color=None,
     ) -> RGBBitmap:
         """Decode rows from the beginning of the pixel buffer, not a row offset."""
         if self.color_usage and self.depth <= 8:
@@ -213,7 +220,11 @@ class DIBLayout:
             indexes = self.colors if self.color_usage == 1 else range(1 << self.depth)
             colors = tuple(palette[i % len(palette)] for i in indexes)
             return replace(self, colors=colors, color_usage=0).decode(
-                rows, replicate_channels=replicate_channels, preserve_gaps=preserve_gaps
+                rows,
+                replicate_channels=replicate_channels,
+                preserve_gaps=preserve_gaps,
+                clip_spans=clip_spans,
+                gap_color=gap_color,
             )
         rows = self.height if rows is None else rows
         if not 0 < rows <= self.height:
@@ -224,7 +235,11 @@ class DIBLayout:
             if not self.complete:
                 raise FormatError("Truncated DIB RLE pixel array")
             indexes, coverage = decode_rle(
-                self.data[self.offset : self.offset + self.image_size], self.width, self.height, self.depth
+                self.data[self.offset : self.offset + self.image_size],
+                self.width,
+                self.height,
+                self.depth,
+                clip_spans=None if clip_spans is None else lambda y: clip_spans(rows - 1 - y),
             )
             return RGBBitmap(
                 self.width,
@@ -232,8 +247,12 @@ class DIBLayout:
                 bytes(
                     v
                     for y in range(rows - 1, -1, -1)
-                    for index in indexes[y * self.width : (y + 1) * self.width]
-                    for v in self.color(index)
+                    for x in range(self.width)
+                    for v in (
+                        gap_color
+                        if gap_color is not None and not coverage[y * self.width + x]
+                        else self.color(indexes[y * self.width + x])
+                    )
                 ),
                 bytes(v for y in range(rows - 1, -1, -1) for v in coverage[y * self.width : (y + 1) * self.width])
                 if preserve_gaps

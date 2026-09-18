@@ -282,7 +282,6 @@ class RasterContext(TraceContext):
                     start, count = 0, layout.height
                 if not layout.top_down:
                     count = min(count, layout.height - start)
-                bitmap = layout.decode(min(count, layout.height), preserve_gaps=True, palette=self._palette.colors())
                 x, y = self._point(x, y)
                 if self.mapping.rtl:
                     # Device scans keep their order; only the destination
@@ -290,6 +289,12 @@ class RasterContext(TraceContext):
                     x -= width - 1
                 horizontal = BlitAxis(x, sx, width)
                 vertical = BlitAxis(y, start + count - sy - height, height)
+                if layout.compression in (1, 2):
+                    bitmap = self._decode_device_rle(layout, horizontal, vertical)
+                else:
+                    bitmap = layout.decode(
+                        min(count, layout.height), preserve_gaps=True, palette=self._palette.colors()
+                    )
                 transfer = SourceTransfer(bitmap, horizontal, vertical, 0xCC0020)
         elif name == "select_object":
             if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region"}:
@@ -714,15 +719,39 @@ class RasterContext(TraceContext):
             layout = replace(
                 layout, colors=tuple(self._palette.colorref(c) for c in (self._text_color, self._background_color))
             )
-        bitmap = layout.decode(
-            replicate_channels=not (self._stretch_mode == 4 and copy), palette=self._palette.colors()
-        )
         sy = a["src_y"]
         # STRETCHDIB exposes DIB-origin coordinates; DIB[STRETCH]BITBLT
         # adapts the source to top-left. The native ternary path also retains
         # the top-down storage distinction documented in gdi-dib-transfers.md.
         if (name == "stretch_dib") != (layout.top_down and not copy):
             sy = layout.height - sy - a.get("src_height", a["height"])
+        # A positive, unstretched SRCCOPY from the DIB origin can be sent
+        # straight to device scans. Other blits first realize a source bitmap.
+        # The distinction is observable for RLE run phase and unwritten gaps.
+        direct = (
+            copy
+            and self._stretch_mode != 4
+            and self.mapping.linear_scale == (1, 1)
+            and a["src_x"] == 0
+            and a["src_y"] == 0
+            and a["width"] == a.get("src_width", a["width"])
+            and a["height"] == a.get("src_height", a["height"])
+            and a["width"] > 0
+            and a["height"] > 0
+        )
+        if layout.compression in (1, 2) and direct:
+            x, y = self._point(a["x"], a["y"])
+            horizontal = BlitAxis.unscaled(x, a["width"], 0, a["width"], layout.width)
+            vertical = BlitAxis.unscaled(y, a["height"], sy, a["height"], layout.height)
+            bitmap = self._decode_device_rle(layout, horizontal, vertical)
+            return SourceTransfer(bitmap, horizontal, vertical, a["rop"])
+        bitmap = layout.decode(
+            replicate_channels=not (self._stretch_mode == 4 and copy),
+            palette=self._palette.colors(),
+            # Ternary RLE blits realize a cleared RGB bitmap, not a cleared
+            # indexed bitmap: unwritten source pixels are black, not index 0.
+            gap_color=None if copy else (0, 0, 0),
+        )
         return self._prepare_bitmap_transfer(
             a,
             bitmap,
@@ -731,6 +760,19 @@ class RasterContext(TraceContext):
             halftone=self._stretch_mode == 4,
             monochrome_bitblt=monochrome and name == "dib_bit_blt",
         )
+
+    def _decode_device_rle(self, layout, horizontal, vertical):
+        """Clip compressed runs at the transfer boundary, before RGB realization."""
+        left = max(0, horizontal.destination)
+        top = max(0, vertical.destination)
+        right = min(self.image.width, horizontal.destination + horizontal.length)
+        bottom = min(self.image.height, vertical.destination + vertical.length)
+        clip = RegionMask()
+        if left < right and top < bottom:
+            clip = self._clip.within((left, top, right, bottom)).offset(
+                horizontal.source - horizontal.destination, vertical.source - vertical.destination
+            )
+        return layout.decode(preserve_gaps=True, palette=self._palette.colors(), clip_spans=clip.spans)
 
     def _prepare_bitmap_transfer(self, a, bitmap, sy, *, depth, halftone, monochrome_bitblt=False, source_dc=False):
         x, y = self._point(a["x"], a["y"])

@@ -69,6 +69,21 @@ Win32 pointer API's documented ability to supply only a band. The packed-object
 backend follows WMF here; the low-level decoder can still decode a bounded band.
 Header validity and the full-image pixel budget are checked before allocation.
 
+## Compressed scan clipping
+
+Direct RLE transfers decode against the destination clip. An encoded RLE4 run
+starts with its high nibble at each surviving clip span; an absolute run skips
+the clipped source nibbles instead. Decoding a whole image and cropping its RGB
+pixels afterwards therefore gives a different result. Gaps in direct transfers
+leave the destination untouched.
+
+Positive, equal-sized SRCCOPY transfers from source origin `(0, 0)` use this
+direct path when mapping is translation-only and the stretch mode is not
+HALFTONE. Other copy transfers realize an indexed bitmap first, filling gaps
+with palette index zero. Source-dependent ternary transfers realize an RGB
+bitmap instead, filling gaps with black. SetDIBitsToDevice always transfers
+compressed scans directly, including source crops.
+
 ## Evidence and remaining scope
 
 WMF/PNG comparisons cover source cropping, padding, both orientations,

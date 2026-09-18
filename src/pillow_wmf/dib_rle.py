@@ -3,7 +3,13 @@
 from .wmf.binary import FormatError
 
 
-def decode_rle(data, width, height, depth):
+def decode_rle(data, width, height, depth, *, clip_spans=None):
+    """Decode storage rows, optionally clipped during the native scan transfer.
+
+    ``clip_spans(y)`` supplies disjoint half-open intervals in storage coordinates.
+    Encoded RLE4 runs restart at their high nibble after left clipping; absolute
+    runs retain their source phase. Clipping an already decoded bitmap differs.
+    """
     if depth not in (4, 8) or width <= 0 or height <= 0:
         raise ValueError("RLE requires positive dimensions and 4/8-bit pixels")
     output = bytearray(width * height)
@@ -20,6 +26,7 @@ def decode_rle(data, width, height, depth):
 
     while cursor < len(data):
         count, value = take(2)
+        encoded = bool(count)
         if count:
             if depth == 8:
                 values = bytes((value,)) * count
@@ -49,7 +56,14 @@ def decode_rle(data, width, height, depth):
                 values = bytes(nibble for byte in literal for nibble in (byte >> 4, byte & 15))[:count]
         if x + count > width or y >= height:
             raise FormatError("DIB RLE run outside bitmap")
-        output[y * width + x : y * width + x + count] = values
-        coverage[y * width + x : y * width + x + count] = b"\1" * count
+        spans = ((0, width),) if clip_spans is None else clip_spans(y)
+        for left, right in spans:
+            left, right = max(x, left), min(x + count, right)
+            if left >= right:
+                continue
+            source_offset = 0 if encoded else left - x
+            start, stop = y * width + left, y * width + right
+            output[start:stop] = values[source_offset : source_offset + right - left]
+            coverage[start:stop] = b"\1" * (right - left)
         x += count
     raise FormatError("Missing DIB RLE end-of-bitmap")
