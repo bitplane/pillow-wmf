@@ -1,11 +1,43 @@
-# GDI text: proposed implementation plan
+# GDI text support and development plan
 
-This is a design and investigation plan, not a claim of implemented support.
 The target is Windows WMF playback, including text's effects on subsequent
 drawing. Glyph rasterization uncertainty must not weaken existing exact tests.
 
-Logical font creation, selection and saved state are supported; physical font
-resolution and text drawing are not. The controlled font lives in `test/fonts`.
+## Current support
+
+Font creation, selection and saved state retain the logical request. Text
+drawing resolves an exact family, weight and italic style from caller-supplied
+TrueType faces; it never searches host font directories or silently substitutes.
+
+The supported rendering slice is printable ASCII, ANSI charset, explicit
+NONANTIALIASED_QUALITY and negative character height, with unit device scale
+and optional translation. It supports natural or nonnegative explicit advances,
+horizontal/vertical alignment, left-aligned TA_UPDATECP, opaque backgrounds,
+ETO_OPAQUE, ETO_CLIPPED and the DC clip. Rotation, width requests, synthesized
+styles, decorations, default fonts, other encodings and spacing/justification
+remain explicitly unsupported. Missing glyphs also raise.
+
+Supply fonts explicitly, for example:
+
+```python
+from pillow_wmf import FontCollection, FontFace, RasterContext, play
+
+fonts = FontCollection([FontFace.from_path("my-font.ttf")])
+context = RasterContext(128, 128, fonts=fonts)
+play(metafile, context, strict=True)
+```
+
+FontTools reads Windows ascent/descent and face metadata. The `freetype-py`
+binding supplies individual monochrome masks, actual bitmap bearings, glyph
+indices and advances; GDI alignment, positioning, clipping and composition remain
+in this renderer. TrueType instructions are honoured, with automatic hint
+synthesis and embedded bitmap strikes disabled for this outline-only slice.
+Odd-width centred runs choose the lower integer origin in monochrome output.
+Windows line metrics are not interchangeable with FreeType's default metrics.
+Glyph masks are checked against the context's bitmap-pixel budget before
+allocation, including when another context has already cached a glyph.
+
+The controlled font lives in `test/fonts`.
 Run the focused native experiment with
 `gh workflow run update-goldens.yml -f probe=text`. It measures WMF playback and
 uploads its input/output pairs without replacing committed references.
@@ -16,7 +48,7 @@ Keep the parser lossless: font names, text bytes and advance arrays remain raw.
 Decoding belongs to playback, after font selection. Extend the existing GDI
 calls rather than introducing a separate text-only playback path.
 
-Separate four responsibilities, without committing to a public API yet:
+Keep four responsibilities separate:
 
 - **Font resolution:** logical font request to physical font identity, face
   index, selected charset, metrics and any synthesized style. A missing face
@@ -105,8 +137,8 @@ or launch a broad Windows matrix as routine verification.
    corpus comparisons. Expand to raster/vector legacy fonts and smoothing only
    with explicit scope and evidence; do not substitute silently and call it parity.
 
-Evaluate FreeType's monochrome TrueType path first, but do not assume it matches
-GDI. Bitmap format and hinting target are separate controls; request and measure
+The mask provider uses FreeType's monochrome TrueType path, but does not assume
+general GDI parity. Bitmap format and hinting target are separate controls; request and measure
 both. Keep positioned glyphs inspectable so bitmap differences can be separated
 from layout errors. See [FreeType glyph loading](https://freetype.org/freetype2/docs/reference/ft2-glyph_retrieval.html).
 
@@ -115,6 +147,14 @@ Real-font visual inspection supplements those tests; it does not justify a
 blanket tolerance for every image containing text. Existing release PNGs may
 reflect substituted or differently versioned fonts, so they alone cannot
 identify a glyph rasterizer bug.
+
+For real-font investigations, inspect native/local images and difference images
+alongside the selected font, decoded characters, glyph identities, advances and
+metrics. Cover Western/Cyrillic bytes, symbol cmaps, charset/font mismatches,
+DBCS and missing glyphs, then sizes and style requests. Encoding and positioning
+assertions can stay exact even where hinting or antialiasing needs visual review.
+Do not assume that either TrueType or bitmap fonts guarantee cross-engine pixel
+identity; qualify the actual font and rendering configuration.
 
 ## Further investigation
 

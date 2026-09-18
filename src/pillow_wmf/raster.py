@@ -38,6 +38,7 @@ from .stroke import (
     realize_pen,
     widen_segment,
 )
+from .text import FontCollection, TextLayout, layout_text
 from .trace import TraceContext
 from .wmf.objects import Font
 
@@ -130,7 +131,13 @@ class RasterContext(TraceContext):
     """
 
     def __init__(
-        self, width: int, height: int, *, background=(255, 255, 255), max_bitmap_pixels: int = DEFAULT_MAX_BITMAP_PIXELS
+        self,
+        width: int,
+        height: int,
+        *,
+        background=(255, 255, 255),
+        max_bitmap_pixels: int = DEFAULT_MAX_BITMAP_PIXELS,
+        fonts: FontCollection | None = None,
     ):
         super().__init__()
         if width <= 0 or height <= 0:
@@ -138,6 +145,7 @@ class RasterContext(TraceContext):
         if max_bitmap_pixels < 0:
             raise ValueError("Bitmap pixel limit must be nonnegative")
         self.max_bitmap_pixels = max_bitmap_pixels
+        self.fonts = fonts if fonts is not None else FontCollection()
         self.image = Image.new("RGB", (width, height), background)
         self._objects: dict[Handle, Pen | Brush | Font | RegionMask | LogicalPalette | None] = {}
         self._palette = LogicalPalette.default()
@@ -186,6 +194,11 @@ class RasterContext(TraceContext):
         if name == "escape":
             if a["escape_function"] not in BITMAP_NOOP_ESCAPES:
                 raise UnsupportedOperation(f"escape {a['escape_function']:#06x}")
+        elif name in ("text_out", "ext_text_out"):
+            try:
+                text_layout, text_rectangle = self._prepare_text(a)
+            except UnsupportedOperation as error:
+                raise UnsupportedOperation(f"{name}: {error}") from error
         elif name in ("create_palette", "set_palette_entries", "animate_palette"):
             a["palette"].to_bytes()
             if name == "create_palette" and a["palette"].start != 0x300:
@@ -336,7 +349,9 @@ class RasterContext(TraceContext):
             target = level if level > 0 else len(self._saved) + level + 1
             snapshot = self._saved[target - 1]
         result = self._commit(call)
-        if name == "create_palette":
+        if name in ("text_out", "ext_text_out"):
+            self._draw_text(text_layout, text_rectangle, a.get("options", 0))
+        elif name == "create_palette":
             self._objects[result] = LogicalPalette(a["palette"].entries) if a["palette"].entries else None
         elif name == "select_palette":
             if a["handle"] is not None and self._objects[a["handle"]] is not None:
@@ -922,6 +937,81 @@ class RasterContext(TraceContext):
                 paint = self._brush_color_at(x, y, self._brush)
                 if paint is not None:
                     self._pixel(x, y, paint)
+
+    def _prepare_text(self, args):
+        options = args.get("options", 0)
+        if options & ~6:
+            raise UnsupportedOperation("Text output options")
+        rectangle = args.get("rectangle")
+        if options and rectangle is None:
+            raise ValueError("Text output options require a rectangle")
+        if self.mapping.linear_scale != (1, 1) or self.mapping.rtl:
+            raise UnsupportedOperation("Scaled or reflected text mapping")
+        if rectangle is not None:
+            rectangle = (*self._point(*rectangle[:2]), *self._point(*rectangle[2:]))
+        if not args["text"]:
+            return TextLayout(), rectangle
+        request = self._text_state.font
+        face = self.fonts.resolve(request)
+        if (
+            request.height >= 0
+            or request.width
+            or request.escapement
+            or request.orientation
+            or request.underline
+            or request.strikeout
+            or request.charset != 0
+            or request.quality != 3
+        ):
+            raise UnsupportedOperation("Font realization: requires unrotated monochrome ANSI text with negative height")
+        if self._text_state.character_extra or any(self._text_state.justification) or self._text_state.mapper_flags:
+            raise UnsupportedOperation("Text spacing, justification or mapper flags")
+        origin = self._position if self._text_state.alignment & 1 else (args["x"], args["y"])
+        origin = self._point(*origin)
+        layout = layout_text(
+            face.at_size(-request.height),
+            args["text"],
+            *origin,
+            self._text_state.alignment,
+            args.get("advances", ()),
+            opaque=self._background_mode == 2,
+            max_pixels=self.max_bitmap_pixels,
+        )
+        if layout.position is not None:
+            # The supported mapping is translation only, so the same advance
+            # updates the logical current position without an inverse rounding.
+            layout = replace(layout, position=(self._position[0] + layout.position[0] - origin[0], self._position[1]))
+        return layout, rectangle
+
+    def _draw_text(self, layout, rectangle, options):
+        def fill(bounds):
+            if bounds is not None:
+                left, top, right, bottom = bounds
+                for y in range(max(0, top), min(self.image.height, bottom)):
+                    for x in range(max(0, left), min(self.image.width, right)):
+                        self._pixel(x, y, self._background_color, operation=13)
+
+        if options & 2:
+            fill(rectangle)
+        background = layout.background
+        if options & 4 and background is not None:
+            background = (
+                max(background[0], rectangle[0]),
+                max(background[1], rectangle[1]),
+                min(background[2], rectangle[2]),
+                min(background[3], rectangle[3]),
+            )
+        fill(background)
+        for left, top, glyph in layout.glyphs:
+            width, height = glyph.size
+            for y in range(max(0, top), min(self.image.height, top + height)):
+                for x in range(max(0, left), min(self.image.width, left + width)):
+                    if options & 4 and not (rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]):
+                        continue
+                    if glyph.pixels[(y - top) * width + x - left]:
+                        self._pixel(x, y, self._text_color, operation=13)
+        if layout.position is not None:
+            self._position = layout.position
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
         if 0 <= x < self.image.width and 0 <= y < self.image.height and self._clip.contains(x, y):

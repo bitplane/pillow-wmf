@@ -4,13 +4,18 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from pillow_wmf import Metafile, TraceContext, play
+from pillow_wmf import FontCollection, FontFace, Metafile, TraceContext, play
 
 ROOT = Path(__file__).resolve().parents[2]
 WMF_ROOT = Path(__file__).parent / "wmf"
 compare_reference = runpy.run_path(str(ROOT / "scripts" / "reference_compare.py"))["compare_reference"]
 discover_pairs = runpy.run_path(str(ROOT / "scripts" / "reference_cases.py"))["discover_pairs"]
 PAIRS = discover_pairs(WMF_ROOT)
+
+
+@pytest.fixture(scope="module")
+def fonts():
+    return FontCollection([FontFace.from_path(ROOT / "test/fonts/layout.ttf")])
 
 
 def test_wmf_suite_is_present() -> None:
@@ -45,9 +50,9 @@ def test_committed_references_are_valid() -> None:
 
 
 @pytest.mark.parametrize("source_path,png_path", PAIRS, ids=[png.relative_to(WMF_ROOT).as_posix() for _, png in PAIRS])
-def test_windows_pixels(source_path: Path, png_path: Path) -> None:
+def test_windows_pixels(source_path: Path, png_path: Path, fonts) -> None:
     assert png_path.is_file(), f"Missing Windows reference: {png_path.name}"
-    result = compare_reference(source_path, png_path)
+    result = compare_reference(source_path, png_path, fonts=fonts)
     assert result.differing_pixels == 0, (
         f"{source_path.name}: {result.differing_pixels} pixels differ from Windows; "
         f"first (x, y, actual, Windows): {result.first}"

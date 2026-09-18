@@ -13,11 +13,11 @@ metrics and rounding boundaries.
 | File framing | Standard/placeable headers, checksum, EOF, original metadata and file trailer preservation | Native compatibility probes for unusual headers |
 | Fixed records | 51 record classes with explicit field widths, signedness and wire order | See operation-specific rendering limits |
 | Variable records | 19 record classes, including all six bitmap transfer envelopes | Native probes for ambiguous layouts |
-| Text | Raw strings, word padding, optional rectangle and raw advances | Charset/glyph interpretation, layout and drawing |
-| Objects | Pen/brush record fields, font, palette, region/scan structures; raster object realization and retained selections | Font realization |
+| Text | Lossless raw records; explicit-font monochrome ASCII layout, masks, alignment, advances and clipping | Other encodings, font mapping, transformations, styles and spacing |
+| Objects | Pen/brush record fields, font, palette, region/scan structures; raster object realization and retained selections | General font realization |
 | Bitmap payloads | Explicit `BitmapData` values; Core/Info/V4/V5 DIB codecs, RGB and logical-palette tables, 1/4/8/16/24/32-bit RGB, bitfields and RLE4/RLE8; Bitmap16 device-sample codecs and deterministic writers | Colour management, embedded image codecs, other historical device formats |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including DIB and legacy patterns, logical palettes, text-colour state, ROP2/ROP3, PatBlt, indexed/direct-colour DIB transfers including integer stretching and HALFTONE, modern Bitmap16 playback, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Historical/hardware-palette devices and text drawing; remaining pen/state behavior |
+| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including DIB and legacy patterns, logical palettes, monochrome ASCII text, ROP2/ROP3, PatBlt, indexed/direct-colour DIB transfers including integer stretching and HALFTONE, modern Bitmap16 playback, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Historical/hardware-palette devices, advanced text drawing and remaining pen/state behavior |
 | Playback | File-slot mapping, lowest-free allocation, references, failed creations, retained DC selections and unsupported-operation diagnostics | Unsupported backend operations remain explicit |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
@@ -142,8 +142,10 @@ or deleted file references raise `PlaybackError`.
 
 The RGB raster backend retains text alignment, character spacing, justification
 requests, mapper flags and selected logical fonts in saved DC state. Font
-creation does not resolve a physical face; both text-output calls still raise.
-Text layout, glyph metrics and justification realization remain deferred.
+creation does not resolve a physical face. Horizontal monochrome ASCII text can
+use explicitly supplied TrueType faces, with GDI alignment, advances, clipping
+and current-position updates. Other encodings, realization modes and spacing
+remain unsupported; see [text support](gdi-text.md) for the exact boundary.
 
 Pen creation follows `CreatePenIndirect`/`CreatePen`, not `ExtCreatePen`:
 styles outside 0–6 realize as solid pens, rather than enabling extended cap/join

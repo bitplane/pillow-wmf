@@ -18,12 +18,12 @@ class Comparison:
     first: tuple | None
 
 
-def compare_reference(source_path, png_path):
+def compare_reference(source_path, png_path, *, fonts=None):
     source_path = Path(source_path)
     png_path = Path(png_path)
     with Image.open(png_path) as reference:
         expected = reference.convert("RGB")
-    context = RasterContext(expected.width, expected.height)
+    context = RasterContext(expected.width, expected.height, fonts=fonts)
     issues = play(Metafile.from_bytes(source_path.read_bytes()), context, strict=True)
     if issues:
         raise RuntimeError(f"Incomplete playback of {source_path.name}: {issues}")
@@ -43,11 +43,11 @@ def compare_reference(source_path, png_path):
     return Comparison(expected.width * expected.height, differing_pixels, differing_channels, largest, first)
 
 
-def run_comparisons(pairs):
+def run_comparisons(pairs, *, fonts=None):
     failed = False
     for path, png in pairs:
         try:
-            result = compare_reference(path, png)
+            result = compare_reference(path, png, fonts=fonts)
         except (OSError, ValueError, RuntimeError) as error:
             print(f"{png}: {type(error).__name__}: {error}")
             failed = True
@@ -67,6 +67,9 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("roots", nargs="+", type=Path, help="One or more corpus directories")
+    parser.add_argument(
+        "--font", action="append", type=Path, default=[], help="Explicit TrueType font input; repeatable"
+    )
     args = parser.parse_args(argv)
     pairs = []
     for root in args.roots:
@@ -74,7 +77,9 @@ def main(argv=None):
         if not found:
             parser.error(f"No WMFs found in {root}")
         pairs.extend(found)
-    return run_comparisons(pairs)
+    from pillow_wmf import FontCollection, FontFace
+
+    return run_comparisons(pairs, fonts=FontCollection(FontFace.from_path(path) for path in args.font))
 
 
 if __name__ == "__main__":

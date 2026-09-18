@@ -9,12 +9,13 @@ readme = "README.md"
 requires-python = ">=3.13"
 
 dependencies = [
-    "pillow>=12.3"
+    "pillow>=12.3",
+    "fonttools>=4.65",
+    "freetype-py>=2.5"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "fonttools>=4.65",
     "pre-commit",
     "pytest",
     "coverage",
