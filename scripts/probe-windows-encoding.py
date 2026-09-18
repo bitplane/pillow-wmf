@@ -72,6 +72,25 @@ def main():
             if args.missing_only:
                 inspect_native_text(source)
     if args.missing_only:
+        import os
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontLink\SystemLink"
+        ) as key:
+            print("system_links=", winreg.QueryValueEx(key, "Microsoft Sans Serif")[0], flush=True)
+        for path in sorted((Path(os.environ["WINDIR"]) / "Fonts").glob("*.ttf")):
+            try:
+                with TTFont(path, lazy=True) as font:
+                    cmap = font.getBestCmap() or {}
+                    if 0 in cmap or 0x81 in cmap:
+                        print(
+                            f"control_face={font['name'].getBestFamilyName()!r} "
+                            f"coverage={[(c, cmap.get(c)) for c in (0, 1, 0x81)]}",
+                            flush=True,
+                        )
+            except Exception as error:
+                print(f"font inspection skipped: {path.name}: {error}", flush=True)
         recorder = Recorder()
         recorder.select_object(
             recorder.create_font(
