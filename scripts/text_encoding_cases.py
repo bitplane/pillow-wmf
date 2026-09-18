@@ -21,6 +21,8 @@ def font_bytes(*, symbol=False):
     font = TTFont(BytesIO(original), recalcTimestamp=False)
     family = SYMBOL_FAMILY if symbol else ENCODING_FAMILY
     for record in font["name"].names:
+        if symbol and record.platformID == 3:
+            record.platEncID = 0
         if record.nameID in (1, 3, 4, 6):
             record.string = family.replace(" ", "") if record.nameID == 6 else family
     table = CmapSubtable.newSubtable(4)
@@ -37,12 +39,13 @@ def font_bytes(*, symbol=False):
             0x20AC: "B",
             0x402: "A",
             0xC6: "B",
-            0x426: "A",
+            0x416: "A",
         }
     font["cmap"].tables = [table]
     os2 = font["OS/2"]
     os2.ulCodePageRange1 = 1 << 31 if symbol else (1 | (1 << 2))
     if symbol:
+        os2.panose.bFamilyType = 5
         os2.ulUnicodeRange1 = os2.ulUnicodeRange2 = os2.ulUnicodeRange3 = os2.ulUnicodeRange4 = 0
     os2.usFirstCharIndex, os2.usLastCharIndex = min(table.cmap), max(table.cmap)
     stream = BytesIO()
