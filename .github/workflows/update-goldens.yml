@@ -18,6 +18,7 @@ on:
           - precision
           - text
           - real-text
+          - text-layout
           - layout
           - patblt
           - dib-brush
@@ -108,13 +109,15 @@ jobs:
           path: text-probe/
           retention-days: 7
       - name: Render pinned real-font samples
-        if: inputs.probe == 'real-text'
+        if: inputs.probe == 'real-text' || inputs.probe == 'text-layout'
         shell: bash
         run: |
           mkdir -p real-text-probe
-          python scripts/probe-windows-real-text.py --output real-text-probe | tee real-text-probe/observations.txt
+          args=()
+          if [[ "${{ inputs.probe }}" == text-layout ]]; then args+=(--layout); fi
+          python scripts/probe-windows-real-text.py --output real-text-probe "${args[@]}" | tee real-text-probe/observations.txt
       - name: Upload real-font samples
-        if: inputs.probe == 'real-text'
+        if: inputs.probe == 'real-text' || inputs.probe == 'text-layout'
         uses: actions/upload-artifact@v4
         with:
           name: real-text-probe
