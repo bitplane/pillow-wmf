@@ -31,8 +31,10 @@ POLYGON = (
 
 
 def main():
-    for window_y in (1920, 2038, 2048, 2050, 2112):
-        for stage in ("path", "wide", "pen", "line") if window_y == 2038 else ("pen",):
+    profiles = [(6, 324, y) for y in (1920, 2038, 2048, 2050, 2112)]
+    profiles += [(0, x, y) for x in (324, 128, 32, -128) for y in (8192, 4096, 2048, 1920)]
+    for style, window_x, window_y in profiles:
+        for stage in ("path", "wide", "pen", "line") if (style, window_x, window_y) == (6, 324, 2038) else ("pen",):
             with reference_surface(128, 128) as (gdi, dc, _bits):
                 ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
                 for name in ("BeginPath", "EndPath", "WidenPath"):
@@ -52,9 +54,9 @@ def main():
                     ctypes.POINTER(ctypes.c_ubyte),
                     integer,
                 )
-                check(gdi.SetWindowExtEx(dc, 324, window_y, None), "SetWindowExtEx")
+                check(gdi.SetWindowExtEx(dc, window_x, window_y, None), "SetWindowExtEx")
                 check(gdi.SetWindowOrgEx(dc, 1531, 1714, None), "SetWindowOrgEx")
-                pen = check(gdi.CreatePen(6, 8, 0), "CreatePen")
+                pen = check(gdi.CreatePen(style, 8, 0), "CreatePen")
                 old_pen = check(gdi.SelectObject(dc, pen), "SelectObject")
                 old_brush = check(gdi.SelectObject(dc, check(gdi.GetStockObject(5), "NULL_BRUSH")), "SelectObject")
                 try:
@@ -79,7 +81,14 @@ def main():
                     points = (wintypes.POINT * count)()
                     kinds = (ctypes.c_ubyte * count)()
                     assert gdi.GetPath(dc, points, kinds, count) == count
-                    print(window_y, stage, [(p.x, p.y, k) for p, k in zip(points, kinds, strict=True)], flush=True)
+                    print(
+                        style,
+                        window_x,
+                        window_y,
+                        stage,
+                        [(p.x, p.y, k) for p, k in zip(points, kinds, strict=True)],
+                        flush=True,
+                    )
                 finally:
                     gdi.SelectObject(dc, old_brush)
                     gdi.SelectObject(dc, old_pen)
