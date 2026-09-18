@@ -26,6 +26,10 @@ pen discrepancy, respectively. `corpus-lady4.wmf` is from the MS Office 97 corpu
 in the same data-repository commit; its unchanged native PNG guards against
 regressions in minor-axis pen realization.
 
+`corpus-penny`, `corpus-quarter`, `corpus-nickel` and `corpus-dime` are unchanged
+WMF/PNG pairs from that same MS Office 97 corpus commit. They cover fractional
+inside-frame ellipse rims; their lettering consists of polygons, not fonts.
+
 The `pen-radius-probe-*` WMFs compare solid/inside-frame pens at the corpus
 scales, fractional-radius boundaries, axis collapse and fixed-point circularity.
 See [pen realization](../../../docs/gdi-strokes.md) for the native measurements.

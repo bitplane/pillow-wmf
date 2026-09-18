@@ -21,6 +21,7 @@ on:
           - regions
           - region-paint
           - insideframe
+          - insideframe-inset
           - roundrects
           - pies
           - chords
@@ -120,6 +121,9 @@ jobs:
       - name: Probe native inside-frame paths
         if: inputs.probe == 'insideframe' || inputs.probe == 'all'
         run: python scripts/probe-windows-insideframe.py
+      - name: Measure native inside-frame insets
+        if: inputs.probe == 'insideframe-inset'
+        run: python scripts/probe-windows-insideframe-inset.py
       - name: Probe native RoundRect paths
         if: inputs.probe == 'roundrects' || inputs.probe == 'all'
         run: python scripts/probe-windows-roundrects.py
