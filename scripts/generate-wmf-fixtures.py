@@ -723,6 +723,15 @@ def pen_radius_probe_cases():
             recorder.polygon(((-dx, dy), (0, -dy), (dx, dy)))
             yield f"pen-radius-probe-{name}-style{style}", recorder
 
+    recorder = mapped()
+    recorder.set_window_extent(324, 2038)
+    recorder.select_object(recorder.create_pen(0, 8, 0))
+    for index, rise in enumerate((0, 2, 4, 8, 12, 16)):
+        recorder.set_viewport_origin(16, 8 + index * 20)
+        recorder.move_to(0, 0)
+        recorder.line_to(243, round(rise * 2038 / 128))
+    yield "pen-collapsed-shallow-fan", recorder
+
 
 def stroke_cases():
     """Probe the algorithms beyond the original three-segment pen fixtures."""
