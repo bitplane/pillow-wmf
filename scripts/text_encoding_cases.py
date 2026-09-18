@@ -86,6 +86,10 @@ def cases(*, missing_only=False):
                 ("tail-pair", b"A\x81\0B"),
                 ("tail-reverse", b"A\0\x81B"),
                 ("tail-tab", b"A\tB"),
+                ("tail-interleaved", b"A\x81\0\x81B"),
+                ("tail-other-control", b"A\x81\x01B\x01\x81A"),
+                ("tail-separators", b"A\x81\t\0B\x81\n\0A\x81\r\0B"),
+                ("control-runs", bytes(range(32)) + b"\x7f\x81\x8d"),
             )
         )
     for name, family, charset, sample, encoding in profiles:
