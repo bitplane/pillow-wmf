@@ -223,7 +223,7 @@ def conversion_cases():
             r.pat_blt(2 + i * 30, 2, 25, 25, 0xF00021)
         yield f"dib-format-rejected-brush-style-{style}", r
 
-    for bits in (4, 5, 6, 10):
+    for bits in (1, 2, 3, 4, 5, 6, 7, 10):
         depth = 16 if bits <= 5 else 32
         mask = (1 << bits) - 1
         masks = (mask << (2 * bits), mask << bits, mask)
