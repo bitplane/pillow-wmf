@@ -33,6 +33,6 @@ def test_native_halftone_reduction(path, call):
     context = RasterContext(a["width"], a["height"])
     context.set_stretch_mode(4)
     getattr(context, call.name)(**(a | {"x": 0, "y": 0}))
-    with Image.open(path.with_suffix(".png")) as atlas:
+    with Image.open(ROOT / "128x128" / f"{path.stem}.png") as atlas:
         expected = atlas.crop((a["x"], a["y"], a["x"] + a["width"], a["y"] + a["height"]))
         assert context.image.tobytes() == expected.convert("RGB").tobytes()

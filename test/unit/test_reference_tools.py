@@ -24,16 +24,17 @@ def test_reference_comparison_preserves_dc_state_and_surface_clipping(tmp_path):
     recorder.select_object(recorder.create_brush(0, 0x332211, 0))
     recorder.pat_blt(-10, -10, 20, 20, 0xF00021)
     path = tmp_path / "state.wmf"
+    png = tmp_path / "reference.png"
     path.write_bytes(recorder.to_bytes())
     expected = Image.new("RGB", (4, 4), "white")
     expected.paste((17, 34, 51), (1, 1, 3, 3))
-    expected.save(path.with_suffix(".png"))
+    expected.save(png)
     compare = runpy.run_path(str(SCRIPTS / "reference_compare.py"))["compare_reference"]
-    assert compare(path).differing_pixels == 0
+    assert compare(path, png).differing_pixels == 0
     # A single channel differing by one must still fail exact comparison.
     expected.putpixel((1, 1), (18, 34, 51))
-    expected.save(path.with_suffix(".png"))
-    result = compare(path)
+    expected.save(png)
+    result = compare(path, png)
     assert result.pixels == 16
     assert result.differing_pixels == result.differing_channels == result.largest_error == 1
     assert result.first == (1, 1, (17, 34, 51), (18, 34, 51))
@@ -45,15 +46,18 @@ def test_diagnostics_fail_on_differences_without_writing_references(script, monk
     main = runpy.run_path(str(SCRIPTS / script))["main"]
     path = tmp_path / "empty.wmf"
     path.write_bytes(Recorder().to_bytes())
+    profile = tmp_path / "2x2"
+    profile.mkdir()
+    png = profile / "empty.png"
     expected = Image.new("RGB", (2, 2), "white")
-    expected.save(path.with_suffix(".png"))
+    expected.save(png)
     assert main([path]) == 0
     expected.putpixel((0, 0), (254, 255, 255))
-    expected.save(path.with_suffix(".png"))
-    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    expected.save(png)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert main([path]) == 1
     assert "1/4 pixels differ" in capsys.readouterr().out
-    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
 
 
 def test_foundation_inputs_are_unique_reproducible_and_lossless():
@@ -93,19 +97,21 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
     monkeypatch.setitem(main.__globals__, "os", SimpleNamespace(name="nt"))
     monkeypatch.setitem(main.__globals__, "FIXTURES", tmp_path)
     (tmp_path / "existing.wmf").write_bytes(b"changed-input")
-    (tmp_path / "existing.png").write_bytes(b"leave-this-alone")
+    profile = tmp_path / "128x128"
+    profile.mkdir()
+    (profile / "existing.png").write_bytes(b"leave-this-alone")
     (tmp_path / "missing.wmf").write_bytes(b"new-input")
     assert main([]) == 0
     assert calls == [(b"new-input", 128, 128)]
-    assert (tmp_path / "existing.png").read_bytes() == b"leave-this-alone"
-    assert (tmp_path / "missing.png").read_bytes() == b"new-reference"
+    assert (profile / "existing.png").read_bytes() == b"leave-this-alone"
+    assert (profile / "missing.png").read_bytes() == b"new-reference"
     assert main([]) == 0
     assert len(calls) == 1
-    assert sorted(path.suffix for path in tmp_path.iterdir()) == [".png", ".png", ".wmf", ".wmf"]
+    assert sorted(path.suffix for path in tmp_path.rglob("*") if path.is_file()) == [".png", ".png", ".wmf", ".wmf"]
     assert main(["--size", "257x193"]) == 0
     assert calls[1:] == [(b"changed-input", 257, 193), (b"new-input", 257, 193)]
     assert (tmp_path / "257x193/existing.png").read_bytes() == b"new-reference"
-    assert (tmp_path / "existing.png").read_bytes() == b"leave-this-alone"
+    assert (profile / "existing.png").read_bytes() == b"leave-this-alone"
     assert main([]) == 0
     assert len(calls) == 3
 
@@ -129,14 +135,15 @@ def test_discovery_requires_each_input_at_each_active_size(tmp_path):
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     (corpus / "one.wmf").touch()
-    (corpus / "one.png").touch()
+    (corpus / "128x128").mkdir()
+    (corpus / "128x128/one.png").touch()
     (corpus / "two.WMF").touch()
     (corpus / "257x193").mkdir()
     (corpus / "257x193/one.png").touch()
     pairs = discover(tmp_path)
     assert {(a.name, b.relative_to(corpus).as_posix()) for a, b in pairs} == {
-        ("one.wmf", "one.png"),
-        ("two.WMF", "two.png"),
+        ("one.wmf", "128x128/one.png"),
+        ("two.WMF", "128x128/two.png"),
         ("one.wmf", "257x193/one.png"),
         ("two.WMF", "257x193/two.png"),
     }
@@ -156,6 +163,26 @@ def test_discovery_supports_only_sized_profiles(tmp_path):
     ]
 
 
+def test_discovery_requires_explicit_initial_profile(tmp_path):
+    tools = runpy.run_path(str(SCRIPTS / "reference_cases.py"))
+    source = tmp_path / "one.wmf"
+    source.touch()
+    with pytest.raises(ValueError, match="No size profiles"):
+        tools["discover_pairs"](tmp_path)
+    assert list(tools["reference_cases"](tmp_path, (17, 23))) == [
+        (source, tmp_path / "17x23/one.png", (17, 23)),
+    ]
+
+
+def test_discovery_rejects_adjacent_pngs(tmp_path):
+    discover = runpy.run_path(str(SCRIPTS / "reference_cases.py"))["discover_pairs"]
+    (tmp_path / "one.wmf").touch()
+    (tmp_path / "one.png").touch()
+    (tmp_path / "128x128").mkdir()
+    with pytest.raises(ValueError, match="without a matching WMF"):
+        discover(tmp_path)
+
+
 def test_discovery_rejects_ambiguous_input_names(tmp_path):
     discover = runpy.run_path(str(SCRIPTS / "reference_cases.py"))["discover_pairs"]
     (tmp_path / "one.wmf").touch()
@@ -170,13 +197,14 @@ def test_comparison_cli_checks_multiple_roots_and_reports_missing(monkeypatch, t
     roots = [tmp_path / "first", tmp_path / "second"]
     for root in roots:
         root.mkdir()
+        (root / "7x3").mkdir()
         (root / "blank.wmf").write_bytes(Recorder().to_bytes())
-    Image.new("RGB", (7, 3), "white").save(roots[1] / "blank.png")
+    Image.new("RGB", (7, 3), "white").save(roots[1] / "7x3/blank.png")
     assert main([str(root) for root in roots]) == 1
     output = capsys.readouterr().out
     assert "FileNotFoundError" in output
     assert "0/21 pixels differ" in output
-    Image.new("RGB", (3, 7), "white").save(roots[0] / "blank.png")
+    Image.new("RGB", (7, 3), "white").save(roots[0] / "7x3/blank.png")
     assert main([str(root) for root in roots]) == 0
 
 
@@ -186,7 +214,8 @@ def test_size_preflight_is_linux_safe_and_records_missing(monkeypatch, tmp_path)
     root = tmp_path / "corpus"
     root.mkdir()
     (root / "input.wmf").touch()
-    (root / "input.png").touch()
+    (root / "128x128").mkdir()
+    (root / "128x128/input.png").touch()
     output = tmp_path / "output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     assert script["main"](["--root", str(root), "--size", "257x193", "--check"]) == 0

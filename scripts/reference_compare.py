@@ -18,9 +18,9 @@ class Comparison:
     first: tuple | None
 
 
-def compare_reference(source_path, png_path=None):
+def compare_reference(source_path, png_path):
     source_path = Path(source_path)
-    png_path = Path(png_path) if png_path is not None else source_path.with_suffix(".png")
+    png_path = Path(png_path)
     with Image.open(png_path) as reference:
         expected = reference.convert("RGB")
     context = RasterContext(expected.width, expected.height)
@@ -43,10 +43,9 @@ def compare_reference(source_path, png_path=None):
     return Comparison(expected.width * expected.height, differing_pixels, differing_channels, largest, first)
 
 
-def run_comparisons(paths):
+def run_comparisons(pairs):
     failed = False
-    for item in paths:
-        path, png = item if isinstance(item, tuple) else (item, item.with_suffix(".png"))
+    for path, png in pairs:
         try:
             result = compare_reference(path, png)
         except (OSError, ValueError, RuntimeError) as error:

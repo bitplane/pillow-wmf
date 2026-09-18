@@ -8,6 +8,7 @@ Run with .venv/bin/python scripts/analyze-halftone-expansion.py [case.wmf ...].
 import sys
 from pathlib import Path
 
+from reference_cases import selected_pairs
 from reference_compare import run_comparisons
 
 ROOT = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
@@ -16,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
 def main(paths=None):
     if paths is None:
         paths = sorted(ROOT.glob("halftone-*.wmf")) + sorted(ROOT.glob("dib-stretch-ratios-*-4.wmf"))
-    return run_comparisons(paths)
+    return run_comparisons(selected_pairs(paths))
 
 
 if __name__ == "__main__":

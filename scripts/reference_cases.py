@@ -1,7 +1,7 @@
 """Filesystem-only reference discovery, shared by Linux preflight and tests.
 
-Each directory containing WMFs can have adjacent PNGs and WIDTHxHEIGHT
-subdirectories. Every active profile requires every local WMF.
+Each directory containing WMFs has WIDTHxHEIGHT reference subdirectories.
+Every active profile requires every local WMF.
 """
 
 import argparse
@@ -35,8 +35,8 @@ def reference_cases(root, size=None):
             for child in sorted(directory.iterdir()):
                 if child.is_dir() and re.fullmatch(r"[1-9][0-9]*x[1-9][0-9]*", child.name):
                     profiles.append((child, image_size(child.name)))
-            if not profiles or any(p.with_suffix(".png").exists() for p in local_sources):
-                profiles.insert(0, (directory, (128, 128)))
+            if not profiles:
+                raise ValueError(f"No size profiles in {directory}; generate references with --size WIDTHxHEIGHT")
         for profile, dimensions in profiles:
             for source in local_sources:
                 yield source, profile / f"{source.stem}.png", dimensions
@@ -50,3 +50,9 @@ def discover_pairs(root):
     if orphans:
         raise ValueError(f"PNG without a matching WMF/profile: {orphans[0]}")
     return pairs
+
+
+def selected_pairs(paths):
+    """Resolve selected inputs across all their directory's size profiles."""
+    paths = set(paths)
+    return sorted({pair for root in {p.parent for p in paths} for pair in discover_pairs(root) if pair[0] in paths})
