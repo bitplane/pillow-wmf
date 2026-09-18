@@ -21,11 +21,11 @@ Unsupported WMF calls fail explicitly; differences report the number of pixels.
 [wmffuzzer seed corpus](https://dev-www.libreoffice.org/corpus/wmffuzzer_seed_corpus.zip).
 Their PNGs are the existing 128×128 Windows references from
 [wmf-test-data commit 4abfe2a](https://github.com/bitplane/wmf-test-data/tree/4abfe2a41594d78c116b965ea3eacdcfa6104ede/corpora/wmffuzz).
-They cover a single-precision coordinate boundary and an unresolved nonuniform
+They cover a single-precision coordinate boundary and nonuniform
 pen discrepancy, respectively. `corpus-lady4.wmf` is from the MS Office 97 corpus
 in the same data-repository commit; its unchanged native PNG guards against
-regressions while investigating the pen discrepancy.
+regressions in minor-axis pen realization.
 
-The 14 `pen-radius-probe-*` WMFs await native PNGs. They compare solid/inside-frame
-pens at the corpus scales and around fractional-radius boundaries. The existing
-missing-PNG workflow generates these only; no broad probe dispatch is needed.
+The `pen-radius-probe-*` WMFs compare solid/inside-frame pens at the corpus
+scales, fractional-radius boundaries, axis collapse and fixed-point circularity.
+See [pen realization](../../../docs/gdi-strokes.md) for the native measurements.

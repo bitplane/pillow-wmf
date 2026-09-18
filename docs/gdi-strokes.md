@@ -95,7 +95,10 @@ Circular device pens with rounded widths 1 through 6 have discrete native
 silhouettes. Their half-pixel vertex tables are pen realization data: all slopes
 and primitives consume the same shapes. Uniform scaling can select another
 silhouette; for example, a logical width of 3 at half scale selects the width-2
-device silhouette.
+device silhouette. For CreatePen, circularity is tested after quantizing both
+transformed diameters to 28.4, not by comparing the original mapping scales.
+The slightly unequal scales of the corpus penny and quarter therefore select
+the width-3 table: their fixed diameters are both 44.
 
 Other pens are constructed from a cubic semicircle and its central reflection.
 The stored half-contours retain their terminal vertices. Support searches and
@@ -105,17 +108,33 @@ differs from its rounded body support. Deduplicating the two halves into a ring
 loses that boundary vertex. Native widened nearly-collapsed arcs in
 [run 35151070145](https://github.com/bitplane/pillow-wmf/actions/runs/35151070145)
 expose the distinction; the measured join is retained as a unit test.
-The transformed radii are quantized to 28.4 units. Cubic control quantization
-preserves the orientation of the transformed first basis vector; reflection
+The transformed diameters are quantized to 28.4 units before halving outward.
+For CreatePen, a diameter of at most 8 fixed units (half a pixel) is replaced
+by 16; larger subpixel diameters are preserved. This is consistent with replacing
+an axis that collapses to zero under nearest-pixel rounding with ties down,
+not a blanket minimum diameter. Geometric frame pens retain subpixel axes.
+Cubic control quantization preserves the orientation of the transformed first
+basis vector; reflection
 can consequently change a boundary vertex by one fixed-point unit.
 
-Open investigation: `corpus-fdo39256-2.wmf` has nine differing stroke pixels.
-Diameter-first rounding changes its pen radii from (23, 23) to (22, 23) in fixed
-units and makes it exact, but regresses `corpus-lady4.wmf` by 104 pixels. Retaining
-transformed logical stroke directions also fixes the first image but regresses
-other corpus files. Neither change is implemented. The `pen-radius-probe-*`
-fixtures distinguish these models near fractional-radius boundaries and compare
-solid with inside-frame pens; their native PNGs are pending.
+This construction is inferred from the native `pen-radius-probe-*` PNGs and
+the [pen-support probe](https://github.com/bitplane/pillow-wmf/actions/runs/35311068688).
+The latter measures widened contours in exact device sixteenths and verifies
+direct LineTo against WidenPath/FillPath. Diameter-first rounding changes the
+`corpus-fdo39256-2.wmf` pen radii from (23, 23) to (22, 23)
+fixed units, resolving its nine differing pixels. Applying that rounding without
+collapsed-axis replacement regresses `corpus-lady4.wmf` by 104 pixels. A blanket
+one-pixel minimum instead regresses the existing fractional inside-frame curves.
+Both failures distinguish the measured collapse rule from a clamp. The synthetic
+PNGs cover solid and inside-frame pens around fractional-radius boundaries,
+collapsed axes and fixed-point circularity. Retaining logical stroke directions
+instead was rejected because it regressed other native
+references; endpoint mapping and support selection remain unchanged.
+
+Against the 3,367 existing native corpus pairs at data-repository commit
+`4abfe2a`, this realization change increases exact matches from 3,305 to 3,326,
+leaving 24 pixel differences and 17 font-creation failures. No previously exact
+image regresses and no remaining pixel difference increases.
 
 Cubic subdivision uses the standard second-difference chord-error bound:
 three quarters of the largest second difference must be at most half a pixel.

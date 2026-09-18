@@ -58,7 +58,9 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
     """Realize CreatePen width in device space, including the hairline rule."""
     device_width = floor(width * abs(scale_x) + 0.5)
     cosmetic = not geometric and device_width <= 1
-    if cosmetic or (abs(scale_x) == abs(scale_y) and device_width <= 6):
+    diameters = tuple(floor(width * abs(scale) * 16 + 0.5) for scale in (scale_x, scale_y))
+    circular = abs(scale_x) == abs(scale_y) if geometric else diameters[0] == diameters[1]
+    if cosmetic or (circular and device_width <= 6):
         half = [(x * 8, y * 8) for x, y in _SMALL_PENS[max(1, device_width)]]
     else:
         # Preserve the orientation of the first transformed basis vector.
@@ -75,8 +77,10 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
             rx = half_fixed(width * scale_x * 16)
             ry = sign * abs(half_fixed(-width * scale_y * 16))
         else:
-            rx = sign * ceil(width * abs(scale_x) * 8)
-            ry = sign * ceil(width * abs(scale_y) * 8)
+            # Quantize the full diameter before halving outward. An axis
+            # collapsing to zero at nearest-pixel (ties down) precision is
+            # replaced by one pixel; other subpixel axes survive unchanged.
+            rx, ry = (sign * (((16 if diameter <= 8 else diameter) + 1) // 2) for diameter in diameters)
         cx, cy = ceil(rx * _CIRCLE_CONTROL), floor(ry * _CIRCLE_CONTROL)
         half = [(rx, 0)]
         half += flatten_cubic(((rx, 0), (rx, -cy), (cx, -ry), (0, -ry)))

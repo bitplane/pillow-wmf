@@ -149,9 +149,9 @@ Pen creation follows `CreatePenIndirect`/`CreatePen`, not `ExtCreatePen`:
 styles outside 0–6 realize as solid pens, rather than enabling extended cap/join
 flags. Requested styles remain intact in records and the call trace. This follows
 [Wine's creation normalization](https://github.com/wine-mirror/wine/blob/master/dlls/gdi32/objects.c)
-and unblocks `wmffuzz/fdo39256-2.wmf`. Its remaining nine pixels are an open
-[pen-realization investigation](gdi-strokes.md), retained as an exact native
-WMF/PNG regression rather than tolerated differences.
+and unblocks `wmffuzz/fdo39256-2.wmf`. Diameter-first fixed-point
+[pen realization](gdi-strokes.md) resolves its remaining nine pixels; the
+unchanged native WMF/PNG pair is retained as an exact regression.
 
 For this bitmap device, MFCOMMENT (`0x000F`) is opaque metadata, including WMFC
 payloads; it does not switch playback to an embedded metafile. POSTSCRIPT_IGNORE
