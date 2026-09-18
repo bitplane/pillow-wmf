@@ -1,4 +1,4 @@
-"""Exact device-path measurements from Windows run 35317428796."""
+"""Exact device-path measurements from Windows runs 35317428796 and 35319631193."""
 
 import pytest
 
@@ -57,11 +57,29 @@ def test_odd_box_keeps_reflected_corner_and_half_edge_rounding():
             ((1965, 1040), (1965, 521), (1541, 100), (1016, 100)),
             ((1016, 100), (492, 100), (68, 521), (67, 1040)),
         ),
+        (
+            96,
+            (2021, 2092),
+            (-1008, -854),
+            (-905, -726, 921, 1111),
+            ((1904, 1024), (1904, 556), (1514, 175), (1032, 175)),
+            ((1032, 175), (551, 175), (161, 556), (160, 1024)),
+        ),
+        (
+            79,
+            (1987, 2078),
+            (-1003, -931),
+            (-961, -889, 940, 1107),
+            ((1960, 1032), (1960, 511), (1541, 87), (1024, 87)),
+            ((1024, 87), (508, 87), (89, 511), (88, 1032)),
+        ),
     ),
 )
-def test_native_coin_ellipse_controls(monkeypatch, width, window, origin, box, first, second):
+def test_native_ellipse_controls(monkeypatch, width, window, origin, box, first, second):
     path = capture(monkeypatch, "ellipse", width=width, window=window, origin=origin, box=box)
     assert path.commands[:2] == (first, second)
+    cx, cy = first[-1][0], first[0][1]
+    assert path.commands[2:] == tuple(tuple((2 * cx - x, 2 * cy - y) for x, y in curve) for curve in (first, second))
 
 
 def test_native_odd_roundrect_corner(monkeypatch):

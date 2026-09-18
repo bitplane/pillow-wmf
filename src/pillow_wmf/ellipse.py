@@ -52,9 +52,12 @@ def ellipse_cubics(
     if clockwise:
         ry = -ry
     cy_control = floor(_CUBIC_CIRCLE_CONTROL * ry)
+    # Translate the same horizontal control inset from both upper corners.
+    # An odd box span must not independently round its shorter left radius.
+    x_inset = rx - ceil(rx * _CUBIC_CIRCLE_CONTROL)
     upper = (
-        ((rx, 0), (rx, -cy_control), (ceil(rx * _CUBIC_CIRCLE_CONTROL), -ry), (0, -ry)),
-        ((0, -ry), (-ceil(lx * _CUBIC_CIRCLE_CONTROL), -ry), (-lx, -cy_control), (-rx, 0)),
+        ((rx, 0), (rx, -cy_control), (rx - x_inset, -ry), (0, -ry)),
+        ((0, -ry), (-lx + x_inset, -ry), (-lx, -cy_control), (-rx, 0)),
     )
     curves = (*upper, *(tuple((-x, -y) for x, y in curve) for curve in upper))
     return tuple(tuple((cx + x, cy + y) for x, y in curve) for curve in curves)

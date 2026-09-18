@@ -57,7 +57,9 @@ by these shared rules:
   centre to obtain the lower corners. Odd horizontal spans can therefore retain
   a one-unit skew; replacing them with an axis-aligned rectangle loses geometry.
 - Ellipse controls retain both upper corners, then reflect the upper semicircle.
-  The left and right control distances need not be identical.
+  Translate one horizontal control inset from both upper corners; do not
+  independently round the two radii. Distances from the rounded centre can
+  consequently differ by one fixed-point unit.
 - Arc and RoundRect use the box's half-edge vectors, quantized with
   `(component + 1) // 2` before trigonometry or corner scaling. Keep both vector
   components. Pie uses the corresponding origin. Consecutive arc cubics inherit
@@ -68,6 +70,16 @@ corner traversal is `(1770,279), (279,279), (278,1769), (1769,1769)`.
 Its angular origin is `(1025,1024)` with horizontal vector `(746,0)` and north
 vector `(1,-745)`. These are geometry calculations, not pixel corrections.
 The shared stroke and fill algorithms are unchanged.
+
+[Run 35319631193](https://github.com/bitplane/pillow-wmf/actions/runs/35319631193)
+isolates the `switch` and `nopark` ellipses and captures their cubic controls,
+flattened paths, widened outlines and pen footprints. The footprints already
+matched; the first disagreement was the upper-left horizontal control. Its
+distance from the left corner equals the upper-right control's distance from
+the right corner. Reusing that rounded inset also preserves the earlier coin
+measurements, while independently rounding each radius misses these two cases.
+The unchanged corpus pairs retain the resulting four- and eight-pixel
+regressions as exact comparisons.
 
 ## Verification
 
