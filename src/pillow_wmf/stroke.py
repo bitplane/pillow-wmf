@@ -81,10 +81,16 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
             # collapsing to zero at nearest-pixel (ties down) precision is
             # replaced by one pixel; other subpixel axes survive unchanged.
             rx, ry = (sign * (((16 if diameter <= 8 else diameter) + 1) // 2) for diameter in diameters)
-        cx, cy = ceil(rx * _CIRCLE_CONTROL), floor(ry * _CIRCLE_CONTROL)
-        half = [(rx, 0)]
-        half += flatten_cubic(((rx, 0), (rx, -cy), (cx, -ry), (0, -ry)))
-        half += flatten_cubic(((0, -ry), (-cx, -ry), (-rx, -cy), (-rx, 0)))
+        if not geometric and min(diameters) <= 8:
+            # A collapsed CreatePen axis selects a diamond, not a cubic
+            # ellipse enlarged to the minimum thickness. Retain the same
+            # half-contour seam layout used by the ordinary pen constructor.
+            half = [(rx, 0), (0, -ry), (-rx, 0)]
+        else:
+            cx, cy = ceil(rx * _CIRCLE_CONTROL), floor(ry * _CIRCLE_CONTROL)
+            half = [(rx, 0)]
+            half += flatten_cubic(((rx, 0), (rx, -cy), (cx, -ry), (0, -ry)))
+            half += flatten_cubic(((0, -ry), (-cx, -ry), (-rx, -cy), (-rx, 0)))
         # Keep the semicircle's terminal vertex: reflection duplicates both
         # seam vertices. Native contour traversal visits those duplicates;
         # they matter when rounded body support differs from the pen vertex.

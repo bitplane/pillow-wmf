@@ -91,3 +91,46 @@ def test_subpixel_axis_matches_native_vertical_caps(window_y, end_y, cap_y):
         (1024, end_y + cap_y),
         (1040, end_y),
     ]
+
+
+@pytest.mark.parametrize("window_x,cap_x", ((324, 25), (128, 63), (32, 255), (-128, 63)))
+@pytest.mark.parametrize("window_y", (8192, 4096, 2048))
+def test_collapsed_pen_axis_has_native_diamond_contour(window_x, cap_x, window_y):
+    # Run 35321454120: shoulders disappear across aspect ratios and reflection.
+    pen = realize_pen(8, Fraction(128, window_x), Fraction(128, window_y))
+    assert widen_segment(StrokeSegment.line((0, 0), (0, 0)), pen) == [
+        (0, -8),
+        (-cap_x, 0),
+        (0, 8),
+        (0, 8),
+        (cap_x, 0),
+        (0, -8),
+    ]
+
+
+def test_collapsed_pen_matches_native_shallow_segment():
+    # Run 35321235589, with the original corpus mapping and mapped endpoints.
+    pen = realize_pen(8, Fraction(128, 324), Fraction(128, 2038))
+    assert widen_segment(StrokeSegment.line((1648, 944), (1744, 960)), pen) == [
+        (1648, 936),
+        (1623, 944),
+        (1648, 952),
+        (1744, 968),
+        (1769, 960),
+        (1744, 952),
+    ]
+
+
+@pytest.mark.parametrize(
+    "window_x,half",
+    (
+        (324, ((0, -8), (-18, -2), (-25, 0), (-18, 2), (0, 8))),
+        (128, ((0, -8), (-44, -2), (-63, 0), (-45, 2), (0, 8))),
+        (-128, ((0, -8), (-44, -3), (-63, 0), (-44, 3), (0, 8))),
+        (32, ((0, -8), (-99, -3), (-180, -2), (-235, -1), (-255, 0), (-235, 1), (-180, 2), (-99, 3), (0, 8))),
+    ),
+)
+def test_adjacent_noncollapsed_pen_retains_native_shoulders(window_x, half):
+    # The same run measures the adjacent cubic contours, including reflection.
+    pen = realize_pen(8, Fraction(128, window_x), Fraction(128, 1920))
+    assert widen_segment(StrokeSegment.line((0, 0), (0, 0)), pen) == [*half, *((-x, -y) for x, y in half)]

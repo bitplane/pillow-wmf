@@ -27,3 +27,13 @@
 - Treat runner time as a limited resource even on subsidised public repositories;
   forks may pay for the same workflows. Do not use repeated broad CI runs as a
   substitute for local investigation.
+
+# Pre-font milestone
+
+- Font design and implementation remain deferred. Exact matches in the current
+  128×128 corpus are not sufficient to start that phase.
+- After resolving current non-font discrepancies, expand the corpora and compare
+  native references at at least one additional output size. Fix those divergences
+  before the user evaluates confidence and explicitly approves font design.
+- Report font-blocked files separately; do not count them as pixel-perfect or
+  assume their non-font operations have been validated.

@@ -109,10 +109,10 @@ loses that boundary vertex. Native widened nearly-collapsed arcs in
 [run 35151070145](https://github.com/bitplane/pillow-wmf/actions/runs/35151070145)
 expose the distinction; the measured join is retained as a unit test.
 The transformed diameters are quantized to 28.4 units before halving outward.
-For CreatePen, a diameter of at most 8 fixed units (half a pixel) is replaced
-by 16; larger subpixel diameters are preserved. This is consistent with replacing
-an axis that collapses to zero under nearest-pixel rounding with ties down,
-not a blanket minimum diameter. Geometric frame pens retain subpixel axes.
+For CreatePen, a diameter of at most 8 fixed units (half a pixel) selects a
+diamond contour with that axis replaced by a one-pixel diameter. It does not
+construct a cubic ellipse at the enlarged thickness. Larger subpixel diameters
+keep the ordinary cubic contour. Geometric frame pens retain subpixel axes.
 Cubic control quantization preserves the orientation of the transformed first
 basis vector; reflection
 can consequently change a boundary vertex by one fixed-point unit.
@@ -130,6 +130,19 @@ PNGs cover solid and inside-frame pens around fractional-radius boundaries,
 collapsed axes and fixed-point circularity. Retaining logical stroke directions
 instead was rejected because it regressed other native
 references; endpoint mapping and support selection remain unchanged.
+
+The original collapse measurements used a short major axis, for which cubic
+flattening also produced a diamond. The `screwdrv` corpus polygon distinguishes
+the constructions: enlarging its ellipse before flattening adds shoulder
+vertices and five unwanted pixels along shallow edges.
+[Polygon-support run 35321454120](https://github.com/bitplane/pillow-wmf/actions/runs/35321454120)
+measures the native diamond at multiple aspect ratios, solid/inside-frame styles
+and reflected mapping, alongside the ordinary contours just above the collapse
+boundary. Native centreline coordinates already matched. Only pen realization
+changes; support selection, body rounding, joins and scan conversion are shared.
+Unit tests retain exact native contours, and the unchanged `corpus-screwdrv`
+pair and `pen-collapsed-shallow-fan` guard the resulting pixels. Six additional
+`pen-radius-probe` PNGs retain steeper-angle and adjacent-contour holdouts.
 
 Against the 3,367 existing native corpus pairs at data-repository commit
 `4abfe2a`, this realization change increases exact matches from 3,305 to 3,326,
