@@ -13,8 +13,12 @@ def main():
         (6, (412, 1536), (128, 128)),
         (6, (412, 1280), (128, 128)),
         (1, (128, 128), (192, 96)),
+        (48, (2232, 2218), (128, 128)),
+        (48, (2213, 2223), (128, 128)),
+        (16, (936, 2655), (128, 128)),
+        (6, (412, 1535), (128, 128)),
     ):
-        for endpoint in ((0, 0), (744, -1681), (698, -1695), (698, -1632), (0, 1000), (1000, 0)):
+        for endpoint in ((0, 0), (698, -1695), (0, 1000), (1000, 0)):
             with reference_surface(128, 128) as (gdi, dc, _bits):
                 ptr, integer, boolean = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL
                 for name in ("BeginPath", "EndPath", "WidenPath"):
