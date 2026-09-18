@@ -76,11 +76,6 @@ This is an edge-pattern filter, not bilinear interpolation. Inverted palettes
 need not produce complementary results because the brighter diagonal is chosen.
 The reduction/expansion and ROP compositors remain shared with other depths.
 
-The algorithm was recovered from the public-symbol native routines in the
-Windows binary used for the earlier HALFTONE investigation: `FixupColorScan`
-at RVA 0x9c9c and `FixupGrayScan` at RVA 0x2ea8 in that older image. No native
-binary or executable native helper is a runtime dependency.
-
 ## Evidence and limits
 
 `dib-format-*` references cover header/depth/orientation combinations, RGB555,
@@ -95,17 +90,10 @@ scale. Cross-depth checker/diagonal holdouts cover both sides of the small-image
 census boundary; the same RGB source at 1/4/8/24 bits distinguishes source-format
 dispatch from filtering arithmetic.
 
-References were generated on Windows, then compared exactly on Linux. The first
-two missing-only runs were [35221177835](https://github.com/bitplane/pillow-wmf/actions/runs/35221177835)
-and [35221786892](https://github.com/bitplane/pillow-wmf/actions/runs/35221786892).
-The final cross-depth holdouts came from
-[35223499019](https://github.com/bitplane/pillow-wmf/actions/runs/35223499019).
-Existing WMF/PNG pairs were not rewritten to accommodate the implementation.
-
-The subsequent [logical palette slice](gdi-palettes.md) adds DIB_PAL_COLORS and
+[Logical palettes](gdi-palettes.md) adds DIB_PAL_COLORS and
 DIB_PAL_INDICES layout handling and native RGB-device realization.
 [Bitmap16](gdi-bitmap16.md) is covered separately.
-Still outside these slices: JPEG/PNG/CMYK payloads, linked/embedded profiles and
+Unsupported: JPEG/PNG/CMYK payloads, linked/embedded profiles and
 ICM colour management. V4/V5 header acceptance is not a claim of ICM support.
 Linked/embedded profiles are rejected explicitly and never followed as paths.
 

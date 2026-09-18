@@ -4,8 +4,7 @@
 provides one contour; `PolyPolygon` provides several. It fills all contours in
 one pass using the selected alternate or winding rule, then strokes each
 closed contour. Neither operation uses or updates the current position.
-The fill and stroke use the existing fixed-point path machinery; this slice
-does not add a polygon-specific rasterizer.
+The fill and stroke use the existing fixed-point path machinery, without a polygon-specific rasterizer.
 
 Windows documents [automatic closure and current-position behavior][polygon]
 for `Polygon` and the same [contour closure for `PolyPolygon`][polypolygon],
@@ -25,7 +24,7 @@ orientation reversal, half-scale mapping, and a wide outline. The two
 `polygon-double-wound` references distinguish alternate from winding mode.
 The `poly-polygon-disjoint`, nested, and overlapping references match under
 both fill modes, including reversed inner-contour orientation. These cases
-are evidence for the implemented slice, not a claim about all polygon edge
+exercise the shared fill rules, not a claim about all polygon edge
 configurations.
 
 Filling contours independently would lose holes and overlapping-region

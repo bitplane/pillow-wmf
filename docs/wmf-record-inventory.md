@@ -1,9 +1,7 @@
 # WMF record inventory
 
-Research baseline: Microsoft [MS-WMF], revision 18.0, 2024-04-23; reviewed
-2026-09-16. This is a scope inventory, not a claim of implementation support.
-See [the research report](wmf-format-research.md) for architecture, caveats, and
-completion criteria.
+Specification baseline: Microsoft [MS-WMF], revision 18.0, 2024-04-23. This is a scope inventory, not a claim of implementation support.
+See [format scope](wmf-format-research.md) for architecture and caveats.
 
 Source: [Microsoft's specification](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/4813e7fd-52d0-4f42-965f-228c8b7488d2),
 sections 2.1.1.1, 2.1.1.17, and 2.3. Section numbers below refer to that revision.
@@ -201,4 +199,3 @@ The enumeration codes above are intentional: the payload prose for
 POSTSCRIPT_IDENTIFY and POSTSCRIPT_INJECTION disagrees with the enumeration
 (0x1005/0x1006 versus 0x1015/0x1016). This discrepancy needs an independent Windows
 SDK/native check before typed interpretation. Raw preservation is unaffected.
-

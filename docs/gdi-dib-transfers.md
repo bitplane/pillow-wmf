@@ -1,7 +1,7 @@
-# Unscaled 24-bit DIB transfers
+# Unscaled DIB transfers
 
 The raster backend implements `dib_bit_blt` and `set_dib_to_device` for the
-[24-bit BI_RGB profile](gdi-dib-brushes.md). It shares the bitmap decoder,
+[supported DIB formats](gdi-dib-formats.md). It shares the bitmap decoder,
 device mapping, clipping, brush sampler and Boolean ROP3 evaluator. It does
 not use Pillow's resize or drawing algorithms.
 
@@ -41,7 +41,7 @@ only pattern-dependent truth tables. The no-embedded-DIB record uses PatBlt;
 it does not copy pixels from the playback surface. ROP truth-table bits, not
 the low opcode word, choose the Boolean operation.
 
-Mapped source-dependent transfers now also use the shared
+Mapped source-dependent transfers use the shared
 [stretch sampler](gdi-dib-stretching.md) for modes 1–3 and native fixed-point
 HALFTONE, including source clipping on replication and filtered paths.
 
@@ -71,18 +71,11 @@ Header validity and the full-image pixel budget are checked before allocation.
 
 ## Evidence and remaining scope
 
-The 45 committed WMF/PNG pairs cover source cropping, padding, both orientations,
+WMF/PNG comparisons cover source cropping, padding, both orientations,
 signed extents, translated/reflected mappings, destination clipping, full ROP3
 atlases with solid/null/hatch/pattern brushes, source-independent clipping,
 negative/reflected ternary atlases, low ROP code bits, band positioning,
 scaled destination-origin mapping and short-buffer validation.
-
-Windows only generated missing images, in three focused runs:
-[initial 30](https://github.com/bitplane/pillow-wmf/actions/runs/35197119747),
-[eight boundary cases](https://github.com/bitplane/pillow-wmf/actions/runs/35197480275),
-[seven realization cases](https://github.com/bitplane/pillow-wmf/actions/runs/35197816588).
-All exact comparisons and unit tests run locally/Linux; no reference images or
-pixel tolerances were changed to accommodate the implementation.
 
 Sources consulted: [MS-WMF DIBBITBLT](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/524aa748-f274-4bd3-a4c1-f280bd6cac09),
 [SetDIBitsToDevice](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-setdibitstodevice),
@@ -92,6 +85,6 @@ and [Wine WMF playback](https://github.com/wine-mirror/wine/blob/master/dlls/gdi
 Wine corroborates separate copy/ternary and band paths, but Windows remains
 the oracle. The implementation is not a transcription of Wine's source.
 
-Subsequent slices cover [additional formats and compression](gdi-dib-formats.md),
+See also [additional formats and compression](gdi-dib-formats.md),
 [palettes](gdi-palettes.md), and [legacy Bitmap16 playback](gdi-bitmap16.md).
 Fonts remain deferred.

@@ -18,9 +18,8 @@ Filled cosmetic paths paint the brush fill first and then the outline; their
 coverage can overlap. Wide combined fill/stroke excludes outline coverage from
 the brush fill. Rectangle retains its existing reserved-outline contract.
 Copy-mode combined painting flattens curves before widening; non-copy ROP2
-modes preserve their endpoint tangents. These distinctions were exposed by the
-[Pie holdouts and cross-primitive composition probes](gdi-pies.md), rather than
-inferred from copy-mode images where overlapping writes can be invisible.
+modes preserve their endpoint tangents. See [Pie composition](gdi-pies.md). Overlapping writes may be invisible in
+copy mode but significant under XOR.
 
 The Windows reference suite checks all 16 modes with nontrivial RGB source and
 destination colours on both wide lines and solid fills. Further fixtures check
@@ -29,8 +28,7 @@ XOR joins, repeated drawing, matching and different pen/brush colours,
 `SetPixel` follows the selected ROP2 mode in this profile, including XOR and
 NOP; it uses the same compositor here.
 
-These probes validate the current true-colour memory bitmap profile. They do
-not cover palette realization, pattern brushes, monochrome devices, or ROP3
-bitmap transfers.
+ROP2 describes drawing composition on the RGB surface. Bitmap transfers use
+[ROP3](gdi-patblt.md).
 
 [wmf-rop2]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/781a06bd-af9b-48b7-8e7d-d922de0f9c26

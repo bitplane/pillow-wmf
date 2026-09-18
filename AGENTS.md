@@ -37,3 +37,13 @@
   before the user evaluates confidence and explicitly approves font design.
 - Report font-blocked files separately; do not count them as pixel-perfect or
   assume their non-font operations have been validated.
+
+# Documentation
+
+- Document current contracts, algorithms, limitations and how to use or test
+  them. Do not turn documentation into an investigation diary or changelog.
+- Do not cite workflow runs, artifacts, commit hashes, Microsoft binary
+  downloads, disassembly addresses or temporary files. Preserve useful findings
+  as explanations and executable regression tests instead.
+- Prefer stable specifications and links to maintained repository files. Avoid
+  historical pass counts, failure counts and progress reports that become stale.

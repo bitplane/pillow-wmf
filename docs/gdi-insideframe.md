@@ -28,27 +28,17 @@ retain a pen footprint through the shared stroke machinery.
 
 For example, box `(5,6,26,43)` and width 3 give drawing bounds
 `(104,120,392,664)` in device sixteenths. Width 21 collapses the horizontal
-extent to x=248; width 22 crosses the overflow boundary. The native path logs
-in [run 35149207568](https://github.com/bitplane/pillow-wmf/actions/runs/35149207568)
-captured this distinction and exposed the initial incorrect equality test.
+extent to x=248; width 22 crosses the overflow boundary.
 
 The renderer passes adjusted bounds into the existing curve constructors and
 uses the same polygon filling and stroke widening as other pen styles. There
 is no inside-frame-specific line or curve rasterizer. Unit tests preserve
 measured ellipse and arc controls; WMF atlases retain Windows-generated PNGs.
-The fractional probes also corrected shared logical-angle/corner calculations,
-collapsed closed-path footprints, and pen half-contour traversal. See
-[stroke construction](gdi-strokes.md) for the measured frame support rules.
-The manual `probe-windows-insideframe.py` checks additional exact pixels and
-reports native paths, including native rejection of oversized arc-family calls.
+See [stroke construction](gdi-strokes.md) for shared frame support rules.
 
 ## Odd fixed-point diameters
 
-The four corpus coin rims exposed a distinction hidden by integer-scale probes.
-[Run 35317428796](https://github.com/bitplane/pillow-wmf/actions/runs/35317428796)
-measures the native paths in device sixteenths, including all six bounded
-primitives with odd X, Y and XY pen diameters. Their geometry is reconstructed
-by these shared rules:
+Odd transformed diameters use these shared geometry rules:
 
 - Round each full transformed pen diameter to fixed point. Inset the left,
   top and bottom by its upward-rounded half; the right uses the downward-rounded
@@ -71,32 +61,11 @@ Its angular origin is `(1025,1024)` with horizontal vector `(746,0)` and north
 vector `(1,-745)`. These are geometry calculations, not pixel corrections.
 The shared stroke and fill algorithms are unchanged.
 
-[Run 35319631193](https://github.com/bitplane/pillow-wmf/actions/runs/35319631193)
-isolates the `switch` and `nopark` ellipses and captures their cubic controls,
-flattened paths, widened outlines and pen footprints. The footprints already
-matched; the first disagreement was the upper-left horizontal control. Its
-distance from the left corner equals the upper-right control's distance from
-the right corner. Reusing that rounded inset also preserves the earlier coin
-measurements, while independently rounding each radius misses these two cases.
-The unchanged corpus pairs retain the resulting four- and eight-pixel
-regressions as exact comparisons.
+## Coverage and limits
 
-## Verification
-
-Twenty-nine committed Windows PNG atlases cover all six bounded primitives,
-solid/null brushes, thin through oversized widths, collapse boundaries,
-fractional mapping, anisotropy, reflection, and unbounded Polygon/Polyline.
-Eighteen additional odd-diameter PNGs and the four unchanged corpus coin pairs
-cover the fractional bounds construction above. Unit tests retain native
-control points as well as the exact end-to-end pixel comparisons.
-The manual probe in
-[run 35151984362](https://github.com/bitplane/pillow-wmf/actions/runs/35151984362)
-passes 3,510 exact-pixel combinations of primitive, width, brush, box aspect
-ratio and mapping, alternating copy/XOR. Another 24 native comparisons verify
-collapsed Polygon footprints with both solid and inside-frame pens.
-
-Expected PNGs remain Windows-generated and comparisons remain exact. No pixel
-tolerance, fixture-specific masks or alternate rendering routes were added.
+Unit tests retain exact bounds and controls for odd diameters and collapsed
+interiors. WMF/PNG atlases cover bounded primitives, null/solid brushes,
+collapse boundaries, fractional mapping, anisotropy and reflection.
 
 This targets the existing RGB compatible-DC profile. Palette-device dithering
 described by CreatePen is not implemented, and coverage is not a claim of

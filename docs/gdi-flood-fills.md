@@ -22,16 +22,12 @@ defines both colour predicates and rejected seeds.
 provides supporting evidence for clip-bounded scanline discovery separated from
 brush painting; the implementation here is independent and non-recursive.
 
-Windows run [35189412398](https://github.com/bitplane/pillow-wmf/actions/runs/35189412398)
-generated 151 committed reference pairs through the normal missing-PNG workflow.
-All compare exactly: both modes, all 16 ROP2 operations with solid/null/opaque
+WMF/PNG comparisons cover both modes, all 16 ROP2 operations with solid/null/opaque
 hatch/transparent hatch brushes, multicoloured interiors, diagonal contacts,
 one-pixel bridges, clip holes/walls/disconnected regions, invalid seeds,
 unbounded fills, mapped/reflected seeds, unchanged output and legacy FloodFill.
 Unit tests compare span discovery to an independent pixel breadth-first search
-over 100 deterministic random surfaces and exercise a 10,000-row component.
+over deterministic random surfaces and exercise a 10,000-row component.
 
-These references cover the current RGB surface and existing brush types. They
-do not establish palette-indexed colour matching or bitmap pattern-brush
-behaviour; those remain part of their respective future slices. Unknown fill
-modes remain explicitly unsupported.
+The target is an RGB surface; colour resolution and brush sampling use shared
+DC state. Unknown fill modes remain explicitly unsupported.

@@ -28,16 +28,14 @@ The operation's explicit ROP never changes or uses the DC's selected ROP2.
 
 ## Fixed-point coordinate boundary
 
-The broader native matrix exposed a missing shared conversion stage, affecting
-both PatBlt and its following line/rectangle observers. The driver's affine
+The driver's affine
 translation is quantized to 28.4 separately from its scaled coordinate; their
 sum is then rounded to integer pixels. Reassociating the transform as
 `(coordinate - window_origin) * scale + viewport_origin` and rounding only the
 result loses that intermediate boundary.
 Conversion to signed 28.4 uses nearest with exact ties away from zero; the
 subsequent pixel conversion uses `(fixed + 8) // 16`. These are distinct rounding
-stages, not a universal rounding helper. Six further native cases distinguish
-the signed tie rule from ties-to-even and ties-toward-positive-infinity.
+stages, not a universal rounding helper.
 
 For example, with X scale 43/128, window origin 9 and viewport origin 64,
 the translation 60.9765625 becomes 61 in 28.4. Logical X=-73 contributes
@@ -57,25 +55,10 @@ excludes source-dependent operations. Wine's
 provides supporting evidence for testing source dependence algebraically;
 native output determines the rectangle and hatch semantics used here.
 
-Windows run [35192189948](https://github.com/bitplane/pillow-wmf/actions/runs/35192189948)
-generated 32 compact WMF/PNG atlases. All compare pixel-for-pixel: every truth
-table across solid/null and all six opaque/transparent hatches, signed and zero
-extents, fractional/reflected mappings, clipping and alternate code words.
-`scripts/probe-windows-patblt.py` adds a manual-only 640-case native matrix with
-randomized colours, mapping, rectangles, region clips and subsequent state
-observers. Ordinary pushes do not run that matrix.
-An additional 42 committed references isolate fourteen failing matrix cases into
-complete drawings, blits alone and observers alone, preserving the coordinate
-regressions independently of the manual matrix.
+WMF/PNG comparisons cover every truth table across solid/null and opaque/
+transparent hatch brushes, signed and zero extents, fractional/reflected
+mappings, clipping and alternate code words. Separate blit and state-observer
+cases exercise the shared coordinate conversion.
 
-Final Windows run [35193939778](https://github.com/bitplane/pillow-wmf/actions/runs/35193939778)
-passed all 640 PatBlt cases and the pre-existing native regression matrices.
-The local suite passed 1,593 tests, including all 74 new reference pairs.
-That broad run predates the runner-cost policy: future native investigation
-selects only the required probe (`-f probe=patblt`); full native runs require
-explicit approval. Routine regression checking uses the committed PNGs locally
-or on Linux.
-
-This implements PatBlt with the currently supported brushes, plus the Boolean
-foundation for later bitmap transfers. It does not implement source bitmap
-decoding/blits, bitmap pattern brushes, palette realization or RTL layout.
+[DIB transfers](gdi-dib-transfers.md) and [Bitmap16 transfers](gdi-bitmap16.md)
+use the same Boolean evaluator with source pixels.

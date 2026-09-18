@@ -1,9 +1,9 @@
-# First bitmap slice: 24-bit DIB pattern brushes
+# DIB pattern brushes
 
 `bitmap.py` separates pixel decoding from WMF envelopes and rendering. Its
 immutable `RGBBitmap` holds top-down RGB bytes. `encode_dib24` writes packed
 BITMAPINFOHEADER DIBs for recording; `decode_dib` validates and decodes the same
-profile without changing the original `BitmapData` or its lossless round trip.
+pixel representation without changing the original `BitmapData` or its lossless round trip.
 
 ```python
 from pillow_wmf import Recorder
@@ -17,22 +17,19 @@ recorder.pat_blt(0, 0, 128, 128, 0x00F00021)
 source = recorder.to_bytes()
 ```
 
-## Supported pixel profile and limits
+## Pixel storage and limits
 
-- 40-byte BITMAPINFOHEADER, one plane, 24 bits per pixel, BI_RGB,
-  DIB_RGB_COLORS. Rows contain BGR triples and DWORD padding.
-- Both bottom-up and top-down storage become the same canonical RGB bitmap.
-- Optional RGBQUAD colour-table entries are skipped before the pixels; they
-  do not supply indexed colours for this true-colour profile.
-- Required input bytes are computed from dimensions, stride and table length,
-  never allocated from `biSizeImage` (which can be zero for BI_RGB).
-- Dimensions, plane count, truncation and decoded pixel budget are checked
-  before allocation. `RasterContext(max_bitmap_pixels=...)` and the decoder's
-  `max_pixels` bound each bitmap; the default is 16,777,216 pixels. This is not
-  an aggregate resource limit across all selected/saved objects.
-- Unsupported DIB headers, depths, compression and palette usage
-  raise `UnsupportedOperation`. Malformed supported data raises
-  `FormatError` before committing a renderer handle.
+The example uses 24-bit BI_RGB data with BGR triples and DWORD-padded rows.
+The decoder also supports the headers, depths, compression and palette layouts
+listed in [DIB formats](gdi-dib-formats.md) and [palettes](gdi-palettes.md).
+Both storage orientations become a canonical top-down bitmap.
+
+Required bytes are computed from dimensions, stride and table length, not
+allocated from `biSizeImage`. Validate geometry, planes, truncation and decoded
+pixel budget before allocation. `RasterContext(max_bitmap_pixels=...)` and the
+decoder's `max_pixels` bound each bitmap, not the aggregate across saved objects.
+Unsupported formats raise `UnsupportedOperation`; malformed supported data
+raises `FormatError` before allocating a renderer handle.
 
 ## Brush realization
 
@@ -55,39 +52,27 @@ The record's BS_PATTERN (style 3) path differs from ordinary DIB brushes:
    and selecting it leaves the previous brush unchanged, using the existing
    failed-object/file-slot machinery.
 4. Style 3 forces RGB colour usage. Other tested style values (0, 1, 2, 5, 6, 8)
-   use the ordinary DIB-pattern path; palette usage remains unsupported there.
+   use the ordinary DIB-pattern path, including supported logical-palette usage.
 
 These rules are measured against the reference DC, not inferred from the colour
 depth of the final RGB output image. A compatible monochrome DDB intermediate
 explains the legacy conversion; Wine's current WMF player treats the styles as
 equivalent and is not an oracle for this distinction.
 
-## Evidence
+## Coverage and references
 
-The 51 committed reference pairs cover padding widths 1 through 5, an 8x8 tile,
-an 11x9 tile, both orientations, six paint consumers across all 16 Boolean
-operations, mapping/reflection, clipping, saved/deleted brushes, style aliases,
-legacy creation failure and live monochrome colours. Comparisons remain exact.
-
-Native generation runs:
-[initial 39 cases](https://github.com/bitplane/pillow-wmf/actions/runs/35195291155),
-[eight legacy cases](https://github.com/bitplane/pillow-wmf/actions/runs/35195826062).
-The final four live-colour PNGs were committed in `1f50754`.
-A [focused colour probe](https://github.com/bitplane/pillow-wmf/actions/runs/35195645536)
-helped distinguish the two record paths. Its post-playback object inspection
-saw restored DC state, so only its rendered pixels were used as evidence.
-The script now offers explicit focused pixel verification with
-`gh workflow run update-goldens.yml -f probe=dib-brush`; routine regression
-checks use the committed PNGs locally or on Linux.
+WMF/PNG cases cover row padding, non-8x8 tiles, both orientations, shared paint
+consumers, Boolean operations, mapping, clipping, saved/deleted brushes, style
+aliases, creation failure and live monochrome colours.
 
 References: [BITMAPINFOHEADER](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapinfoheader),
 [CreateDIBPatternBrushPt](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createdibpatternbrushpt),
 [CreateDIBitmap](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createdibitmap),
 and [Wine WMF playback](https://github.com/wine-mirror/wine/blob/master/dlls/gdi32/metafile.c).
 
-## Next
+## Related operations
 
 [Unstretched DIB transfers](gdi-dib-transfers.md) reuse the decoder and Boolean
-ROP3 evaluator. Subsequent slices cover [DIB formats](gdi-dib-formats.md),
+ROP3 evaluator. See also [DIB formats](gdi-dib-formats.md),
 [stretching](gdi-dib-stretching.md), [palettes](gdi-palettes.md), and
 [legacy Bitmap16](gdi-bitmap16.md).

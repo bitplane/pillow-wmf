@@ -1,16 +1,9 @@
 # Legacy Bitmap16 on the Windows reference device
 
-This slice covers `META_BITBLT`, `META_STRETCHBLT`, and
+The legacy bitmap operations are `META_BITBLT`, `META_STRETCHBLT`, and
 `META_CREATEPATTERNBRUSH`. The target is the existing Windows 2025 x64,
 32-bit RGB reference surface, not an emulation of every historical display
-driver. There are 84 independent WMF/Windows-PNG cases. PNGs were generated
-only when missing; all comparisons and unit tests run locally/Linux.
-
-Native batches: [initial layouts](https://github.com/bitplane/pillow-wmf/actions/runs/35227911644),
-[version 1 controls](https://github.com/bitplane/pillow-wmf/actions/runs/35228367402),
-[native layout and transfer controls](https://github.com/bitplane/pillow-wmf/actions/runs/35229181264),
-[brush realization](https://github.com/bitplane/pillow-wmf/actions/runs/35229499646),
-and [depth/ROP holdouts](https://github.com/bitplane/pillow-wmf/actions/runs/35230315161).
+driver.
 
 ## Storage and recording
 
@@ -39,35 +32,19 @@ References: [Bitmap16 Object](https://learn.microsoft.com/en-us/openspecs/window
 [CreateBitmap](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createbitmap),
 and [CreateBitmapIndirect](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createbitmapindirect).
 
-## Native playback findings
+## Playback behaviour
 
-The initial spec-layout brushes and embedded transfers produced no bitmap
-output. Header version 0x0100 controls behaved identically to 0x0300.
-These results were investigated before implementing no-output behaviour.
+Embedded Bitmap16 transfers have a playback-specific selection quirk on the
+RGB32 reference DC. Monochrome and matching RGB32 bitmaps select successfully,
+but playback skips the transfer, even for source-independent ROPs. Other
+depths fail selection: source-independent ROPs can draw, but source-dependent
+ROPs cannot draw without a usable source. This is not a rule that ordinary
+Win32 BitBlt cannot draw device-dependent bitmaps. WMF header versions 0x0100
+and 0x0300 behave alike here.
 
-The inspected Microsoft `gdi32full.dll` is version 10.0.26100.9444, SHA256
-`bde2077a56c90f68c5fa1ce5ebd4a40755c97a5080b91a87d2beff47349dd01e`.
-The binary and its public PDB came from Microsoft's symbol server:
-[binary](https://msdl.microsoft.com/download/symbols/gdi32full.dll/3516563F129000/gdi32full.dll),
-[symbols](https://msdl.microsoft.com/download/symbols/gdi32full.pdb/A6245E4F5C78EB06438EA4820F1F6EB41/gdi32full.pdb).
-Addresses below are RVAs, not runtime addresses. This inspected build explains
-the oracle observations; it is not a claim about all Windows builds.
-
-- `PlayMetaFileRecord` (0x3a270), legacy transfers: the Bitmap16 starts at
-  record byte 22 for BITBLT and 26 for STRETCHBLT. `CreateBitmap` receives the
-  correct dimensions, planes, depth and bits. At 0x3b09f the old handle returned
-  by `SelectObject` is tested; the **nonzero** branch at 0x3b0a2 goes to DC
-  cleanup at 0x3bbfb, skipping the actual transfer. Monochrome and matching
-  RGB32 bitmaps select successfully, suppressing even PATCOPY and DSTINVERT.
-  Other depths fail selection into the RGB32 memory DC and reach the transfer
-  call: source-independent ROPs work, but source-dependent ROPs cannot draw
-  without a usable selected source. Two full depth/ROP atlases distinguish
-  these paths. This is a playback-path quirk, not a rule that Win32 BitBlt
-  cannot draw DDBs, nor a blanket no-op for every embedded transfer.
-- The pattern handler (0x3c080) copies the record with a two-byte leading pad,
-  then reads bits at allocation byte 44: **payload byte 36**, not 32. Its size
-  check also requires the additional four bytes. The native-layout positive
-  controls draw successfully; the original spec-layout controls remain intact.
+The native pattern layout places bits at payload byte 36 and requires four
+more bytes than the documented offset-32 layout. Use the explicit codec option
+rather than guessing from payload length.
 
 With no embedded bitmap, the transfer uses the destination DC as its source.
 Source-independent ROPs go through the existing PatBlt path. Source-dependent
@@ -75,13 +52,6 @@ operations snapshot the destination and map source coordinates through that DC.
 There is no second stretch/ROP rasterizer for Bitmap16.
 
 ### Self-copy geometry
-
-The [45 mapped self-copy references](https://github.com/bitplane/pillow-wmf/actions/runs/35238172460)
-cover identity, fractional and negative scales, RTL at identity/fractional
-scale, nonzero origins, overlap, destination clipping, source bounds, negative
-extents, SRCCOPY and SRCINVERT, and COLORONCOLOR/HALFTONE stretching.
-Sixteen initially failed; the fixes are in transfer preparation, not filtering
-or pixel comparison.
 
 With equal DC transforms, BitBlt transforms and orders two half-open rectangles.
 RTL adds one device X unit to both rectangles' edges. The actual copy uses the
@@ -91,10 +61,6 @@ For negative extents, transform the source's low logical corner independently;
 subtracting the rounded destination size from the source anchor loses a pixel
 at fractional scales. Both SRCCOPY and ternary ROPs use this geometry.
 
-Native `GreBitBltInternal` in the same 26100.9444 win32kfull binary used for
-[layout research](gdi-layout.md) establishes this: RVA 0x7a753 constructs the
-source rectangle; 0x7a7d5 adds the RTL edge adjustment; 0x7a7e5 orders it.
-Destination construction and equivalent steps are at 0x7a808–0x7a8be.
 The shared `BlitAxis` scan copier then handles the prepared rectangle, retaining
 the original source snapshot and destination-only DC clipping.
 
@@ -108,7 +74,7 @@ ROP, stretch mode, clipping region or extreme coordinate combination.
 
 ## Brush realization, not shape-specific exceptions
 
-The positive native-layout brush cases establish:
+Native-layout pattern brushes use these realization rules:
 
 - 1-bit patterns use the live DC text/background colours.
 - 8-bit patterns use the device table: the first and last ten stock colours,

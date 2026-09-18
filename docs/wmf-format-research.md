@@ -1,10 +1,8 @@
-# WMF format research and implementation scope
+# WMF format and implementation scope
 
-Research date: 2026-09-16. Baseline: Microsoft's **[MS-WMF] revision 18.0,
-2024-04-23**, a 213-page specification. This report surveys the format's record,
-object, state, bitmap, text, and escape surfaces and the product-behavior appendix.
-It is an implementation scope and design proposal, not a completed compatibility
-experiment. No Windows probes or rendering implementation were performed here.
+Baseline: Microsoft's [MS-WMF] revision 18.0, 2024-04-23. This document surveys
+the record, object, state, bitmap, text and escape surfaces. See
+[implementation contracts](wmf-implementation.md) for the current APIs.
 
 Primary source: [MS-WMF publication and downloads][spec]. Section references in
 this report refer to that revision. The [complete record inventory][inventory]
@@ -13,9 +11,7 @@ lists every top-level opcode and every enumerated escape, with section numbers.
 ## Findings
 
 The reader/writer is a finite, approachable task. Pixel parity is substantially
-larger because records interact through a stateful graphics device. Build broad
-format coverage and a recording interface before tackling rasterization in
-vertical slices.
+larger because records interact through a stateful graphics device. Format coverage, playback semantics and rasterization are separate concerns.
 
 | Surface | Count | What it actually means |
 | --- | ---: | --- |
@@ -29,15 +25,14 @@ vertical slices.
 | Binary raster operations | 16 | Boolean functions of drawing color and destination |
 | Ternary raster operations | 256 | Boolean functions of pattern, source and destination |
 
-Counts were checked against the enum definitions and section inventory in the
-downloaded specification. They are not estimates of equal-sized implementation
+Counts describe the specification's enumerations and section inventory. They are not estimates of equal-sized implementation
 tasks. In particular, the 256 raster operations can share a Boolean evaluator;
 they do not require 256 bespoke drawing algorithms. One text or bitmap record can
 require far more work than several state records combined. [MS-WMF §§2.1–2.3][spec]
 
 ## Define the compatibility target
 
-Proposed target: Windows GDI playback into a specified true-color memory bitmap,
+The target is Windows GDI playback into a specified true-color memory bitmap,
 with explicit canvas size, initial pixels, initial DC state, and device metrics.
 Compare decoded RGB pixels exactly for non-text cases. Keep font qualifications
 specific to cases, and still test text positioning, background rectangles,
@@ -51,7 +46,7 @@ PostScript passthrough, palette devices and device fonts make unrestricted
 "pixel-perfect for every WMF on every device" an ill-defined goal.
 [MS-WMF §§1.3, 1.5, 3.1.1–3.1.5][spec]
 
-Proposed scope has three independently measurable parts:
+The scope has three independently measurable parts:
 
 1. **Structural coverage:** read/write all 70 record types, both headers, and
    their supported layout variants; preserve unknown records and escape bytes.
@@ -255,21 +250,21 @@ operations; raw data/PostScript; compressed-image capability checks; and embedde
 metafile data. The inventory lists all 60, including the 17 without individual
 payload sections. [MS-WMF §§2.1.1.17, 2.3.6][spec]
 
-Implement lossless generic escape parsing immediately. Typed payloads can then
-be added where defined, independently of executing them. Reserve an explicit
-escape/capability hook in the backend. For the proposed bitmap device, report
-unsupported printer effects and skip them under normal playback policy. Never
-interpret SETABORTPROC data as executable callbacks.
+Generic escape parsing preserves payloads losslessly. Typed payload decoding
+is distinct from execution. The raster backend explicitly classifies supported
+no-op escapes and rejects unsupported operations; see [playback policy](wmf-implementation.md).
+SETABORTPROC data must never be interpreted as executable callbacks.
 
 One unavoidable format fact: a WMF escape can contain chunks of an enhanced
 metafile. Preserve those chunks as WMF payloads; interpreting the nested format
 remains deferred. This is not a reason to introduce a second public parser now.
 
-## Specification discrepancies and early Windows probes
+## Specification caveats
 
-The specification is useful but not sufficient to generate a correct renderer
-mechanically. Keep the following uncertainties visible, with minimal reproducers
-and native results before choosing behavior:
+Record descriptions are not a complete rendering contract. The following
+ambiguities require device behaviour or independent wire-format evidence.
+The renderer contracts describe resolved behaviour; text and typed escape
+interpretation remain limited.
 
 | Issue | Evidence | Probe / design consequence |
 | --- | --- | --- |
@@ -295,7 +290,7 @@ retains playback support, and reads Core DIB headers without writing them.
 Therefore a recorder that merely mirrors what current Windows emits cannot
 generate the entire reader test corpus. Direct record construction is necessary.
 
-## Proposed architecture before drawing implementation
+## Architecture
 
 ```text
 WMF bytes <-> raw envelopes + typed records <-> record writer
@@ -321,18 +316,16 @@ indexes. The tracing backend records operations and logical handle identities
 without rasterizing. The raster context maintains DC semantics and ultimately
 writes pixels into a Pillow image.
 
-Stub the operation families broadly: object creation/selection/deletion; DC
+The operation families include object creation/selection/deletion; DC
 save/restore; mapping/layout; clipping; palette operations; drawing modes; every
 primitive; bitmap transfers; text; escapes. Do not require the recorder to run a
 pixel renderer. Keep source bitmaps optional where the wire format allows it and
 preserve coordinate units and primitive identities in operation arguments.
 
-Define return values as well as inputs: creation returns handles, save returns a
-state identifier, and failures need an explicit representation. The exact Python
-signatures should follow the initial native probes, especially handles and
-selection; the research does not justify freezing those today.
+Creation returns backend handles; failures and saved state have explicit
+representations. See the [implementation contracts](wmf-implementation.md).
 
-## Tests and Windows reference process implied by the research
+## Verification
 
 Use three distinct round trips:
 
@@ -346,7 +339,7 @@ our reader/writer does not validate itself. The specification's §3.2 example is
 useful independent evidence, but review its raw bytes against the prose before
 using it as an unquestioned semantic golden.
 
-Proposed native route: load the standard WMF stream with [SetMetaFileBitsEx][bits],
+Native reference route: load the standard WMF stream with [SetMetaFileBitsEx][bits],
 play with [PlayMetaFile][play] into a selected [CreateDIBSection][dib] bitmap in a
 memory DC, flush GDI before reading pixels, and encode RGB PNG. Handle placeable
 metadata as explicit harness setup. This tests native GDI directly; the Windows
@@ -361,54 +354,20 @@ CreateDIBSection does not establish device DPI from its pixels-per-meter fields,
 so a metadata DPI value alone cannot configure native physical mapping modes.
 [CreateDIBSection documentation][dib]
 
-For economical CI, compute stale cases on Linux before allocating a Windows job.
-Use a fingerprint of exact WMF bytes, fixture playback options and an explicit
-reference-renderer/profile revision. A missing PNG or mismatched fingerprint is
-stale. Record OS/image/font provenance but do not automatically invalidate the
-whole corpus whenever the hosted runner image changes. Detect drift with a small
-sentinel set, then make intentional baseline refreshes. Batch stale cases into
-one Windows job; no stale cases means no Windows job.
+Linux preflight checks for missing PNGs before allocating a Windows job.
+Existing references are reused; intentional replacement requires deleting the
+PNG. There are no per-fixture fingerprints or sidecars. Windows generates
+references or answers a narrowly selected native probe; ordinary comparisons
+run locally or on Linux. See the [fixture cycle](wmf-foundation-fixtures.md).
 
-The current updater is still a placeholder. Before relying on it, fix its commit
-check to include untracked PNGs/sidecars (plain git diff misses them), stage only
-generated paths, and retain artifacts on failures. If the branch moves during
-rendering, publish results only with their original input fingerprints and verify
-those inputs still match; rebasing a bot commit alone does not establish that.
-These are follow-up requirements, not changes made by this research.
+## Supporting structures
 
-## Work packages and completion gates
-
-| Work package | Completion evidence | Relative uncertainty |
-| --- | --- | --- |
-| Framing and lossless codec | Both headers, 70 record codes/variants, bounded unknown/escape preservation, independent byte fixtures | Low–medium |
-| Nested structures | All 5 graphics and 22 supporting structure types accounted for, with explicit opaque/device-specific cases | Medium |
-| GDI interface, player and recorder | Every core record mapped; operation traces round-trip; handle/DC behavior tested | Medium |
-| Windows oracle | Exact-input PNGs, profile/provenance, drift sentinel, stale-case scheduling, recoverable publication | Medium |
-| Mapping, regions, objects and modes | State traces plus native interaction cases; default/invalid-operation policy | High |
-| Vector rasterizer and compositor | Primitive boundaries, pen/brush variants, clipping and all ROP truth tables | High |
-| Bitmap decoding and transfer | Valid depth/header/compression cases, stretch/palette/ROP interactions | High |
-| Text | Byte/charset/layout semantics; named and bounded font exceptions | Very high for glyph parity |
-| Compatibility hardening | Independent corpus, fuzzing, resource limits, minimized native discrepancies | Open-ended tail |
-
-The complete supporting-structure inventory is: Bitmap16; BitmapCoreHeader;
+The supporting-structure inventory is: Bitmap16; BitmapCoreHeader;
 BitmapInfoHeader; BitmapV4Header; BitmapV5Header; CIEXYZ; CIEXYZTriple; ColorRef;
 DeviceIndependentBitmap; LogBrush; LogColorSpace; LogColorSpaceW; PaletteEntry;
 PitchAndFamily; PointL; PointS; PolyPolygon; Rect; RectL; RGBQuad; Scan; SizeL.
 Some are supporting definitions rather than separately creatable GDI objects.
 [MS-WMF §2.2.2][spec]
-
-Recommended first implementation milestone: a complete top-level record model,
-bounded reader, preserving/canonical writer, and GDI recorder/player with a
-tracing backend. Give nested bitmap/escape payloads explicit coverage status;
-opaque preservation alone is not typed decoding. Use a handful of Windows probes
-to settle framing and handle questions while building this foundation. Then
-complete the real reference-image loop and start renderer slices.
-
-Expect hundreds of focused cases and eventually thousands of generated parameter
-combinations, not merely 70 images. That is a planning estimate, not measured
-workload. The finite codec/API surface can be planned now; a trustworthy calendar
-estimate for pixel parity needs an initial batch of native mismatches and evidence
-of how quickly we can explain and fix them.
 
 [spec]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/4813e7fd-52d0-4f42-965f-228c8b7488d2
 [inventory]: wmf-record-inventory.md

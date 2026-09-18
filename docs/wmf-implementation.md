@@ -1,24 +1,24 @@
-# WMF foundation: implemented surface and contracts
+# WMF implementation contracts
 
-The first milestone implements a bounded reader/writer and a non-rendering GDI
-command interface. The [research](wmf-format-research.md) and
-[record inventory](wmf-record-inventory.md) remain the reference for future work.
-The [coordinate-mapping design](gdi-coordinate-mapping.md) details GDI state,
-device metrics, rounding boundaries, and the next native compatibility probes.
+The library provides a bounded reader/writer, GDI command interface, recorder
+and raster backend. The [format scope](wmf-format-research.md) and
+[record inventory](wmf-record-inventory.md) describe the wire format.
+[Coordinate mapping](gdi-coordinate-mapping.md) describes device state,
+metrics and rounding boundaries.
 
 ## Current coverage
 
 | Surface | Implemented | Still needed |
 | --- | --- | --- |
 | File framing | Standard/placeable headers, checksum, EOF, original metadata and file trailer preservation | Native compatibility probes for unusual headers |
-| Fixed records | 51 record classes with explicit field widths, signedness and wire order | Behavioral interpretation of state and drawing modes |
+| Fixed records | 51 record classes with explicit field widths, signedness and wire order | See operation-specific rendering limits |
 | Variable records | 19 record classes, including all six bitmap transfer envelopes | Native probes for ambiguous layouts |
 | Text | Raw strings, word padding, optional rectangle and raw advances | Charset/glyph interpretation, layout and drawing |
-| Objects | Pen/brush record fields, font, palette, region/scan structures | Native object realization and selected/saved-object quirks |
+| Objects | Pen/brush record fields, font, palette, region/scan structures; raster object realization and retained selections | Font realization |
 | Bitmap payloads | Explicit `BitmapData` values; Core/Info/V4/V5 DIB codecs, RGB and logical-palette tables, 1/4/8/16/24/32-bit RGB, bitfields and RLE4/RLE8; Bitmap16 device-sample codecs and deterministic writers | Colour management, embedded image codecs, other historical device formats |
 | Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
 | GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including DIB and legacy patterns, logical palettes, text-colour state, ROP2/ROP3, PatBlt, indexed/direct-colour DIB transfers including integer stretching and HALFTONE, modern Bitmap16 playback, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Historical/hardware-palette devices and text drawing; remaining pen/state behavior |
-| Playback | File-slot mapping, lowest-free allocation, references, unsupported-operation diagnostics | Native behavioral validation and device-state emulation |
+| Playback | File-slot mapping, lowest-free allocation, references, failed creations, retained DC selections and unsupported-operation diagnostics | Unsupported backend operations remain explicit |
 | Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
 
 The 70 opcode total includes EOF and the required-ignore SETRELABS record, so
@@ -29,9 +29,9 @@ measured coverage and limits, including [Arc](gdi-arcs.md), [Chord](gdi-chords.m
 and [Pie](gdi-pies.md), plus [RoundRect](gdi-roundrects.md) and
 [inside-frame pens](gdi-insideframe.md). [Region creation, clipping, painting
 and framing](gdi-regions.md), [flood fills](gdi-flood-fills.md) and
-[PatBlt/ROP3](gdi-patblt.md) are implemented. The first
-[DIB/pattern-brush slice](gdi-dib-brushes.md) supplies the 24-bit decoder shared
-with [unscaled DIB source transfers](gdi-dib-transfers.md).
+[PatBlt/ROP3](gdi-patblt.md) are implemented.
+[DIB pattern brushes](gdi-dib-brushes.md) share bitmap decoding with
+[unscaled DIB source transfers](gdi-dib-transfers.md).
 [DIB stretching](gdi-dib-stretching.md) adds modes 1–3 and native fixed-point
 HALFTONE reduction/enlargement, content classification, reflected transfers and
 source clipping on replication and filtered paths.
@@ -149,9 +149,7 @@ Pen creation follows `CreatePenIndirect`/`CreatePen`, not `ExtCreatePen`:
 styles outside 0–6 realize as solid pens, rather than enabling extended cap/join
 flags. Requested styles remain intact in records and the call trace. This follows
 [Wine's creation normalization](https://github.com/wine-mirror/wine/blob/master/dlls/gdi32/objects.c)
-and unblocks `wmffuzz/fdo39256-2.wmf`. Diameter-first fixed-point
-[pen realization](gdi-strokes.md) resolves its remaining nine pixels; the
-unchanged native WMF/PNG pair is retained as an exact regression.
+and the shared diameter-first fixed-point [pen realization](gdi-strokes.md).
 
 For this bitmap device, MFCOMMENT (`0x000F`) is opaque metadata, including WMFC
 payloads; it does not switch playback to an embedded metafile. POSTSCRIPT_IGNORE
@@ -162,7 +160,7 @@ and [PostScript escape definitions](https://learn.microsoft.com/en-us/windows-ha
 with pixel comparisons against the corpus's native RGB references.
 
 The caller owns the supplied backend. Playback inserts no implicit reset or
-cleanup calls into the command trace. A future native/raster backend will need a
+cleanup calls into the command trace. A backend owning native resources needs a
 separate resource-lifetime boundary around playback. This differs from native
 PlayMetaFile cleanup and must be implemented before exposing native resources.
 
@@ -172,29 +170,15 @@ play-into-recorder cycle. Use preserving serialization for byte-exact round trip
 use command traces for semantic round trips. Escape and bitmap payloads are
 carried through recording, not executed by the trace backend.
 
-## Verification and next work
+## Verification
 
-[RTL layout](gdi-layout.md) adds 36 exact Windows references and native
-fixed-point path/state observations. Mapping, clipping, pen orientation and
-clockwise curves share the existing drawing algorithms. Text-related state
-and rendering remain deferred.
+Unit tests cover record classes and blit layouts, independent wire bytes,
+truncation/count/limit failures, handle reuse, saved state, unsupported operations
+and command round trips. The compatibility suite compares every pixel through
+`RasterContext`, using each expected PNG's canvas dimensions. Missing references
+and unsupported operations fail explicitly.
 
-[Bitmap16](gdi-bitmap16.md) adds 84 exact Windows references and documents
-modern playback's bitmap-selection/transfer quirk, native pattern layout, and
-mapped/overlapping self-copy geometry. That profile is not a claim of historical
-display-driver compatibility.
-
-[Object-state holdouts](gdi-object-lifetime.md) add 22 native references for
-failed explicit brushes, selected/saved deletion and signed FrameRegion support.
-Null raster results do not consume live-object allocations; explicit failed
-brushes never fall back to the selected brush.
-
-The unit suite checks all record classes and both blit layouts, independently
-specified wire bytes, truncation/count/limit failures, sequence snapshots, handle
-reuse, save references, unsupported operations, and mixed command round trips.
-Windows renders missing WMF references and commits PNGs. The
-compatibility suite compares every pixel through `RasterContext`. New WMFs
-require a PNG and unsupported operations fail explicitly. Chord adds 16 references
-covering closure, fill/stroke state, mapping and degenerate geometry. Further
-fixtures expand that ratchet. Native acceptance probes for other record
-families and nested bitmap codecs remain open work.
+Windows generates missing PNGs; comparisons run locally or on Linux. See the
+[fixture cycle](wmf-foundation-fixtures.md), [layout](gdi-layout.md),
+[Bitmap16](gdi-bitmap16.md) and [object lifetime](gdi-object-lifetime.md) contracts.
+Font rendering remains deferred.

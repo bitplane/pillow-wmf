@@ -30,7 +30,7 @@ reverses source addresses within the clipped source interval without restarting
 the DDA or reversing destination sample positions. Destination clipping also
 leaves the sampling phase unchanged.
 
-Unscaled transfers preserve the previously measured copy/ternary realization
+Unscaled transfers preserve the copy/ternary realization
 rules in [DIB transfers](gdi-dib-transfers.md). Scaled ternary operations compose
 the realized source, with black for unavailable pixels, into the full target.
 All 256 ROP3 functions are tested for each implemented stretch mode.
@@ -39,89 +39,7 @@ All 256 ROP3 functions are tested for each implemented stretch mode.
 the coordinates as `DIBBITBLT` does. Both pass through the same source-Y
 normalization and geometry. No per-fixture rendering paths are used.
 
-## Native references and outstanding work
-
-Thirty new WMF/PNG pairs cover the four modes, a matrix of enlargement/reduction
-ratios, both DIB orientations, all combinations of extent signs, copy/ternary
-operations, mapped `DIBBITBLT` clipping and all ROP3 tables. Windows only generated
-missing PNGs; tests and pixel comparisons run on Linux/local machines.
-The [initial reference run](https://github.com/bitplane/pillow-wmf/actions/runs/35200147446)
-generated 24 cases; a subsequent missing-only run generated six ROP/mapping cases.
-
-The 26 integer-mode references and all 16 HALFTONE references now pass exactly.
-The HALFTONE failures were resolved in the renderer without skips, tolerances,
-xfails or reference regeneration.
-
-HALFTONE observations that constrain the next investigation:
-
-- Results show overshoot beyond the source colour range: a source red ramp
-  beginning at 17 can produce values around 12 near the enlarged boundary.
-  Positive-weight bilinear interpolation or averaging cannot explain that.
-- Some two-axis enlargement cases match nearest-neighbour sampling, while
-  mixed enlargement/reduction cases interpolate.
-- At a 1x1 destination, the observed result can be an average, but extending
-  that rule to other ratios does not explain the committed outputs.
-- Changing the horizontal ratio can affect a channel constant across source
-  columns. Separate one-dimensional impulse/constant-field probes are needed
-  to isolate boundary handling, intermediate surfaces and quantization before
-  choosing a kernel.
-
-Sources inspected: Microsoft's [SetStretchBltMode](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-setstretchbltmode),
-[Wine's integer stretch setup](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/dibdrv/bitblt.c),
-and [current Wine sampling primitives](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/dibdrv/primitives.c).
-Wine's HALFTONE implementation uses bilinear interpolation; it does not explain
-the native overshoot and has not been transcribed into this renderer.
-
-### HALFTONE characterization and implementation cross-check
-
-Eight further missing-only references isolate constants, horizontal/vertical
-ramps and impulses (`halftone-kernel-*`), and independent RGB basis vectors
-(`halftone-basis-*`). The basis vectors use a nonzero baseline so negative
-weights remain measurable without clipping at black. These remain exact
-compatibility tests; their enlargement transfers now pass exactly too.
-
-Initial rational-arithmetic experiments suggested area averaging followed by a
-small sharpening stencil, but missed one-level differences in basis/2D probes.
-The cumulative fixed-point weighting recovered below resolves those errors.
-
-The source cross-check does not supply the missing Windows algorithm:
-
-- Wine's `calc_halftone_params` uses 32.32 fixed-point increments;
-  `bilinear_interpolate` performs nested, rounded linear interpolation.
-  Interior interpolation cannot produce the measured negative impulse lobes.
-- libwmf's [GD bitmap drawing path](https://github.com/caolanm/libwmf/blob/master/src/ipa/xgd/bmp.h)
-  uses endpoint-aligned floating-point coordinates and calls
-  [`wmf_ipa_bmp_interpolate`](https://github.com/caolanm/libwmf/blob/master/src/ipa/ipa/bmp.h),
-  which combines four pixels with bilinear weights and truncates/clamps the
-  result. The drawing path does not select a HALFTONE-specific kernel and
-  explicitly describes its extra destination-size increment as a fudge factor.
-  Its boundary coordinate adjustments can extrapolate, but they do not explain
-  our negative lobes around an interior impulse.
-
-These are useful comparisons, not pixel-exact authorities. Neither inspected
-path implements cubic scaling, nor does that rule out a cubic component in
-Windows. The committed Windows outputs remain the oracle.
-
-#### Follow-up measurements
-
-Four more compact atlases are committed: `halftone-long-basis`,
-`halftone-two-dimensional`, `halftone-cross-axis-basis`, and
-`halftone-constant-levels`. They were generated in two missing-only Windows
-runs ([long scans/2D](https://github.com/bitplane/pillow-wmf/actions/runs/35205366725),
-[cross-axis/constants](https://github.com/bitplane/pillow-wmf/actions/runs/35206240518));
-all mathematical comparisons run locally.
-
-### Recovered reduction arithmetic
-
-Microsoft's public symbol server supplies a
-[2016 win32kfull.sys image](https://msdl.microsoft.com/download/symbols/win32kfull.sys/5801A1AB39D000/win32kfull.sys)
-and its [matching public symbols](https://msdl.microsoft.com/download/symbols/win32kfull.pdb/E69974E58A0046638B59EEC62ECEE7DC1/win32kfull.pdb).
-Inspection of `BuildShrinkAAInfo`, `ShrinkDIB_CX`, `ShrinkDIB_CY`, and
-`ShrinkDIB_CY_SrkCX` identified 13-bit weights, remainder carry and the
-intermediate shifts. The implementation expresses those arithmetic rules;
-no binary, disassembly or extracted tables are included in the repository.
-The older binary is a research lead, not an assumption that every Windows
-version is identical: the committed runner outputs independently validate it.
+## HALFTONE reduction
 
 For source extent S, destination extent D and destination index j, source
 cell k occupies `[k*D, (k+1)*D)` and the destination cell occupies
@@ -150,39 +68,31 @@ form of the native remainder-carrying scan accumulator. The weights sum to
 compositor, with bounded per-transfer caches, not a second rasterizer. Clipping
 the destination does not restart the filter or replace its neighbours.
 
-Run `.venv/bin/python scripts/analyze-halftone.py` to compare the **production**
-sampler directly with the WMF inputs/Windows PNGs. Its old rational candidate
-has been removed. All 9,966 measured channels match, including the 60 previous
-one-level differences. A further 727 individual native-reference transfer tests
-cover the non-enlarging portions of the atlases, including all 256 constant
-levels, both DIB orientations and both stretch record types. These supplement
-the unchanged full-image comparisons, which now pass on enlargement as well.
+Use `scripts/analyze-halftone.py` to compare the production reduction sampler
+against the WMF inputs and Windows PNGs.
 
 ### Fixed-decimal enlargement
 
-`BuildExpandAAInfo` and `ExpandDIB_CX` reveal an area/tent construction with a
-nonlinear modification of the tent weights, rather than cubic interpolation:
+Enlargement uses an area/tent construction with a nonlinear modification of
+the tent weights:
 
 1. Sharpen source samples as `clamp((6*C - previous - next) >> 2)`.
 2. For S < D, build symmetric output-space weights at integer offsets
    `-radius..radius`, where `radius = ceil(D/S)-1` and `t = 1-abs(offset)*S/D`.
    Below 1/2, the weight is `t**1.414214`; above 1/2, `t**(1/1.414214)`.
-   Exactly 1/2 is left unchanged. The native calculation uses six-decimal
-   fixed-point `DivFD6`, `RaisePower`, and table-based logarithm/antilogarithm
-   helpers. The implementation reproduces that fixed-decimal calculation;
-   it does not substitute an ordinary floating-point power.
+   Exactly 1/2 is left unchanged. Use six-decimal fixed-point division,
+   exponentiation and table-based logarithm/antilogarithm operations, not an
+   ordinary floating-point power.
 3. Convolve those weights with area overlaps of the source cells. Extend the
    already-sharpened endpoint samples outside the source rectangle. Normalize
    the combined weights to 8192, carrying remainders from the rightmost source
    contribution towards the left. Round the weighted result with
    `(sum + 4096) >> 13`.
 
-Run `.venv/bin/python scripts/analyze-halftone-expansion.py` to compare the
-production renderer against all enlargement/mixed transfers in the actual WMF
-inputs. The earlier floating-point model has been removed.
-For mixed-axis transfers in the 2D atlas, **reduce the shrinking axis first**,
-including its sharpening and saturation, then enlarge the other axis. That
-order matches all 1,980 tested channel samples; the opposite order does not.
+Use `scripts/analyze-halftone-expansion.py` to compare the production sampler
+against enlargement and mixed-axis transfers. For mixed-axis transfers, reduce
+the shrinking axis first, including sharpening and saturation, then enlarge the
+other axis.
 This does not replace the two-axis reducer with two independent sharpen passes.
 
 The logarithm table consists of `round(1e6 * log10(i/1000))` for integers
@@ -192,11 +102,8 @@ interpolation uses integers, rounding ties away from zero. Logarithms normalize
 to [1,10), interpolate the neighbouring samples, then restore the decimal
 exponent. Antilogarithms invert that same piecewise-linear table, rounding the
 fractional interval to 1/100000 before the final decimal scale division. Results
-at or below log10(0.000001) saturate to one fixed-decimal unit. Local isolated
-calls to the native arithmetic helpers confirmed all 1,000,001 possible
-fixed-decimal tent inputs, with zero differences (including the builder's
-exact-half bypass). No native executable code or extracted table data is a
-runtime dependency.
+at or below log10(0.000001) saturate to one fixed-decimal unit. There is no
+runtime dependency on native arithmetic helpers.
 
 Prefix sums integrate the discrete tent across source-cell boundaries. Each
 destination sample has at most four source contributors, even at large scale
@@ -205,11 +112,6 @@ limit rejects excessively large kernels before allocation; it is a resource
 bound, not a change in the sampling algorithm.
 
 ### Filtering versus replication
-
-The same `ComputeAABBP` decision is visible in the older binary and a
-[Windows 26100.9444 binary](https://msdl.microsoft.com/download/symbols/win32kfull.sys/A326E51B431000/win32kfull.sys)
-with [matching public symbols](https://msdl.microsoft.com/download/symbols/win32kfull.pdb/5CD57181BCFDC5AE8F4819BEB1196F091/win32kfull.pdb).
-The committed runner uses Windows Server 2025, build family 26100.
 
 For each axis, compute `(destination * 1000 + 500) // source`. Both must exceed
 667 to enable the content-classification path. The `+500` is literal, not half
@@ -226,13 +128,12 @@ the inverse enlargement's run lengths and retains the **last source scan** in
 each run. For S > D, output index j therefore selects
 `(2*(j+1)*S - D - 1) // (2*D)`. For enlargement it uses
 `((2*j+1)*S - 1) // (2*D)`: exact centre ties go to the earlier scan.
-This resolves the original 7x9-to-5x13 colour atlas:
-its shrinking axis selects `[0,2,3,5,6]`, not `[0,2,3,4,6]`. This is mode-specific
+For a 7x9-to-5x13 transfer, the shrinking axis selects `[0,2,3,5,6]`, not `[0,2,3,4,6]`. This is mode-specific
 scan arithmetic, not a per-ratio rendering exception.
 
 ### Colour census and fast enlargement
 
-`CheckBMPNeedFixup` clips the census to the available source rectangle. At most
+The colour census is clipped to the available source rectangle. At most
 2304 pixels always select replication. Through 16384 pixels it scans every row,
 initially permitting `area >> 3` distinct colour keys. A row with no new colours
 subtracts its width from the remaining area: reaching 2304 selects replication;
@@ -243,7 +144,7 @@ select replication. Keys mask each channel with 252 when red equals blue.
 The implementation uses a bounded set rather than the native linear search.
 
 If both axes enlarge by at most 5x and the census does not select replication,
-native `FastExpAA_CY`/`FastExpAA_CX` use replication runs of lengths 1 through 5.
+fast enlargement uses replication runs of lengths 1 through 5.
 Each run has a fixed three-source-sample stencil. The coefficients in
 `RunExpansionAxis.kernels` express those native arithmetic stencils in units of
 1/32; they are not fitted fixture corrections. For example, a one-pixel run uses
@@ -257,21 +158,11 @@ General two-axis tent enlargement (either axis above 5x) sharpens the source,
 extends its sharpened endpoints, then filters horizontally followed by vertically.
 These different orders and boundary stages are observable in the PNGs.
 
-### Boundary and ROP validation
-
-48 additional WMF/PNG pairs cover the 2304/16384-pixel classifier thresholds,
-19/20/21 colours, repeated rows, every fast run length, general two-axis expansion,
-destination clipping, cropped source rectangles, all extent-sign combinations,
-both DIB orientations and record types, replication source clipping, and all
-256 ROP3 truth tables. References came from two missing-only Windows runs
-([boundary census](https://github.com/bitplane/pillow-wmf/actions/runs/35210925583),
-[enlargement runs](https://github.com/bitplane/pillow-wmf/actions/runs/35211885627));
-all comparisons run locally with exact pixels.
+### Reflection and ROPs
 
 HALFTONE reflects the realized output, including its sampling phase. Replication
 reduction retains the last available source scan in a partially clipped run;
-unavailable output pixels are black. Ternary operations instead use native
-`EngStretchBltROP`'s downgrade to COLORONCOLOR, without changing the DC's stored
+unavailable output pixels are black. Ternary operations instead downgrade to COLORONCOLOR, without changing the DC's stored
 stretch mode. The shared brush/ROP compositor remains in use.
 
 ### Filtered source clipping
@@ -293,8 +184,7 @@ initialized:
   scan. With only one available row, current is primed but previous is not, so
   replay reads zero. For a 5-to-3 vertical reduction with only the last requested
   row available, this leaves the 3276/8192 prefill contribution. This is a
-  scan-history rule, not a changed kernel or a special ratio. Isolated native
-  builder/reader/reducer calls reproduce it; the WMFs validate the full pipeline.
+  scan-history rule, not a changed kernel or a special ratio.
 - General tent enlargement stops advancing its source cursor when it reaches
   the available edge, while fractional weights continue advancing. Thus it can
   continue producing varying output beyond the nominal source intersection.
@@ -309,21 +199,9 @@ initialized:
 Reflection reverses the finished filtered output, including these boundaries;
 it does not reverse or restart the filter weights.
 
-37 additional WMF/PNG pairs cover clipped reduction/mixed transfers, all extent
-signs, both DIB orientations and record types, fast/general large-image
-enlargement, reflected trailing clips, and one-to-three-scan slivers. References
-were generated in missing-only Windows runs:
-[clipped transfers](https://github.com/bitplane/pillow-wmf/actions/runs/35212500830),
-[large images](https://github.com/bitplane/pillow-wmf/actions/runs/35213271351),
-[edge cells/reflection](https://github.com/bitplane/pillow-wmf/actions/runs/35213594840),
-[vertical slivers](https://github.com/bitplane/pillow-wmf/actions/runs/35214679997),
-[horizontal/grid boundaries](https://github.com/bitplane/pillow-wmf/actions/runs/35215512931).
-All pixel comparisons run locally, with no tolerance or replacement of existing
-reference images.
-
-Additional depths and RLE compression are covered by the subsequent
-[DIB format slice](gdi-dib-formats.md), including source-scan fixup and
-format-dependent channel conversion. [Logical palettes](gdi-palettes.md) now
+Additional depths and RLE compression are covered by
+[DIB formats](gdi-dib-formats.md), including source-scan fixup and
+format-dependent channel conversion. [Logical palettes](gdi-palettes.md)
 resolve into the same transfer pipeline. [Legacy Bitmap16](gdi-bitmap16.md)
-now covers modern playback and reuses that pipeline for source-free copies.
+covers modern playback and reuses that pipeline for source-free copies.
 Fonts remain deferred.

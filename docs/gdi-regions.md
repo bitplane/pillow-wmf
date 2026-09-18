@@ -1,9 +1,9 @@
 # WMF regions: creation, clipping and painting
 
-The first region slice implements `CreateRegion`, `SelectClipRegion`, region
+The backend implements `CreateRegion`, `SelectClipRegion`, region
 selection through `SelectObject`, and composition with existing rectangular
 clipping, offsets and SaveDC/RestoreDC. `FillRegion`, `PaintRegion`,
-`InvertRegion` and `FrameRegion` now paint through the same clip and brush
+`InvertRegion` and `FrameRegion` paint through the same clip and brush
 compositing machinery.
 
 ## Coordinate and object contracts
@@ -38,9 +38,6 @@ Two distinct null conventions matter:
   without changing state. A nonzero scan count with zero covered area instead
   creates a real empty region, which suppresses all drawing when selected.
 
-The native handle probe observes both the creation return value and
-`GetObjectType`, distinguishing those outcomes rather than inferring them from
-a blank image; see [the initial measurement run](https://github.com/bitplane/pillow-wmf/actions/runs/35171737945).
 Backend handles retain the file object's identity, including
 the null result, so subsequent records preserve native behavior.
 
@@ -90,14 +87,11 @@ not erase the source contour. A gap mapped to a line retains a framed seam
 with flat ends; a gap mapped to a point has no remaining edge. Region
 subtraction and dilation operate on bands, not bitmap-sized masks.
 
-Native probes and inspection of the reference runner's frame/widening entry
-points establish the following device footprint realization:
+Realize the device footprint as follows:
 
-1. Map the stored region's edges with the shared driver-point conversion,
-   retaining source boundary topology. Later [PatBlt probes](gdi-patblt.md)
-   refined that conversion: quantize the translation and scaled coordinate
-   separately to signed 28.4 before rounding to pixels. The existing native
-   region matrices also pass with this shared conversion.
+1. Map stored edges with the shared driver-point conversion, retaining source
+   boundary topology. Quantize translation and scaled coordinates separately
+   to signed 28.4 before rounding to pixels.
 2. Take absolute logical dimensions. Use twice the larger dimension as a
    common geometric-pen width and normalize the shorter axis of its transform.
    The normalization and transform multiplication use IEEE single precision.
@@ -114,17 +108,11 @@ points establish the following device footprint realization:
 
 A zero dimension paints nothing. Negative dimensions are made positive before
 normalization; a reflected mapping still affects signed basis conversion.
-Simply rounding the doubled mapped dimensions fits the initial half-scale
-examples but fails the continuous size atlases. In particular, under a 3/4
+Simply rounding the doubled mapped dimensions is not equivalent. In particular, under a 3/4
 horizontal scale with unit vertical scale, logical widths 1, 3 and 5 (height 1)
 produce full device widths 1, 4 and 8, rather than 2, 5 and 8. There is no
 width-specific adjustment: the same pen-edge arithmetic produces these values.
 
-Our region-algebra implementation is not copied native code. The short,
-read-only research jobs inspected frame setup, geometric-pen conversion and
-normal interpolation; see [frame setup](https://github.com/bitplane/pillow-wmf/actions/runs/35185849295),
-[widening arithmetic](https://github.com/bitplane/pillow-wmf/actions/runs/35186113249)
-and [signed basis conversion](https://github.com/bitplane/pillow-wmf/actions/runs/35186514849).
 Microsoft's [FrameRgn documentation](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-framergn)
 establishes the logical-unit parameters. Wine's
 [painting fallbacks](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/painting.c)
@@ -134,33 +122,13 @@ explicitly notes a difference from Windows and is not our framing oracle.
 
 ## Verification
 
-Twenty-one committed Windows references cover rings/holes, overlap, negative coordinates,
-misleading bounds, mapping changes, replacement, offsets, save/restore,
-intersection/exclusion, reset, null objects and slot-zero selection. The manual
-`probe-windows-regions.py` additionally asserts native object creation outcomes,
-15 displacement cases, native allocation after a failed creation, and 324 exact
-cross-primitive pixel comparisons. The final native verification is
-[run 35172754644](https://github.com/bitplane/pillow-wmf/actions/runs/35172754644).
+WMF/PNG comparisons cover holes, overlapping scans, signed coordinates,
+misleading bounds, clip replacement and offsets, save/restore, null objects,
+slot reuse, and all four region paint operations. Frame cases cover fractional
+and reflected mappings, collapsed gaps and fixed-point edge thresholds.
 
-An additional 83 Windows PNGs cover all four paint calls, explicit and selected
-brushes, solid/null/hatch brushes, transparent/opaque backgrounds, XOR, clipping,
-nonuniform and reflected mappings, half-pixel boundaries, and zero, negative
-and oversized frame dimensions, phase isolation, continuous width atlases and
-collapsed gaps, fixed-point edge thresholds and cross-primitive hatch/ROP
-behavior. Rectangle's block fill simplifies
-brush-independent ROPs before hatch transparency; region/path fills retain the
-transparent pattern mask even for BLACK, WHITE and NOT. Brush realization
-handles that distinction; the pixel compositor and hatch definition are shared.
-
-The manual `probe-windows-region-paint.py`
-cross-checks further shapes, all 16 ROP2 modes, fractional mappings and state
-preservation directly against Windows. The temporary native implementation
-inspection script/workflow was removed after research; its read-only job logs
-are linked above. The ordinary push workflow continues
-to render only missing PNGs; the larger matrix runs only on manual dispatch.
-
-Final verification: [Windows run 35187780608](https://github.com/bitplane/pillow-wmf/actions/runs/35187780608)
-passed all 996 region-painting comparisons and the existing stroke, arc, edge,
-region-clip, inside-frame, RoundRect, Pie and Chord regressions. The local suite
-passes 1,088 tests, including 47 new region-algebra/painting unit tests;
-pre-commit passes. Pixel comparisons remain exact.
+Rectangle's block fill simplifies brush-independent ROPs before hatch
+transparency; region/path fills retain the transparent pattern mask even for
+BLACK, WHITE and NOT. Brush realization handles that distinction; the pixel
+compositor and hatch definition are shared. Cross-primitive fixtures exercise
+these painting policies with explicit and selected brushes.

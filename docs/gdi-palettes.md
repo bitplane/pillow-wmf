@@ -60,14 +60,8 @@ bounds and packing, colour-reference realization and direct-index rejection.
 Native PNGs are produced by missing-only Windows jobs; comparisons run locally
 or on Linux with zero pixel tolerance. Existing references are not regenerated.
 
-The first batches were runs
-[35225110518](https://github.com/bitplane/pillow-wmf/actions/runs/35225110518)
-and [35225734611](https://github.com/bitplane/pillow-wmf/actions/runs/35225734611).
-The realization/storage holdouts are from
-[35226281933](https://github.com/bitplane/pillow-wmf/actions/runs/35226281933).
-
 Hardware palette allocation, foreground/background palette competition,
-display-wide animation and ICM are not implemented by this slice.
+display-wide animation and ICM are not implemented.
 [Legacy Bitmap16](gdi-bitmap16.md) is covered separately.
 The reference device's RGB behaviour must not be mistaken for a claim
 to emulate every historical display depth.

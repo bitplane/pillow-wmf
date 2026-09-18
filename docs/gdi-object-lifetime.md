@@ -28,25 +28,19 @@ brush creation, including XOR. The selected brush survives the failed call.
 
 ## Selected and saved objects
 
-Six native WMF sequences delete a pen, brush or palette while selected in the
-current DC or retained in a saved DC. Drawing continues with the retained object;
+Deleting a pen, brush or palette selected in the current DC or retained in a
+saved DC does not discard the selection. Drawing continues with the retained object;
 switching selection, restoring the saved state, and allocating another object
-into the released file slot do not replace that retained value. The existing
-object-reference snapshots already match these sequences; no deletion-specific
-pixel branch was added.
+into the released file slot do not replace that retained value. DC snapshots retain object references independently of file-slot allocation.
 
 This establishes those WMF playback sequences, not a complete emulation of
 Win32 DeleteObject return values, stale native handles or font lifetimes.
 TraceContext's checked logical-handle rules remain distinct from device state.
 
-## Evidence
+## Shared state and tests
 
-[Native reference run 35239504770](https://github.com/bitplane/pillow-wmf/actions/runs/35239504770)
-generated 22 missing PNGs: four failed explicit-brush cases, six deletion cases,
-and twelve signed-scale FrameRegion controls. Eight RTL frame controls initially
-failed because frame pen realization omitted layout's X sign. Frame footprints,
-ordinary pens and arc radial directions now consume `Mapping.linear_scale`;
-point/translation rounding retains its separate native contract.
+Frame footprints, ordinary pens and arc radial directions consume
+`Mapping.linear_scale`; point/translation rounding has a separate contract.
 
 Local tests exercise repeated failures with a one-object budget, file playback,
 bounded null storage, owner/type validation and retained null references after
