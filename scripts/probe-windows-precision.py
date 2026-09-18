@@ -1,8 +1,11 @@
 """Targeted native paths for the four binary-review arithmetic findings."""
 
 import ctypes
+import os
+import struct
 import subprocess
 from ctypes import wintypes
+from pathlib import Path
 
 from windows_wmf_render import bind, check, reference_surface
 
@@ -47,6 +50,13 @@ def main():
         ],
         check=True,
     )
+    # Identify the exact public-symbol images, not just a nearby OS release.
+    for name in ("win32kbase.sys", "win32kfull.sys"):
+        data = (Path(os.environ["SystemRoot"]) / "System32" / name).read_bytes()
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        timestamp = struct.unpack_from("<I", data, pe + 8)[0]
+        image_size = struct.unpack_from("<I", data, pe + 24 + 56)[0]
+        print("symbol-image", name, f"{timestamp:08X}{image_size:x}", flush=True)
     for layout in (0, 1):
         with reference_surface(128, 128) as (gdi, dc, _):
             bind_paths(gdi)
