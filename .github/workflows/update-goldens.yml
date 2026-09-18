@@ -19,6 +19,7 @@ on:
         options:
           - none
           - mapping
+          - precision
           - layout
           - patblt
           - dib-brush
@@ -97,6 +98,9 @@ jobs:
       - name: Report native coordinate mapping
         if: inputs.probe == 'mapping' || inputs.probe == 'all'
         run: python scripts/probe-windows-mapping.py
+      - name: Inspect binary-review arithmetic boundaries
+        if: inputs.probe == 'precision'
+        run: python scripts/probe-windows-precision.py
       - name: Verify native PatBlt
         if: inputs.probe == 'patblt' || inputs.probe == 'all'
         run: python scripts/probe-windows-patblt.py

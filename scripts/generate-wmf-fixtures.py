@@ -13,6 +13,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf
 
 
 def cases():
+    yield from runpy.run_path(str(Path(__file__).with_name("precision_fixtures.py")))["cases"]()
     yield from runpy.run_path(str(Path(__file__).with_name("state_review_fixtures.py")))["cases"]()
     yield from runpy.run_path(str(Path(__file__).with_name("layout_fixtures.py")))["cases"]()
     yield from runpy.run_path(str(Path(__file__).with_name("bitmap16_fixtures.py")))["cases"]()
