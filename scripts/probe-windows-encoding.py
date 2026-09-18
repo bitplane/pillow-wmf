@@ -72,6 +72,21 @@ def main():
             if args.missing_only:
                 inspect_native_text(source)
     if args.missing_only:
+        recorder = Recorder()
+        recorder.select_object(
+            recorder.create_font(
+                Font(height=-24, weight=400, quality=3, face_name=b"Microsoft Sans Serif".ljust(32, b"\0"))
+            )
+        )
+        sample = b"C\0\x01\x08\t\n\x0b\x0c\r\x1f\x7f\x81\x8d"
+        print("[fallback-face]", flush=True)
+        probe.observe(
+            recorder.to_bytes(),
+            family="Microsoft Sans Serif",
+            sample=sample,
+            characters="".join(map(chr, sample)),
+            shaping=True,
+        )
         return
     # Native installed fonts are queried, never uploaded or silently replaced.
     for family in ("Symbol", "Wingdings"):
