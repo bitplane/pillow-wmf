@@ -84,9 +84,16 @@ def main():
                 with TTFont(path, fontNumber=0, lazy=True) as font:
                     cmap = font.getBestCmap() or {}
                     if 0 in cmap or 0x81 in cmap:
+
+                        def glyph_metrics(codepoint):
+                            name = cmap.get(codepoint, ".notdef")
+                            glyph = font["glyf"][name]
+                            return (font.getGlyphID(name), font["hmtx"][name], glyph.numberOfContours)
+
                         print(
                             f"control_face={font['name'].getBestFamilyName()!r} "
-                            f"coverage={[(c, cmap.get(c)) for c in (0, 1, 0x81)]}",
+                            f"em={font['head'].unitsPerEm} "
+                            f"coverage={[(c, cmap.get(c), glyph_metrics(c)) for c in (0, 1, 0x81)]}",
                             flush=True,
                         )
             except Exception as error:
