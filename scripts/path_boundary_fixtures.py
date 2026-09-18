@@ -6,6 +6,20 @@ from pillow_wmf import Recorder
 
 
 def cases():
+    r = Recorder()
+    r.select_object(r.create_pen(0, 1, 0))
+    r.set_window_extent(2048, 2048)
+    # Below/at each fixed-diameter threshold, in both X orientations. The
+    # first row retains hairlines; the last leaves the small-pen tables.
+    for row, diameter in enumerate(range(2, 8)):
+        boundary = (2 * diameter - 1) * 1024 - 64
+        for column, (sign, delta) in enumerate(((1, -1), (1, 0), (-1, -1), (-1, 0))):
+            scale = boundary + delta
+            r.set_viewport_extent(sign * scale, scale)
+            r.set_viewport_origin(7 + column * 31, 4 + row * 20)
+            r.polyline(((0, 0), (2 * sign, 1), (0, 2)))
+    yield "pen-table-rounding-boundaries", r
+
     for fill_mode, style in ((1, 0), (2, 5)):
         r = Recorder()
         r.set_polygon_fill_mode(fill_mode)

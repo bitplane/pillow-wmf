@@ -16,6 +16,7 @@ coords-isotropic-order-viewport-first
 coords-isotropic-order-window-first
 coords-half-ties-translated
 coords-scale-extents
+pen-table-rounding-boundaries
 pen-thin-size-limit-511-0
 pen-thin-size-limit-511-1
 pen-thin-size-limit-512-0
