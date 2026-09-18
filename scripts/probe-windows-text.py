@@ -2,6 +2,7 @@
 
 import argparse
 import ctypes
+import struct
 from ctypes import wintypes
 from pathlib import Path
 
@@ -33,6 +34,16 @@ class TextMetrics(ctypes.Structure):
     )
 
 
+class GlyphMetrics(ctypes.Structure):
+    _fields_ = [
+        ("width", wintypes.UINT),
+        ("height", wintypes.UINT),
+        ("origin", wintypes.POINT),
+        ("advance_x", ctypes.c_short),
+        ("advance_y", ctypes.c_short),
+    ]
+
+
 def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=None):
     with reference_surface(*size) as (gdi, dc, _):
         ptr = ctypes.c_void_p
@@ -59,6 +70,21 @@ def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=Non
             gdi, "GetGlyphIndicesW", wintypes.DWORD, ptr, ctypes.c_wchar_p, ctypes.c_int, ptr, wintypes.DWORD
         )
         char_width = bind(gdi, "GetCharWidth32W", wintypes.BOOL, ptr, wintypes.UINT, wintypes.UINT, ptr)
+        glyph_metrics = bind(
+            gdi, "GetGlyphOutlineW", wintypes.DWORD, ptr, wintypes.UINT, wintypes.UINT, ptr, wintypes.DWORD, ptr, ptr
+        )
+        extent_ex = bind(
+            gdi,
+            "GetTextExtentExPointW",
+            wintypes.BOOL,
+            ptr,
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ptr,
+            ptr,
+            ptr,
+        )
 
         @callback_type
         def callback(hdc, handles, record, count, _):
@@ -88,6 +114,25 @@ def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=Non
                             )
                             widths.append(width.value)
                         print(f"characters={characters!r} glyphs={list(indices)} advances={widths}", flush=True)
+                        identity = ctypes.create_string_buffer(struct.pack("<HhHhHhHh", 0, 1, 0, 0, 0, 0, 0, 1))
+                        cells = []
+                        for character in characters:
+                            glyph = GlyphMetrics()
+                            if (
+                                glyph_metrics(hdc, ord(character), 0, ctypes.byref(glyph), 0, None, identity)
+                                == 0xFFFFFFFF
+                            ):
+                                raise OSError("GetGlyphOutlineW failed")
+                            cells.append(glyph.advance_x)
+                        prefixes = (ctypes.c_int * len(characters))()
+                        extent_size = wintypes.SIZE()
+                        check(
+                            extent_ex(
+                                hdc, characters, len(characters), 0x7FFFFFFF, None, prefixes, ctypes.byref(extent_size)
+                            ),
+                            "GetTextExtentExPointW",
+                        )
+                        print(f"device_advances={cells} logical_prefixes={list(prefixes)}", flush=True)
                     value, point, size = TextMetrics(), wintypes.POINT(), wintypes.SIZE()
                     check(metrics(hdc, ctypes.byref(value)), "GetTextMetricsW")
                     check(position(hdc, ctypes.byref(point)), "GetCurrentPositionEx")
