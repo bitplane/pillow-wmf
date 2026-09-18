@@ -260,42 +260,7 @@ class RasterContext(TraceContext):
                 # dimensions; failed selection preserves the previous brush.
                 pattern = None if layout.top_down else pattern.monochrome()
         elif name == "set_dib_to_device":
-            layout = read_dib(a["source"], color_usage=a["color_usage"], max_pixels=self.max_bitmap_pixels)
-            transfer = TransferAction.NOOP
-            # WMF stores WORDs here but playback sign-extends coordinates and
-            # extents. Scan indexes/counts remain unsigned.
-            x, y, width, height, sx, sy = (
-                (a[k] + 32768) % 65536 - 32768 for k in ("x", "y", "width", "height", "src_x", "src_y")
-            )
-            start, count = a["start_scan"], a["scan_count"]
-            # WMF requires a complete packed DIB even when only cLines rows
-            # are consumed. Short buffers are rejected regardless of SizeImage.
-            if (
-                self._accepts_dib(layout)
-                and layout.complete
-                and width > 0
-                and height > 0
-                and count
-                and start < layout.height
-            ):
-                if layout.compression in (1, 2):
-                    start, count = 0, layout.height
-                if not layout.top_down:
-                    count = min(count, layout.height - start)
-                x, y = self._point(x, y)
-                if self.mapping.rtl:
-                    # Device scans keep their order; only the destination
-                    # rectangle is reflected about the anchor pixel.
-                    x -= width - 1
-                horizontal = BlitAxis(x, sx, width)
-                vertical = BlitAxis(y, start + count - sy - height, height)
-                if layout.compression in (1, 2):
-                    bitmap = self._decode_device_rle(layout, horizontal, vertical)
-                else:
-                    bitmap = layout.decode(
-                        min(count, layout.height), preserve_gaps=True, palette=self._palette.colors()
-                    )
-                transfer = SourceTransfer(bitmap, horizontal, vertical, 0xCC0020)
+            transfer = self._prepare_device_transfer(a)
         elif name == "select_object":
             if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
@@ -663,6 +628,43 @@ class RasterContext(TraceContext):
             result = Handle(0, result.kind, self)
             self._objects[result] = None
         return result
+
+    def _prepare_device_transfer(self, args) -> SourceTransfer | TransferAction:
+        """Realize a scan band without stretching its device-pixel geometry."""
+        layout = read_dib(args["source"], color_usage=args["color_usage"], max_pixels=self.max_bitmap_pixels)
+        # WMF stores WORDs here but playback sign-extends coordinates and
+        # extents. Scan indexes/counts remain unsigned.
+        x, y, width, height, source_x, source_y = (
+            (args[key] + 32768) % 65536 - 32768 for key in ("x", "y", "width", "height", "src_x", "src_y")
+        )
+        start, count = args["start_scan"], args["scan_count"]
+        # WMF requires a complete packed DIB even when only cLines rows
+        # are consumed. Short buffers are rejected regardless of SizeImage.
+        if (
+            not self._accepts_dib(layout)
+            or not layout.complete
+            or width <= 0
+            or height <= 0
+            or not count
+            or start >= layout.height
+        ):
+            return TransferAction.NOOP
+        if layout.compression in (1, 2):
+            start, count = 0, layout.height
+        if not layout.top_down:
+            count = min(count, layout.height - start)
+        x, y = self._point(x, y)
+        if self.mapping.rtl:
+            # Device scans keep their order; only the destination
+            # rectangle is reflected about the anchor pixel.
+            x -= width - 1
+        horizontal = BlitAxis(x, source_x, width)
+        vertical = BlitAxis(y, start + count - source_y - height, height)
+        if layout.compression in (1, 2):
+            bitmap = self._decode_device_rle(layout, horizontal, vertical)
+        else:
+            bitmap = layout.decode(min(count, layout.height), preserve_gaps=True, palette=self._palette.colors())
+        return SourceTransfer(bitmap, horizontal, vertical, 0xCC0020)
 
     def _prepare_legacy_transfer(self, name, a) -> SourceTransfer | TransferAction:
         if a["source"] is not None:

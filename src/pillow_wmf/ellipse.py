@@ -150,8 +150,9 @@ def arc_cubics(
         radial_ry = -radial_ry
 
     def angle(point: tuple[int, int]):
-        x = float32(float32(float32(point[0]) - radial_cx) / radial_rx)
-        y = float32(float32(radial_cy - float32(point[1])) / radial_ry)
+        offset_x = float32(float32(point[0]) - radial_cx)
+        offset_y = float32(radial_cy - float32(point[1]))
+        x, y = float32(offset_x / radial_rx), float32(offset_y / radial_ry)
         # vArctan retains the radial's quadrant separately from its rounded
         # angle. Axis ties belong according to coordinate signs, not floor
         # of angle/90; this preserves native zero-length boundary pieces.
@@ -176,11 +177,14 @@ def arc_cubics(
 
     def device_point(nx: float, ny: float) -> Point:
         result = []
-        for c, h, v in zip(centre, horizontal, north):
-            offset = float32(float32(float32(h) * nx) + float32(float32(v) * ny))
+        for origin, horizontal_axis, vertical_axis in zip(centre, horizontal, north, strict=True):
+            horizontal_offset = float32(float32(horizontal_axis) * nx)
+            vertical_offset = float32(float32(vertical_axis) * ny)
+            offset = float32(horizontal_offset + vertical_offset)
             # EBOX rounds the relative vector away from zero at ties, then
             # adds its integer centre. Translation must not change tie sense.
-            result.append(c + (1 if offset >= 0 else -1) * floor(abs(offset) + 0.5))
+            rounded_offset = (1 if offset >= 0 else -1) * floor(abs(offset) + 0.5)
+            result.append(origin + rounded_offset)
         return tuple(result)
 
     cubics = []

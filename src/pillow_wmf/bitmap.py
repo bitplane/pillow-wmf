@@ -211,7 +211,12 @@ class DIBLayout:
         clip_spans=None,
         gap_color=None,
     ) -> RGBBitmap:
-        """Decode rows from the beginning of the pixel buffer, not a row offset."""
+        """Decode rows from the beginning of the pixel buffer, not a row offset.
+
+        For direct RLE scans, ``clip_spans`` provides top-down clip intervals.
+        ``gap_color`` selects a realized background instead of palette index 0;
+        ``preserve_gaps`` retains coverage so unwritten pixels can be skipped.
+        """
         if self.color_usage and self.depth <= 8:
             if palette is None:
                 raise UnsupportedOperation("DIB palette resolution requires a logical palette")
