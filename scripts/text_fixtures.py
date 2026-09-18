@@ -71,3 +71,14 @@ def cases():
             recorder.text_out(5, 58 + row * 60, sample)
             recorder.set_text_justification(0, 0)
         yield name, recorder
+
+    recorder = Recorder()
+    recorder.select_object(
+        recorder.create_font(Font(height=-16, weight=400, quality=3, face_name=b"Pillow WMF Encoding".ljust(32, b"\0")))
+    )
+    recorder.set_background_mode(1)
+    recorder.set_text_alignment(24)
+    for row, control in enumerate((b"\t", b"\n", b"\r")):
+        recorder.text_out(5, 18 + row * 40, b"A" + control + b"B")
+        recorder.ext_text_out(5, 35 + row * 40, b"A" + control + b"B", advances=(17, 19, 23))
+    yield "text-blank-controls", recorder

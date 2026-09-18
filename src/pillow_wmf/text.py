@@ -1,7 +1,7 @@
 """Explicit font inputs, glyph masks and horizontal GDI layout.
 
 Font files, aliases and missing-glyph policy are supplied by the caller, not by
-a WMF. There is no host-font discovery, font linking or automatic shaping.
+a WMF. There is no host-font discovery or registry-based font substitution.
 """
 
 from dataclasses import dataclass, field
@@ -193,7 +193,7 @@ class FontFace:
 class FontCollection:
     """Supplied faces and explicit aliases; never discover or silently replace."""
 
-    def __init__(self, faces=(), *, ansi_codepage=1252, aliases=None, missing_glyph="error"):
+    def __init__(self, faces=(), *, ansi_codepage=1252, aliases=None, fallbacks=None, missing_glyph="error"):
         if ansi_codepage not in (1252, 1251):
             raise ValueError("ANSI environment must be Windows-1252 or Windows-1251")
         if missing_glyph not in ("error", "notdef"):
@@ -201,12 +201,26 @@ class FontCollection:
         self.ansi_codepage = ansi_codepage
         self.missing_glyph = missing_glyph
         self.aliases = {name.casefold(): target.casefold() for name, target in (aliases or {}).items()}
+        self.fallbacks = {name.casefold(): tuple(targets) for name, targets in (fallbacks or {}).items()}
         self._faces = {}
         for face in faces:
             key = (face.family.casefold(), face.weight, face.italic)
             if key in self._faces:
                 raise ValueError(f"Ambiguous font face: {face.family}")
             self._faces[key] = face
+
+    def realize(self, request, face, scale):
+        primary = face.realize(request, scale, missing_glyph=self.missing_glyph)
+        linked = []
+        for family in self.fallbacks.get(face.family.casefold(), ()):
+            key = family.casefold(), request.weight or 400, bool(request.italic)
+            if key not in self._faces:
+                raise UnsupportedOperation(f"Fallback font unavailable: {family!r}")
+            fallback = self._faces[key]
+            if fallback.symbol:
+                raise UnsupportedOperation("A symbol face cannot be a Unicode fallback")
+            linked.append(fallback.realize(request, scale))
+        return FontRun(primary, tuple(linked))
 
     def resolve(self, request):
         if request is None:
@@ -233,6 +247,38 @@ class FontCollection:
         if not face.codepages & (1 << bit):
             raise UnsupportedOperation("Font does not advertise the requested charset; explicit selection is required")
         return decode_single_byte(data, codepage)
+
+
+@dataclass(frozen=True)
+class FontRun:
+    """Use base line metrics, selecting supplied fallback faces only for holes."""
+
+    primary: RasterFont
+    fallbacks: tuple[RasterFont, ...] = ()
+
+    @property
+    def ascent(self):
+        return self.primary.ascent
+
+    @property
+    def descent(self):
+        return self.primary.descent
+
+    @property
+    def break_character(self):
+        return self.primary.break_character
+
+    def glyph(self, character, max_pixels):
+        codepoint = ord(character)
+        if not self.primary.symbol and character in "\t\n\r":
+            # TextOut is not a multiline/tab-stop formatter. These controls
+            # shape to zero-width blanks; explicit byte advances still apply.
+            return Glyph((0, 0), (0, 0), b"", 0)
+        if not self.primary.symbol and codepoint >= 32 and not self.primary.cmap.get(codepoint):
+            for fallback in self.fallbacks:
+                if fallback.cmap.get(codepoint):
+                    return fallback.glyph(character, max_pixels)
+        return self.primary.glyph(character, max_pixels)
 
 
 @dataclass(frozen=True)

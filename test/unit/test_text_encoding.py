@@ -97,3 +97,37 @@ def test_invalid_environment_or_policy_is_rejected():
         FontCollection(ansi_codepage=65001)
     with pytest.raises(ValueError, match="Missing-glyph"):
         FontCollection(missing_glyph="ignore")
+
+
+def test_fallback_fills_only_missing_glyphs_and_preserves_base_metrics(face):
+    base = FontFace.from_path(FONTS / "layout.ttf")
+    request = replace(REQUEST, face_name=base.family.encode())
+    fonts = FontCollection([base, face], fallbacks={base.family: (face.family,)})
+    run = fonts.realize(request, base, (1, 1))
+    assert run.glyph("A", 10000) is run.primary.glyph("A", 10000)
+    assert run.glyph("\xe9", 10000) is face.realize(request, (1, 1)).glyph("\xe9", 10000)
+    assert (run.ascent, run.descent, run.break_character) == (22, 7, 32)
+    with pytest.raises(UnsupportedOperation, match="Missing glyph"):
+        FontCollection([base, face]).realize(request, base, (1, 1)).glyph("\xe9", 10000)
+    with pytest.raises(ValueError, match="pixel limit"):
+        run.glyph("\xe9", 1)
+
+
+def test_missing_fallback_face_fails_without_painting(face):
+    fonts = FontCollection([face], fallbacks={face.family: ("Unavailable",)})
+    dc = RasterContext(100, 100, fonts=fonts)
+    dc.select_object(dc.create_font(REQUEST))
+    before = dc.image.tobytes(), list(dc.calls)
+    with pytest.raises(UnsupportedOperation, match="Fallback font unavailable"):
+        dc.ext_text_out(10, 40, b"ACB", options=2, rectangle=(0, 0, 50, 50))
+    assert (dc.image.tobytes(), dc.calls) == before
+
+
+@pytest.mark.parametrize("control", [b"\t", b"\n", b"\r"])
+@pytest.mark.parametrize("advances,expected", [((), (37, 40)), ((21, 22, 23), (78, 40))])
+def test_line_controls_are_blank_without_discarding_explicit_byte_advances(face, control, advances, expected):
+    fonts = FontCollection([face])
+    run = fonts.realize(REQUEST, face, (1, 1))
+    result = layout_text(run, b"A" + control + b"B", 12, 40, 25, advances, opaque=False, max_pixels=10000)
+    assert result.glyphs[1][2].pixels == b""
+    assert result.position == expected

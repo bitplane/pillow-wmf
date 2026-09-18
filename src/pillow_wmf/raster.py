@@ -967,7 +967,7 @@ class RasterContext(TraceContext):
         origin = self._position if self._text_state.alignment & 1 else (args["x"], args["y"])
         origin = self._point(*origin)
         layout = layout_text(
-            face.realize(request, (sx, sy), missing_glyph=self.fonts.missing_glyph),
+            self.fonts.realize(request, face, (sx, sy)),
             args["text"],
             *origin,
             self._text_state.alignment,

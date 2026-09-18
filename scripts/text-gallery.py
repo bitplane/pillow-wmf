@@ -9,11 +9,12 @@ from PIL import Image, ImageChops
 from pillow_wmf import FontCollection, FontFace, Metafile, RasterContext, UnsupportedOperation, play
 
 
-def gallery(source, output, *, title="Real-font mismatches", missing_glyph="error"):
+def gallery(source, output, *, title="Real-font mismatches", missing_glyph="error", font_paths=(), fallbacks=None):
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
+    paths = [*sorted((source / "fonts").glob("*.ttf")), *font_paths]
     fonts = FontCollection(
-        (FontFace.from_path(path) for path in sorted((source / "fonts").glob("*.ttf"))), missing_glyph=missing_glyph
+        (FontFace.from_path(path) for path in paths), missing_glyph=missing_glyph, fallbacks=fallbacks
     )
     entries, blocked = [], []
     exact = 0
@@ -46,12 +47,6 @@ def gallery(source, output, *, title="Real-font mismatches", missing_glyph="erro
             note = "Default quality: RGB subpixel coverage; filtering and contrast remain approximate."
         else:
             note = "Monochrome: inspect ink shape and placement; differences are not automatically waived."
-        if wmf.stem == "encoding-missing":
-            note = (
-                "Policy difference, not a rasterizer comparison: Windows links missing letters to another font "
-                "and treats controls specially. Ours deliberately uses glyph zero of the supplied face. "
-                "Automatic linking and control-character layout are not implemented."
-            )
         entries.append(
             f"<section><h2>{escape(wmf.stem)} — {count} differing pixels</h2>"
             f"<p>{note}</p><div>{''.join(cells)}</div></section>"
@@ -66,8 +61,10 @@ figure{{margin:0}}img{{image-rendering:pixelated;width:calc(640px * var(--zoom, 
 figcaption{{padding:8px 0}}section{{margin:32px 0}}pre{{white-space:pre-wrap}}</style>
 <h1>{escape(title)}</h1><p>{summary}</p>
 <p>Windows left, ours middle, pink mismatches right. Exact cases are omitted.
-Both sides use identical font files. Unsupported cases are listed separately.</p>
+Primary fonts use identical files. Any extra fallback fonts are supplied locally and may differ
+from the Windows version. Unsupported cases are listed separately.</p>
 <p>Missing-glyph policy: {escape(missing_glyph)} (notdef uses the supplied face's glyph zero, not font linking).</p>
+<p>Explicit fallback chains: {escape(str(fallbacks or {}))}</p>
 <label>Pixel zoom <select onchange="document.body.style.setProperty('--zoom',this.value)">
 <option>1</option><option>2</option><option>4</option></select></label>
 {"".join(entries)}<h2>Blocked cases</h2><pre>{escape(chr(10).join(blocked) or "None")}</pre>"""
@@ -83,8 +80,23 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--title", default="Real-font mismatches")
     parser.add_argument("--missing-glyph", choices=("error", "notdef"), default="error")
+    parser.add_argument("--font", type=Path, action="append", default=[], help="Additional local font file")
+    parser.add_argument("--fallback", action="append", default=[], metavar="BASE=FAMILY", help="Append a fallback face")
     args = parser.parse_args()
-    gallery(args.source, args.output, title=args.title, missing_glyph=args.missing_glyph)
+    fallbacks = {}
+    for entry in args.fallback:
+        base, separator, family = entry.partition("=")
+        if not separator or not base or not family:
+            parser.error("Fallback must have the form BASE=FAMILY")
+        fallbacks.setdefault(base, []).append(family)
+    gallery(
+        args.source,
+        args.output,
+        title=args.title,
+        missing_glyph=args.missing_glyph,
+        font_paths=args.font,
+        fallbacks=fallbacks,
+    )
 
 
 if __name__ == "__main__":

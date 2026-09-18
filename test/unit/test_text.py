@@ -87,7 +87,7 @@ def test_unimplemented_realization_fails_before_painting_or_committing(dc, chang
     assert dc.calls == calls
 
 
-@pytest.mark.parametrize("text", [b"\x80", b"\0", b"\t", b"C"])
+@pytest.mark.parametrize("text", [b"\x80", b"\0", b"C"])
 def test_unsupported_encoding_and_missing_glyph_do_not_silently_replace(dc, text):
     before = dc.image.tobytes(), list(dc.calls)
     with pytest.raises(UnsupportedOperation):

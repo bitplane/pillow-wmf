@@ -139,8 +139,19 @@ See the [WMF text record contract](https://learn.microsoft.com/en-us/openspecs/w
 `FontCollection(..., aliases={"Requested family": "Supplied family"})` allows
 deliberate substitution while retaining exact weight/style selection.
 `missing_glyph="notdef"` opts into glyph zero of the selected face; the default
-`"error"` preserves missing-glyph diagnostics. Neither policy implements Windows
-font linking, registry substitution or host-font discovery.
+`"error"` preserves missing-glyph diagnostics.
+`fallbacks={"Base family": ("Fallback family",)}` supplies an ordered chain of
+faces for missing characters. Present base glyphs and base line metrics are
+preserved; fallback faces supply their own masks and advances. All faces must be
+supplied explicitly, with matching weight/style. This does not discover Windows
+registry links or host fonts.
+
+TextOut/ExtTextOut are not multiline formatters: tab, LF and CR shape to blank,
+zero-width glyphs. Their byte positions still consume explicit advance entries.
+This differs from TabbedTextOut/DrawText tab-stop or line-break processing.
+NUL and other control runs can use additional native fallback paths; their
+rendering is not yet reproduced. The explicit `.notdef` policy does not establish
+Windows parity for those runs.
 
 The named `text-encoding` probe checks native byte conversion, glyph indices
 and Western/Cyrillic/symbol WMF playback. Its controlled fonts are original test
