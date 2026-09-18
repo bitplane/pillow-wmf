@@ -17,6 +17,7 @@ from pillow_wmf.wmf.objects import Font
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--missing-only", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -49,7 +50,7 @@ def main():
         with TTFont(path) as font:
             tables[family] = {tag: font.getTableData(tag) for tag in ("head", "hmtx", "glyf", "cmap")}
     with private_fonts(paths):
-        for name, family, sample, encoding, recorder in cases():
+        for name, family, sample, encoding, recorder in cases(missing_only=args.missing_only):
             print(f"\n[{name}]", flush=True)
             if encoding == "symbol":
                 characters = "".join(chr(0xF000 | byte) for byte in sample)
@@ -60,6 +61,8 @@ def main():
             probe.observe(source, family=family, size=SIZE, sample=sample, tables=tables[family], characters=characters)
             (args.output / f"{name}.wmf").write_bytes(source)
             render_wmf(source, *SIZE).save(args.output / f"{name}.png")
+    if args.missing_only:
+        return
     # Native installed fonts are queried, never uploaded or silently replaced.
     for family in ("Symbol", "Wingdings"):
         for charset in (1, 2):

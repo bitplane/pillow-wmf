@@ -53,7 +53,7 @@ def font_bytes(*, symbol=False):
     return stream.getvalue()
 
 
-def cases():
+def cases(*, missing_only=False):
     profiles = (
         (
             "western",
@@ -76,6 +76,16 @@ def cases():
         ("symbols", SYMBOL_FAMILY, 2, b"AB \x80\xe9\xff", "symbol"),
         ("symbols-default", SYMBOL_FAMILY, 1, b"AB \x80\xe9\xff", "symbol"),
     )
+    if missing_only:
+        profiles = tuple(
+            (name, ENCODING_FAMILY, 0, sample, "cp1252")
+            for name, sample in (
+                ("missing", b"ACB\x81\0\t"),
+                ("controls-low", b"A\0B\x01A\x08B\tA"),
+                ("controls-lines", b"A\nB\x0bA\x0cB\rA"),
+                ("controls-high", b"A\x1fB\x7fA\x81B\x8dA"),
+            )
+        )
     for name, family, charset, sample, encoding in profiles:
         recorder = Recorder()
         recorder.set_window_extent(*SIZE)

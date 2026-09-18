@@ -20,6 +20,7 @@ on:
           - real-text
           - text-layout
           - text-encoding
+          - text-missing
           - layout
           - patblt
           - dib-brush
@@ -125,13 +126,13 @@ jobs:
           path: real-text-probe/
           retention-days: 7
       - name: Probe single-byte text encodings
-        if: inputs.probe == 'text-encoding'
+        if: inputs.probe == 'text-encoding' || inputs.probe == 'text-missing'
         shell: bash
         run: |
           mkdir -p text-encoding-probe
-          python scripts/probe-windows-encoding.py --output text-encoding-probe | tee text-encoding-probe/observations.txt
+          python scripts/probe-windows-encoding.py --output text-encoding-probe ${{ inputs.probe == 'text-missing' && '--missing-only' || '' }} | tee text-encoding-probe/observations.txt
       - name: Upload encoding observations
-        if: always() && inputs.probe == 'text-encoding'
+        if: always() && (inputs.probe == 'text-encoding' || inputs.probe == 'text-missing')
         uses: actions/upload-artifact@v4
         with:
           name: text-encoding-probe
