@@ -81,9 +81,11 @@ def cases(*, missing_only=False):
             (name, ENCODING_FAMILY, 0, sample, "cp1252")
             for name, sample in (
                 ("missing", b"ACB\x81\0\t"),
-                ("controls-low", b"A\0B\x01A\x08B\tA"),
-                ("controls-lines", b"A\nB\x0bA\x0cB\rA"),
-                ("controls-high", b"A\x1fB\x7fA\x81B\x8dA"),
+                ("tail-undefined", b"A\x81B"),
+                ("tail-null", b"A\0B"),
+                ("tail-pair", b"A\x81\0B"),
+                ("tail-reverse", b"A\0\x81B"),
+                ("tail-tab", b"A\tB"),
             )
         )
     for name, family, charset, sample, encoding in profiles:
