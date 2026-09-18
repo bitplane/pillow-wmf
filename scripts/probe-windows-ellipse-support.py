@@ -9,7 +9,7 @@ from windows_wmf_render import bind, check, reference_surface
 def probe_cubic_range():
     # Controls are expressed directly in 28.4 units. Native BEZIER32 accepts
     # a bounding-box span below 16384 on both axes; larger spans use BEZIER64.
-    for span in (16383, 16384, 16385, 65537):
+    for span in (16368, 16384, 16400, 65536):
         control = ((0, 0), (span, 731), (span // 3, 1199), (span - 37, 1777))
         for swap in (False, True):
             points_in = tuple((y, x) if swap else (x, y) for x, y in control)
@@ -33,6 +33,10 @@ def probe_cubic_range():
                     gdi.PolyBezier(dc, (wintypes.POINT * 4)(*(wintypes.POINT(*p) for p in points_in)), 4), "PolyBezier"
                 )
                 check(gdi.EndPath(dc), "EndPath")
+                stored = (wintypes.POINT * 4)()
+                stored_kinds = (ctypes.c_ubyte * 4)()
+                assert gdi.GetPath(dc, stored, stored_kinds, 4) == 4
+                points_in = tuple((p.x, p.y) for p in stored)
                 check(gdi.FlattenPath(dc), "FlattenPath")
                 count = gdi.GetPath(dc, None, None, 0)
                 if count < 0:
