@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from pillow_wmf import FontCollection, FontFace, RasterContext, UnsupportedOperation
-from pillow_wmf.text import decode_single_byte, layout_text
+from pillow_wmf.text import FontRun, decode_single_byte, layout_text
 from pillow_wmf.wmf.objects import Font
 
 FONTS = Path(__file__).resolve().parents[2] / "test/fonts"
@@ -131,3 +131,103 @@ def test_line_controls_are_blank_without_discarding_explicit_byte_advances(face,
     result = layout_text(run, b"A" + control + b"B", 12, 40, 25, advances, opaque=False, max_pixels=10000)
     assert result.glyphs[1][2].pixels == b""
     assert result.position == expected
+
+
+@pytest.fixture
+def control_fonts(face):
+    """Distinguish shaping fallback, linked glyphs and default glyphs."""
+    primary = face.realize(REQUEST, (1, 1))
+    fallback = replace(primary, cmap={32: 1}, missing_glyph="notdef", _glyphs={})
+    null_face = replace(primary, cmap={0: 1}, _glyphs={})
+    control_face = replace(primary, cmap={1: 3, 0x81: 2, 0x8D: 2}, _glyphs={})
+    return FontRun(primary, (fallback, null_face, control_face))
+
+
+@pytest.mark.parametrize(
+    "text,indices",
+    [
+        ("A\x81B", (2, 0, 3)),  # Shaped C1 is blank, not the linked font's visible glyph.
+        ("A\0B", (2, 1, 3)),
+        ("A\x81\0B", (2, 2, 1, 3)),
+        ("A\0\x81B", (2, 1, 0, 3)),
+        ("A\x81\0\x81\x8dB", (2, 2, 1, 0, 0, 3)),
+        ("A\x81\x01B\x01\x81A", (2, 2, 3, 3, 3, 0, 2)),
+    ],
+)
+def test_control_run_linking_depends_on_remaining_run_not_adjacent_bytes(control_fonts, text, indices):
+    glyphs = control_fonts.shape(text, 10000)
+    assert tuple(glyph.index for glyph in glyphs) == indices
+    if text == "A\x81B":
+        assert (glyphs[1].pixels, glyphs[1].advance) == (b"", 0)
+    else:
+        for character, glyph in zip(text, glyphs, strict=True):
+            if character == "\0":
+                assert not any(glyph.pixels)
+                assert glyph.advance > 0
+            elif character in "\x81\x8d":
+                assert glyph.pixels
+
+
+@pytest.mark.parametrize("separator", "\t\n\r\x1c\x1d\x1e\x1f")
+def test_separators_keep_control_fallback_in_its_own_run(control_fonts, separator):
+    glyphs = control_fonts.shape("A\x81" + separator + "\0B", 10000)
+    assert [(glyph.pixels, glyph.advance) for glyph in glyphs[1:3]] == [(b"", 0), (b"", 0)]
+    assert glyphs[3].index == 1
+
+
+def test_controls_covered_by_primary_do_not_trigger_raw_fallback(control_fonts):
+    primary = replace(control_fonts.primary, cmap={0: 1, 0x81: 2}, _glyphs={})
+    run = replace(control_fonts, primary=primary)
+    null, undefined = run.shape("\0\x81", 10000)
+    assert null.index == 1
+    assert (undefined.pixels, undefined.advance) == (b"", 0)
+
+
+def test_raw_control_fallback_does_not_implicitly_enable_notdef(control_fonts):
+    strict = replace(control_fonts.fallbacks[0], missing_glyph="error")
+    run = replace(control_fonts, fallbacks=(strict, *control_fonts.fallbacks[1:]))
+    with pytest.raises(UnsupportedOperation, match="U\\+0081"):
+        run.shape("\0\x81", 10000)
+
+
+def test_explicit_spacing_keeps_one_advance_per_control_byte(control_fonts):
+    result = layout_text(
+        control_fonts, b"A\x81\0\x81B", 12, 40, 25, (21, 22, 23, 24, 25), opaque=False, max_pixels=10000
+    )
+    assert result.position == (127, 40)
+    assert tuple(x - glyph.bearing[0] for x, _, glyph in result.glyphs) == (12, 33, 55, 78, 102)
+
+
+def test_linking_skips_zero_advance_candidates_and_retries_default_character(control_fonts):
+    primary, fallback, null_face, control_face = control_fonts.primary, *control_fonts.fallbacks
+    zero_advance = replace(control_face, design_advances={**control_face.design_advances, 2: 0}, _glyphs={})
+    replacement = replace(primary, cmap={0x30FB: 3}, _glyphs={})
+    run = FontRun(primary, (fallback, zero_advance, null_face, replacement))
+    undefined, null, trailing = run.shape("\x81\0\x81", 10000)
+    assert undefined is replacement.glyph("\u30fb", 10000)
+    assert null is null_face.glyph("\0", 10000)
+    assert trailing is fallback.glyph("\x81", 10000)
+    assert zero_advance.glyph("\x81", 10000).advance == 0
+
+
+def test_primary_zero_advance_glyph_is_not_replaced(control_fonts):
+    primary = replace(
+        control_fonts.primary,
+        design_advances={**control_fonts.primary.design_advances, 2: 0},
+        _glyphs={},
+    )
+    run = replace(control_fonts, primary=primary)
+    assert run.shape("A", 10000)[0] is primary.glyph("A", 10000)
+    assert run.shape("A", 10000)[0].advance == 0
+
+
+def test_raw_replacement_tries_base_face_before_links(control_fonts):
+    fallback = replace(control_fonts.fallbacks[0], cmap={0x30FB: 3}, _glyphs={})
+    run = FontRun(control_fonts.primary, (fallback,))
+    assert run.shape("\x81\0", 10000) == (fallback.glyph("\u30fb", 10000),) * 2
+
+
+def test_del_default_glyph_does_not_force_neighbouring_controls_to_raw_output(control_fonts):
+    delete, first, second = control_fonts.shape("\x7f\x81\x8d", 10000)
+    assert delete is control_fonts.fallbacks[0].glyph("\x7f", 10000)
+    assert [(g.pixels, g.advance) for g in (first, second)] == [(b"", 0), (b"", 0)]

@@ -149,9 +149,19 @@ registry links or host fonts.
 TextOut/ExtTextOut are not multiline formatters: tab, LF and CR shape to blank,
 zero-width glyphs. Their byte positions still consume explicit advance entries.
 This differs from TabbedTextOut/DrawText tab-stop or line-break processing.
-NUL and other control runs can use additional native fallback paths; their
-rendering is not yet reproduced. The explicit `.notdef` policy does not establish
-Windows parity for those runs.
+
+Single-byte controls are shaped as runs. A run containing a missing nonblank
+control (other than DEL) falls back to raw character output through the first
+supplied fallback face and its remaining links. This can make an otherwise
+invisible C1 control visible. Separators end runs, so this effect does not cross
+tabs or line breaks.
+Raw linking skips zero-advance candidates and retries U+30FB (the standard GDI
+link replacement character) if no linked face supplies the character. A suffix
+consisting entirely of C1 controls bypasses linking and uses the raw face's
+missing-glyph policy. Thus embedded NULs are neither string terminators nor
+automatically zero-width: their width comes from the chosen font.
+Matching native control output requires the corresponding fallback faces and
+metrics. The explicit `.notdef` policy alone does not establish Windows parity.
 
 The named `text-encoding` probe checks native byte conversion, glyph indices
 and Western/Cyrillic/symbol WMF playback. Its controlled fonts are original test

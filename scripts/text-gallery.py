@@ -4,9 +4,20 @@ import argparse
 from html import escape
 from pathlib import Path
 
+from fontTools.ttLib import TTCollection
 from PIL import Image, ImageChops
 
 from pillow_wmf import FontCollection, FontFace, Metafile, RasterContext, UnsupportedOperation, play
+
+
+def load_faces(path):
+    """Expose each named face in a supplied TrueType collection."""
+    path = Path(path)
+    if path.suffix.lower() == ".ttc":
+        with TTCollection(path, lazy=True) as collection:
+            count = len(collection.fonts)
+        return [FontFace.from_path(path, index=index) for index in range(count)]
+    return [FontFace.from_path(path)]
 
 
 def gallery(source, output, *, title="Real-font mismatches", missing_glyph="error", font_paths=(), fallbacks=None):
@@ -14,7 +25,7 @@ def gallery(source, output, *, title="Real-font mismatches", missing_glyph="erro
     output.mkdir(parents=True, exist_ok=True)
     paths = [*sorted((source / "fonts").glob("*.ttf")), *font_paths]
     fonts = FontCollection(
-        (FontFace.from_path(path) for path in paths), missing_glyph=missing_glyph, fallbacks=fallbacks
+        (face for path in paths for face in load_faces(path)), missing_glyph=missing_glyph, fallbacks=fallbacks
     )
     entries, blocked = [], []
     exact = 0

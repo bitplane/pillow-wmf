@@ -7,6 +7,7 @@ a WMF. There is no host-font discovery or registry-based font substitution.
 from dataclasses import dataclass, field
 from fractions import Fraction
 from io import BytesIO
+from itertools import groupby
 from math import ceil
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from fontTools.ttLib import TTFont
 from .gdi import UnsupportedOperation
 from .mapping import rounded
 from .numeric import float32
+
+C1_CONTROLS = "".join(map(chr, range(0x80, 0xA0)))
 
 
 def decode_single_byte(data, codepage):
@@ -52,6 +55,9 @@ class RasterFont:
     symbol: bool = False
     missing_glyph: str = "error"
     _glyphs: dict[str, Glyph] = field(default_factory=dict)
+
+    def shape(self, characters, max_pixels):
+        return tuple(self.glyph(character, max_pixels) for character in characters)
 
     def glyph(self, character, max_pixels):
         codepoint = ord(character)
@@ -219,7 +225,7 @@ class FontCollection:
             fallback = self._faces[key]
             if fallback.symbol:
                 raise UnsupportedOperation("A symbol face cannot be a Unicode fallback")
-            linked.append(fallback.realize(request, scale))
+            linked.append(fallback.realize(request, scale, missing_glyph=self.missing_glyph))
         return FontRun(primary, tuple(linked))
 
     def resolve(self, request):
@@ -269,16 +275,79 @@ class FontRun:
         return self.primary.break_character
 
     def glyph(self, character, max_pixels):
+        return self.shape(character, max_pixels)[0]
+
+    def shape(self, characters, max_pixels):
+        """Shape SBCS control runs before choosing masks and advances.
+
+        A control run containing an unshapable character falls back to raw
+        character output. Its formerly invisible controls then participate in
+        font linking too. Separators terminate runs; they are not tab stops or
+        multiline layout commands.
+        """
+        if self.primary.symbol:
+            return self.primary.shape(characters, max_pixels)
+        glyphs = []
+        for kind, group in groupby(characters, key=_text_run_kind):
+            run = "".join(group)
+            if kind == "text":
+                glyphs.extend(self._linked_glyph(c, max_pixels) for c in run)
+                continue
+            missing = [c for c in run if not _blank_control(c) and not self.primary.cmap.get(ord(c))]
+            fallback = FontRun(self.fallbacks[0], self.fallbacks[1:]) if missing and self.fallbacks else self
+            # Uniscribe accepts DEL's default glyph; it does not make an
+            # otherwise shapeable control run switch to raw character output.
+            if any(c != "\x7f" for c in missing):
+                # GDI suppresses linking for a suffix made entirely of C1
+                # controls, not for a C1 character preceding another class.
+                link_end = len(run.rstrip(C1_CONTROLS))
+                glyphs.extend(
+                    fallback._linked_glyph(c, max_pixels, replacement="\u30fb")
+                    if i < link_end
+                    else fallback.primary.glyph(c, max_pixels)
+                    for i, c in enumerate(run)
+                )
+            else:
+                glyphs.extend(
+                    Glyph((0, 0), (0, 0), b"", 0) if _blank_control(c) else fallback.primary.glyph(c, max_pixels)
+                    for c in run
+                )
+        return tuple(glyphs)
+
+    def _linked_glyph(self, character, max_pixels, *, replacement=None):
         codepoint = ord(character)
-        if not self.primary.symbol and character in "\t\n\r":
-            # TextOut is not a multiline/tab-stop formatter. These controls
-            # shape to zero-width blanks; explicit byte advances still apply.
-            return Glyph((0, 0), (0, 0), b"", 0)
-        if not self.primary.symbol and codepoint >= 32 and not self.primary.cmap.get(codepoint):
-            for fallback in self.fallbacks:
+        if self.primary.cmap.get(codepoint):
+            return self.primary.glyph(character, max_pixels)
+        for fallback in self.fallbacks:
+            if fallback.cmap.get(codepoint):
+                glyph = fallback.glyph(character, max_pixels)
+                # GDI's linked-font lookup rejects zero-advance candidates,
+                # even when their cmap contains the requested character.
+                if glyph.advance:
+                    return glyph
+        if replacement is not None:
+            # Raw GDI output retries the linking chain with the default link
+            # character (Katakana middle dot) before using the base .notdef.
+            codepoint = ord(replacement)
+            for fallback in (self.primary, *self.fallbacks):
                 if fallback.cmap.get(codepoint):
-                    return fallback.glyph(character, max_pixels)
+                    glyph = fallback.glyph(replacement, max_pixels)
+                    if glyph.advance:
+                        return glyph
         return self.primary.glyph(character, max_pixels)
+
+
+def _text_run_kind(character):
+    codepoint = ord(character)
+    if character in "\t\n\v\r\x1c\x1d\x1e\x1f\x85":
+        return character
+    if (codepoint < 32 and character != "\f") or 0x7F <= codepoint <= 0x9F:
+        return "control"
+    return "text"
+
+
+def _blank_control(character):
+    return character in "\t\n\r\x1c\x1d\x1e\x1f" or 0x80 <= ord(character) <= 0x9F
 
 
 @dataclass(frozen=True)
@@ -313,7 +382,7 @@ def layout_text(
         raise UnsupportedOperation("Text alignment")
     if advances and len(advances) != len(text):
         raise ValueError("Text advance count must match the byte count")
-    glyphs = tuple(font.glyph(character, max_pixels) for character in characters)
+    glyphs = font.shape(characters, max_pixels)
     offsets = [0]
     mapped_offsets = [0]
     total = 0
