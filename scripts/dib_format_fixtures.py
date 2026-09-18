@@ -119,6 +119,51 @@ def rle_clip_cases():
                     recorder.set_dib_to_device(x, y, 9, 4, source_x, 0, 0, 4, 0, source)
                 recorder.restore_dc(-1)
         yield f"dib-rle4-clip-phase-{operation}", recorder
+    yield from rle_transfer_cases()
+
+
+def rle_transfer_cases():
+    """Exercise direct decoding and bitmap realization with the same stream."""
+    colors = ((15, 31, 63), (223, 47, 79), (37, 211, 101))
+    header = bytearray(encode_dib(12, 4, (0,) * 48, depth=4, colors=colors, rle=True).data[:52])
+    encoded = bytes((9, 0x12, 0, 0, 0, 9, 0x12, 0x12, 0x12, 0x12, 0x10, 0, 0, 0)) * 2 + bytes((0, 1))
+    pack_into("<I", header, 20, len(encoded))
+    source = BitmapData("dib", bytes(header) + encoded)
+    for operation in ("dib_bit_blt", "dib_stretch_blt", "stretch_dib", "set_dib_to_device"):
+        recorder = Recorder()
+        for row, (sx, sy, mode, rop) in enumerate(
+            (
+                (0, 0, 3, 0xCC0020),
+                (1, 0, 3, 0xCC0020),
+                (0, 1, 3, 0xCC0020),
+                (0, 0, 4, 0xCC0020),
+                (0, 0, 3, 0x660046),
+                (0, 0, 1, 0xCC0020),
+            )
+        ):
+            for column in range(4):
+                x, y = 4 + column * 30, 4 + row * 18
+                recorder.save_dc()
+                recorder.set_stretch_mode(mode)
+                if column == 1:
+                    recorder.intersect_clip_rect(x + 1, y, x + 11, y + 4)
+                    recorder.exclude_clip_rect(x + 4, y, x + 5, y + 4)
+                elif column >= 2:
+                    recorder.set_map_mode(8)
+                    recorder.set_window_extent(128, 128)
+                    recorder.set_viewport_extent(256 if column == 2 else -128, 128)
+                    recorder.set_viewport_origin(-x if column == 2 else x * 2 + 12, 0)
+                    recorder.intersect_clip_rect(x + 1, y, x + 11, y + 4)
+                if operation == "dib_bit_blt":
+                    recorder.dib_bit_blt(x, y, 12, 4, sx, sy, rop, source)
+                elif operation == "dib_stretch_blt":
+                    recorder.dib_stretch_blt(x, y, 12, 4, sx, sy, 12, 4, rop, source)
+                elif operation == "stretch_dib":
+                    recorder.stretch_dib(x, y, 12, 4, sx, sy, 12, 4, rop, 0, source)
+                else:
+                    recorder.set_dib_to_device(x, y, 12, 4, sx, sy, 0, 4, 0, source)
+                recorder.restore_dc(-1)
+        yield f"dib-rle4-transfer-boundaries-{operation}", recorder
 
 
 def conversion_cases():
