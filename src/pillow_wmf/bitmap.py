@@ -314,11 +314,9 @@ def field_color(value, mask, *, replicate=True):
         return field >> (bits - 8)
     result = field << (8 - bits)
     if replicate:
-        # Repeat the most-significant source bits to fill an eight-bit channel.
-        filled = bits
-        while filled < 8:
-            result |= result >> filled
-            filled *= 2
+        # GDI copies the field once into the low bits. It does not keep
+        # repeating very narrow fields until the entire byte is filled.
+        result |= result >> bits
     return result
 
 

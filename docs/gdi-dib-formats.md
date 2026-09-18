@@ -32,8 +32,11 @@ sequence of independently addressable compressed scanlines.
 
 ## Conversion is a consumer contract
 
-Ordinary GDI transfers expand a short channel by repeating its bits. A five-bit
-value becomes `(v << 3) | (v >> 2)`; wider-than-eight-bit fields discard low bits.
+Ordinary GDI transfers left-align a short channel and copy its bits once into
+the remaining low bits. A five-bit value becomes `(v << 3) | (v >> 2)`.
+Channels narrower than four bits therefore retain trailing zeroes: fully set
+one-, two- and three-bit fields become 192, 240 and 252, not 255.
+Wider-than-eight-bit fields discard low bits.
 HALFTONE's source loader instead shifts short fields into the high bits and
 leaves the low bits zero. Neither path scales by `255 / maximum`.
 The distinction also applies to equal-size transfers while HALFTONE is selected.

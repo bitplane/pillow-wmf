@@ -55,12 +55,17 @@ def test_short_indexed_table_rejects_out_of_range_pixels():
 
 
 @pytest.mark.parametrize("bits", (1, 2, 3, 4, 5, 6, 7, 8, 10))
-def test_bitfields_repeat_source_bits_not_linear_scale(bits):
+def test_bitfields_duplicate_source_bits_once_not_linear_scale(bits):
     mask = (1 << bits) - 1
     for value in range(1 << bits):
-        repeated = (format(value, f"0{bits}b") * 8)[:8]
+        repeated = (format(value, f"0{bits}b") * 2)[:8].ljust(8, "0")
         assert field_color(value << 3, mask << 3) == int(repeated, 2)
         assert field_color(value << 3, mask << 3, replicate=False) == (value << 8) >> bits
+
+
+@pytest.mark.parametrize("mask,expected", ((1, 192), (3, 240), (7, 252), (15, 255), (31, 255), (63, 255)))
+def test_bitfield_maximum_matches_native_channel_ramps(mask, expected):
+    assert field_color(mask, mask) == expected
 
 
 @pytest.mark.parametrize("masks", ((0, 0x7E0, 31), (0xF800, 0x7E0, 0x7E0), (0xF801, 0x7E0, 30), (0x10000, 0x7E0, 31)))
