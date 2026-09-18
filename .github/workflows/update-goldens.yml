@@ -15,6 +15,7 @@ on:
           - dib-brush
           - paths
           - strokes
+          - pen-support
           - arcs
           - edge-cases
           - regions
@@ -98,6 +99,9 @@ jobs:
       - name: Verify native stroke matrix
         if: inputs.probe == 'strokes' || inputs.probe == 'all'
         run: python scripts/probe-windows-strokes.py
+      - name: Inspect fractional pen support
+        if: inputs.probe == 'pen-support'
+        run: python scripts/probe-windows-pen-support.py
       - name: Probe native Arc paths
         if: inputs.probe == 'arcs' || inputs.probe == 'all'
         run: python scripts/probe-windows-arcs.py
