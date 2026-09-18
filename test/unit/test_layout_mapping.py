@@ -10,6 +10,20 @@ from pillow_wmf.mapping import Mapping
 from pillow_wmf.stroke import frame_footprint
 
 
+@pytest.mark.parametrize("layout,expected", [(0, [0, 0, 1, 40, 81]), (1, [127, 127, 126, 87, 46])])
+def test_native_translation_precision(layout, expected):
+    # GetPath, Windows run 35329745361: scale, origin product and addition
+    # are rounded separately before the translation becomes 28.4.
+    mapping = Mapping(
+        window_extent=(6316, 128),
+        viewport_extent=(511, 128),
+        window_origin=(21707, 0),
+        viewport_origin=(138, 0),
+        layout=layout,
+    )
+    assert [mapping.device_point(x, 32)[0] for x in (20006, 20007, 20008, 20500, 21000)] == expected
+
+
 @pytest.mark.parametrize("coordinate,expected", [(19254, 90), (19255, 91), (19256, 91)])
 def test_driver_single_precision_boundary(coordinate, expected):
     # his99012's brown PolyPolygon has a vertex at y=19255. The native

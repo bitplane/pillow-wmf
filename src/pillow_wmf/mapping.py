@@ -71,14 +71,18 @@ class Mapping:
     def _axes(self):
         for i in range(2):
             viewport, window = self.viewport_extent[i], self.window_extent[i]
-            origin = self.viewport_origin[i] - self.window_origin[i] * viewport / window
+            window_origin, viewport_origin = self.window_origin[i], self.viewport_origin[i]
             if i == 0 and self.rtl:
                 # GDI's MirrorWindowOrg converts the last device pixel to a
                 # logical integer with signed truncation before mapping back.
                 # At 3/2 scale the reflection origin is 126, not 127.
                 last = scaled(self.surface_width - 1, window, viewport)
-                origin = last * viewport / window - origin
+                window_origin += last
                 viewport = -viewport
+                viewport_origin = -viewport_origin
+            # vUpdateWtoDXform realizes each FLOAT operation separately.
+            # Rounding only the completed translation moves boundary pixels.
+            origin = single(single(-window_origin * single(viewport / window)) + viewport_origin)
             yield viewport, window, origin
 
     def point(self, x: int, y: int) -> tuple[int, int]:

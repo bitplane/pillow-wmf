@@ -5,6 +5,16 @@ of new Windows measurements. Microsoft documents the contract; Wine supplies
 implementation clues and useful test cases. Our Windows runner remains the
 pixel oracle. No Wine implementation code is copied into this project.
 
+## Translation precision (2026-09-18)
+
+`DC::vUpdateWtoDXform` in Windows 26100.9444 (`win32kbase`, RVA
+`0xb7e70`) rounds the scale division, window-origin product, and viewport-origin
+addition separately to binary32. RTL first adjusts the logical window origin;
+reflecting an already-rounded translation is not equivalent.
+[Native run 35329745361](https://github.com/bitplane/pillow-wmf/actions/runs/35329745361)
+confirms the boundary in `mapping-translation-precision-*`: logical X=20007
+maps to device X=0, not 1. The same transform feeds drawing and clip edges.
+
 ## Decision
 
 Build a small, independently testable mapping component inside the GDI context.
