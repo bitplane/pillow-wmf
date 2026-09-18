@@ -69,6 +69,8 @@ def main():
             )
             (args.output / f"{name}.wmf").write_bytes(source)
             render_wmf(source, *SIZE).save(args.output / f"{name}.png")
+            if args.missing_only:
+                inspect_native_text(source)
     if args.missing_only:
         return
     # Native installed fonts are queried, never uploaded or silently replaced.
@@ -85,6 +87,47 @@ def main():
             probe.observe(
                 recorder.to_bytes(), family=family, sample=sample, characters="".join(chr(0xF000 | b) for b in sample)
             )
+
+
+def inspect_native_text(source):
+    """Capture GDI's downstream font/text records to identify fallback faces."""
+    from windows_wmf_render import reference_surface
+
+    with reference_surface(*SIZE) as (gdi, dc, _):
+        ptr = ctypes.c_void_p
+        create = bind(gdi, "CreateEnhMetaFileW", ptr, ptr, ptr, ptr, ptr)
+        close = bind(gdi, "CloseEnhMetaFile", ptr, ptr)
+        bits = bind(gdi, "SetMetaFileBitsEx", ptr, ctypes.c_uint, ptr)
+        play = bind(gdi, "PlayMetaFile", ctypes.c_int, ptr, ptr)
+        delete = bind(gdi, "DeleteMetaFile", ctypes.c_int, ptr)
+        delete_enh = bind(gdi, "DeleteEnhMetaFile", ctypes.c_int, ptr)
+        get_bits = bind(gdi, "GetEnhMetaFileBits", ctypes.c_uint, ptr, ctypes.c_uint, ptr)
+        recording = check(create(dc, None, None, None), "CreateEnhMetaFileW")
+        metafile = check(bits(len(source), source), "SetMetaFileBitsEx")
+        try:
+            check(play(recording, metafile), "PlayMetaFile")
+        finally:
+            delete(metafile)
+            enhanced = check(close(recording), "CloseEnhMetaFile")
+        try:
+            size = get_bits(enhanced, 0, None)
+            data = ctypes.create_string_buffer(size)
+            check(get_bits(enhanced, size, data), "GetEnhMetaFileBits")
+            import struct
+
+            offset = 0
+            while offset < size:
+                kind, length = struct.unpack_from("<II", data.raw, offset)
+                record = data.raw[offset : offset + length]
+                if kind == 82:
+                    print(f"native font={record[40:104].decode('utf-16-le').split(chr(0))[0]!r}", flush=True)
+                elif kind == 84:
+                    count, string_at, flags = struct.unpack_from("<III", record, 44)
+                    values = struct.unpack_from(f"<{count}H", record, string_at)
+                    print(f"native text flags={flags:#x} values={values}", flush=True)
+                offset += length
+        finally:
+            delete_enh(enhanced)
 
 
 if __name__ == "__main__":
