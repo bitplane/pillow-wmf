@@ -53,8 +53,10 @@ GDI uses vertical scale for the font's natural proportions. An explicit width
 requests average character width, transformed on the horizontal axis.
 
 Text spacing retains fractional remainders until placement. Explicit advances
-replace natural widths and justification but retain character extra. Break
-character selection comes from native font metrics rather than assuming every
+replace natural widths and justification but retain character extra. Placement
+rounds accumulated device advances to nearest-even before the separate
+logical-coordinate conversion. Break-character selection comes from native
+font metrics rather than assuming every
 font justifies ASCII spaces. Opaque bounds cover protruding glyphs as well as
 the run advance. Text-updated current positions retain sublogical precision so
 a subsequent line starts at the same device position.

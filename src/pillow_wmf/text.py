@@ -283,7 +283,10 @@ def layout_text(
             total += glyph.advance * 65536 + int(extra * scale * 65536)
             if ord(characters[index]) == getattr(font, "break_character", 32):
                 total += break_step
-            mapped_offsets.append(rounded(Fraction(total, 65536) / scale) * scale)
+            # The accumulated device advance uses nearest-even ties before
+            # conversion to logical coordinates, whose rounding is distinct.
+            device_offset = round(Fraction(total, 65536))
+            mapped_offsets.append(rounded(device_offset / scale) * scale)
         offsets.append(rounded(mapped_offsets[-1]))
     run_width = total * scale if advances else rounded((total // 65536) / scale) * scale
     width = rounded(run_width)

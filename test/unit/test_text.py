@@ -170,6 +170,16 @@ def test_explicit_signed_advances_override_justification_but_keep_character_extr
     assert result.position == (32, 30)
 
 
+@pytest.mark.parametrize(
+    "text,scale,justification,last_x", [(b"A B", 1, (2, 9), 13), (b"AB B", 1, (2, 9), 19), (b"AB", 2, (0, 0), 5)]
+)
+def test_device_advance_ties_round_even_before_logical_conversion(text, scale, justification, last_x):
+    result = layout_text(
+        MetricFont(), text, 0, 30, 24, (), opaque=False, max_pixels=100, scale=scale, justification=justification
+    )
+    assert result.glyphs[-1][0] == last_x
+
+
 def test_default_quality_is_rgb_coverage_with_independent_cache(face):
     mono = face.realize(REQUEST, (1, 1)).glyph("A", 10000)
     rgb = face.realize(replace(REQUEST, quality=0), (1, 1)).glyph("A", 10000)
