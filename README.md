@@ -28,3 +28,4 @@ down for forks as well as the main repository.
 - [Complete record inventory](docs/wmf-record-inventory.md)
 - [Stroke algorithms and native validation](docs/gdi-strokes.md)
 - [ROP2 painting and native validation](docs/gdi-rop2.md)
+- [Proposed text implementation and probe plan](docs/gdi-text.md)

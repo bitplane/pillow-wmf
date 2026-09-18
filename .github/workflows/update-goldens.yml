@@ -16,6 +16,7 @@ on:
           - none
           - mapping
           - precision
+          - text
           - layout
           - patblt
           - dib-brush
@@ -95,6 +96,16 @@ jobs:
       - name: Inspect binary-review arithmetic boundaries
         if: inputs.probe == 'precision'
         run: python scripts/probe-windows-precision.py
+      - name: Measure controlled-font text playback
+        if: inputs.probe == 'text'
+        run: python scripts/probe-windows-text.py --output text-probe
+      - name: Upload controlled-font observations
+        if: inputs.probe == 'text'
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-probe
+          path: text-probe/
+          retention-days: 7
       - name: Verify native PatBlt
         if: inputs.probe == 'patblt' || inputs.probe == 'all'
         run: python scripts/probe-windows-patblt.py

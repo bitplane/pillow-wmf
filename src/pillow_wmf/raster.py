@@ -39,6 +39,7 @@ from .stroke import (
     widen_segment,
 )
 from .trace import TraceContext
+from .wmf.objects import Font
 
 
 def rgb(colorref: int) -> tuple[int, int, int]:
@@ -88,6 +89,7 @@ class TextState:
     character_extra: int = 0
     justification: tuple[int, int] = (0, 0)
     mapper_flags: int = 0
+    font: Font | None = None  # None denotes the device's unresolved default font.
 
 
 @dataclass(frozen=True)
@@ -137,7 +139,7 @@ class RasterContext(TraceContext):
             raise ValueError("Bitmap pixel limit must be nonnegative")
         self.max_bitmap_pixels = max_bitmap_pixels
         self.image = Image.new("RGB", (width, height), background)
-        self._objects: dict[Handle, Pen | Brush | RegionMask | LogicalPalette | None] = {}
+        self._objects: dict[Handle, Pen | Brush | Font | RegionMask | LogicalPalette | None] = {}
         self._palette = LogicalPalette.default()
         self._pen = Pen((0, 0, 0), width=0)
         self._brush = Brush((255, 255, 255))
@@ -261,8 +263,10 @@ class RasterContext(TraceContext):
                 pattern = None if layout.top_down else pattern.monochrome()
         elif name == "set_dib_to_device":
             transfer = self._prepare_device_transfer(a)
+        elif name == "create_font":
+            a["font"].to_bytes()
         elif name == "select_object":
-            if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region"}:
+            if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region", "font"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
         elif name == "create_region":
 
@@ -395,6 +399,8 @@ class RasterContext(TraceContext):
             self._objects[result] = Pen(logical_color(a["color"]), a["width"], style)
         elif name == "create_brush":
             self._objects[result] = Brush(logical_color(a["color"]), a["style"], a["hatch"])
+        elif name == "create_font":
+            self._objects[result] = a["font"]
         elif name == "create_pattern_brush":
             self._objects[result] = (
                 Brush((0, 0, 0), style=3, pattern=pattern, monochrome=layout.depth == 1, realizable=pattern is not None)
@@ -415,6 +421,8 @@ class RasterContext(TraceContext):
             obj = self._objects[a["handle"]] if a["handle"] is not None else None
             if isinstance(obj, Pen):
                 self._pen = obj
+            elif isinstance(obj, Font):
+                self._text_state = replace(self._text_state, font=obj)
             elif isinstance(obj, RegionMask):
                 self._clip = ClipRegion(mask=self._clip_mask(obj))
             elif obj is None:

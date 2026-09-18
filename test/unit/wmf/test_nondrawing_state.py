@@ -70,14 +70,51 @@ def test_nested_saves_keep_independent_text_state():
     assert context._text_state == original
 
 
-@pytest.mark.parametrize("operation", ["text_out", "ext_text_out", "create_font"])
-def test_text_setup_does_not_enable_font_operations(operation):
+@pytest.mark.parametrize("operation", ["text_out", "ext_text_out"])
+def test_font_selection_does_not_enable_text_drawing(operation):
     context = RasterContext(8, 8)
     context.set_text_alignment(6)
+    context.select_object(context.create_font(Font(height=-12)))
     before = list(context.calls)
     with pytest.raises(UnsupportedOperation, match=operation):
-        if operation == "create_font":
-            context.create_font(Font())
-        else:
-            getattr(context, operation)(1, 1, b"text")
+        getattr(context, operation)(1, 1, b"text")
     assert context.calls == before
+
+
+def test_logical_fonts_are_selected_lazily_and_saved_independently_of_brushes():
+    context = RasterContext(8, 8)
+    brush = context._brush
+    default = context.save_dc()
+    requested = Font(height=-13, charset=204, face_name=b"Not installed")
+    first = context.create_font(requested)
+    assert context._text_state.font is None  # Creation does not select or resolve.
+    context.select_object(first)
+    selected = context.save_dc()
+    context.select_object(context.create_font(Font(height=20)))
+    context.restore_dc(selected)
+    assert context._text_state.font is requested
+    assert context._brush is brush
+    context.restore_dc(default)
+    assert context._text_state.font is None
+
+
+def test_font_creation_validation_does_not_allocate_a_handle():
+    context = RasterContext(8, 8)
+    with pytest.raises(ValueError):
+        context.create_font(Font(face_name=b"x" * 33))
+    assert not context.calls
+    assert not context._objects
+    assert context.create_font(Font()).serial == 1
+
+
+def test_font_only_metafile_does_not_block_non_text_drawing():
+    recorder = Recorder()
+    handle = recorder.create_font(Font(face_name=b"Unavailable".ljust(32, b"\0")))
+    recorder.select_object(handle)
+    recorder.set_pixel(2, 3, 0xFF)
+    recorder.delete_object(handle)
+    context = RasterContext(8, 8)
+    assert play(Metafile.from_bytes(recorder.to_bytes()), context, strict=True) == ()
+    assert context.image.getpixel((2, 3)) == (255, 0, 0)
+    with pytest.raises(UnsupportedOperation):
+        context.text_out(0, 0, b"still unsupported")

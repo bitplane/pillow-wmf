@@ -28,13 +28,12 @@
   forks may pay for the same workflows. Do not use repeated broad CI runs as a
   substitute for local investigation.
 
-# Pre-font milestone
+# Font work
 
-- Font design and implementation remain deferred. Exact matches in the current
-  128×128 corpus are not sufficient to start that phase.
-- After resolving current non-font discrepancies, expand the corpora and compare
-  native references at at least one additional output size. Fix those divergences
-  before the user evaluates confidence and explicitly approves font design.
+- Keep non-font compatibility comparisons exact while developing text support.
+- Use identical controlled font bytes locally and on the native oracle. Verify
+  the selected native face; do not accept unnoticed font substitution as evidence
+  about glyph rasterization. Separate layout/state errors from mask differences.
 - Report font-blocked files separately; do not count them as pixel-perfect or
   assume their non-font operations have been validated.
 

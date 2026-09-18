@@ -141,9 +141,9 @@ index. References to those unavailable objects are reported and skipped; invalid
 or deleted file references raise `PlaybackError`.
 
 The RGB raster backend retains text alignment, character spacing, justification
-requests and mapper flags in saved DC state. This is bookkeeping only: font
-creation and both text-output calls still raise. Text layout, glyph metrics and
-justification realization remain deferred.
+requests, mapper flags and selected logical fonts in saved DC state. Font
+creation does not resolve a physical face; both text-output calls still raise.
+Text layout, glyph metrics and justification realization remain deferred.
 
 Pen creation follows `CreatePenIndirect`/`CreatePen`, not `ExtCreatePen`:
 styles outside 0–6 realize as solid pens, rather than enabling extended cap/join
