@@ -54,12 +54,15 @@ class PenGeometry:
 
 def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeometry:
     """Realize CreatePen width in device space, including the hairline rule."""
-    device_width = floor(width * abs(scale_x) + 0.5)
-    cosmetic = not geometric and device_width <= 1
     diameters = tuple(floor(width * abs(scale) * 16 + 0.5) for scale in (scale_x, scale_y))
+    cosmetic = not geometric and diameters[0] < 24
     circular = abs(scale_x) == abs(scale_y) if geometric else diameters[0] == diameters[1]
-    if cosmetic or (circular and device_width <= 6):
-        half = [(x * 8, y * 8) for x, y in _SMALL_PENS[max(1, device_width)]]
+    # Hairline eligibility and small circular outlines use the 28.4 diameter;
+    # rounding the original scale directly misses the half-sixteenth band
+    # immediately below each half-pixel boundary.
+    table_width = (diameters[0] + 8) // 16
+    if cosmetic or (circular and table_width <= 6):
+        half = [(x * 8, y * 8) for x, y in _SMALL_PENS[1 if cosmetic else max(1, table_width)]]
     else:
         # Preserve the orientation of the first transformed basis vector.
         # The other radius has that same sign so the contour stays CCW.

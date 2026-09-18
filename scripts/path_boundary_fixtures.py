@@ -10,7 +10,7 @@ def cases():
     r.select_object(r.create_pen(0, 1, 0))
     r.set_window_extent(2048, 2048)
     # Below/at each fixed-diameter threshold, in both X orientations. The
-    # first row retains hairlines; the last leaves the small-pen tables.
+    # first row leaves hairlines; the last leaves the small-pen tables.
     for row, diameter in enumerate(range(2, 8)):
         boundary = (2 * diameter - 1) * 1024 - 64
         for column, (sign, delta) in enumerate(((1, -1), (1, 0), (-1, -1), (-1, 0))):

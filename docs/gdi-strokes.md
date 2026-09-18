@@ -13,8 +13,8 @@ arbitrary world transforms, pen join/cap styles or display drivers.
 
 ## Cosmetic lines
 
-The rounded device X width selects a hairline when it is at most one; logical
-width zero always selects it. Changing only the Y scale does not widen an
+The 28.4 device X diameter selects a hairline when it is below 24 (1.5 pixels).
+Logical width zero always selects it. Changing only the Y scale does not widen an
 otherwise cosmetic pen.
 
 For each major-axis grid intersection, choose the nearest minor-coordinate
@@ -43,6 +43,10 @@ a closed figure.
 Circular device pens with rounded widths 1 through 6 have discrete half-pixel
 silhouette tables. For CreatePen, test circularity after quantizing both full
 transformed diameters to 28.4, rather than comparing the original scales.
+Select the silhouette table by rounding that fixed diameter to an integer,
+not by rounding the original scaled width directly. The hairline decision
+also uses the fixed diameter. These two rounding stages
+differ in the half-sixteenth band below a half-pixel table boundary.
 
 Other pens use a cubic semicircle and its central reflection. Quantize full
 diameters before halving outward. Preserve the first transformed basis vector's

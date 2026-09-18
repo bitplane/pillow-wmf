@@ -18,7 +18,16 @@ def test_uniform_scale_selects_the_same_device_pen(width, scale):
 
 
 @pytest.mark.parametrize("scale_y", (Fraction(1, 2), 1, 2, 20))
-@pytest.mark.parametrize("scale_x,cosmetic", ((Fraction(5, 4), True), (Fraction(3, 2), False), (Fraction(7, 4), False)))
+@pytest.mark.parametrize(
+    "scale_x,cosmetic",
+    (
+        (Fraction(5, 4), True),
+        (Fraction(1503, 1024), True),
+        (Fraction(47, 32), False),
+        (Fraction(3, 2), False),
+        (Fraction(7, 4), False),
+    ),
+)
 def test_hairline_transition_depends_on_rounded_x_width(scale_x, scale_y, cosmetic):
     assert realize_pen(1, scale_x, scale_y).cosmetic is cosmetic
 
@@ -72,6 +81,31 @@ def test_diameter_rounding_and_collapsed_axis(width, scale_x, scale_y, radii, x_
 
 def test_minor_axis_minimum_does_not_enlarge_cosmetic_pen():
     assert realize_pen(1, Fraction(1, 4), 20) == realize_pen(0)
+
+
+@pytest.mark.parametrize("diameter", range(2, 7))
+@pytest.mark.parametrize("sign", (1, -1))
+def test_small_pen_table_rounds_the_fixed_diameter(diameter, sign):
+    # A half-pixel table boundary is reached one half-sixteenth early:
+    # first round the diameter to 28.4, then choose the nearest table.
+    boundary = Fraction(2 * diameter - 1, 2) - Fraction(1, 32)
+    below = boundary - Fraction(1, 1024)
+    assert realize_pen(1, sign * below, below) == realize_pen(diameter - 1)
+    assert realize_pen(1, sign * boundary, boundary) == realize_pen(diameter)
+
+
+def test_near_circular_pen_uses_fixed_diameter_for_both_shape_and_table():
+    assert realize_pen(53, Fraction(257, 3035), Fraction(193, 2260)) == realize_pen(5)
+
+
+@pytest.mark.parametrize("sign", (1, -1))
+def test_fixed_diameter_boundary_leaves_the_small_pen_tables(sign):
+    boundary = Fraction(13, 2) - Fraction(1, 32)
+    below = boundary - Fraction(1, 1024)
+    assert realize_pen(1, sign * below, below) == realize_pen(6)
+    pen = realize_pen(1, sign * boundary, boundary)
+    assert pen.vertices[0] == (sign * 52, 0)
+    assert pen.vertices[len(pen.vertices) // 2 - 1] == (-sign * 52, 0)
 
 
 def test_geometric_frame_pen_keeps_subpixel_minor_axis():
