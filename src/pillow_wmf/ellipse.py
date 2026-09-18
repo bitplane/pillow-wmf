@@ -4,7 +4,7 @@ from itertools import pairwise
 from math import floor
 from typing import Literal
 
-from .gdi_math import SHORT_ANGLE, atan2_degrees, circle_control, sincos_degrees
+from .gdi_math import SHORT_ANGLE, arc_control_normals, atan2_degrees, circle_control, float32, sincos_degrees
 from .geometry import DevicePath, Point, Polygon, flatten_cubic
 
 _SCALE = 16
@@ -149,24 +149,39 @@ def arc_cubics(
         north = tuple(-value for value in north)
         radial_ry = -radial_ry
 
-    def angle(point: tuple[int, int]) -> float:
-        return atan2_degrees((radial_cy - point[1]) / radial_ry, (point[0] - radial_cx) / radial_rx)
+    def angle(point: tuple[int, int]):
+        x = float32(float32(float32(point[0]) - radial_cx) / radial_rx)
+        y = float32(float32(radial_cy - float32(point[1])) / radial_ry)
+        # vArctan retains the radial's quadrant separately from its rounded
+        # angle. Axis ties belong according to coordinate signs, not floor
+        # of angle/90; this preserves native zero-length boundary pieces.
+        quadrant = (0, 1, 3, 2)[(x < 0) + 2 * (y < 0)]
+        return atan2_degrees(y, x), quadrant
 
-    first, last = angle(start), angle(end)
+    (first, first_quadrant), (last, last_quadrant) = angle(start), angle(end)
     # Choose endpoint precision before unwrapping. Nearly coincident angles
     # that compare equal request a full sweep, not the short-angle mode.
-    accurate = 0 < abs(last - first) < SHORT_ANGLE
-    if last <= first:
-        last += 360
+    accurate = 0 < abs(float32(last - first)) < SHORT_ANGLE
+    first_normal = tuple(reversed(sincos_degrees(first, accurate=accurate)))
+    last_normal = tuple(reversed(sincos_degrees(last, accurate=accurate)))
+    axis_normals = ((1, 0), (0, 1), (-1, 0), (0, -1))
     boundaries = [first]
-    for quadrant in range(1, 8):
-        boundary = quadrant * 90
-        if first < boundary <= last:
-            boundaries.append(boundary)
+    if first_quadrant != last_quadrant or last <= first:
+        quadrant = (first_quadrant + 1) % 4
+        boundaries.append(quadrant * 90)
+        while quadrant != last_quadrant:
+            quadrant = (quadrant + 1) % 4
+            boundaries.append(quadrant * 90)
     boundaries.append(last)
 
-    def device_point(nx: float, ny: float) -> tuple[float, float]:
-        return tuple(c + h * nx - v * ny for c, h, v in zip(centre, horizontal, north))
+    def device_point(nx: float, ny: float) -> Point:
+        result = []
+        for c, h, v in zip(centre, horizontal, north):
+            offset = float32(float32(float32(h) * nx) + float32(float32(v) * ny))
+            # EBOX rounds the relative vector away from zero at ties, then
+            # adds its integer centre. Translation must not change tie sense.
+            result.append(c + (1 if offset >= 0 else -1) * floor(abs(offset) + 0.5))
+        return tuple(result)
 
     cubics = []
     quadrants = ellipse_cubics(
@@ -179,26 +194,14 @@ def arc_cubics(
             # terminal point need not equal the canonical quadrant start.
             cubics.append((cubics[-1][-1], *cubic[1:]))
             continue
-        s0, c0 = sincos_degrees(a, accurate=accurate)
-        s3, c3 = sincos_degrees(b, accurate=accurate)
-        determinant = c0 * s3 - c3 * s0
-        if determinant == 0:
-            cubic = (device_point(c0, -s0),) * 4
-        else:
-            # Intersect the endpoint tangent lines n.T = 1. With table
-            # trigonometry this is not interchangeable with tan(sweep/4).
-            tx, ty = (s3 - s0) / determinant, (c0 - c3) / determinant
-            _, half_cosine = sincos_degrees((b - a) / 2)
-            weight = 4 * half_cosine / (3 * (1 + half_cosine))
-            cubic = (
-                device_point(c0, -s0),
-                device_point(c0 + weight * (tx - c0), -s0 - weight * (ty - s0)),
-                device_point(c3 + weight * (tx - c3), -s3 - weight * (ty - s3)),
-                device_point(c3, -s3),
-            )
+        # Only the radial endpoints use trigonometry. Quadrant boundaries
+        # carry exact axis normals, even when the endpoints use Taylor mode.
+        start_normal = first_normal if index == 0 else axis_normals[round(a / 90) % 4]
+        end_normal = last_normal if index == len(boundaries) - 2 else axis_normals[round(b / 90) % 4]
+        normals = arc_control_normals(a, b, start_normal, end_normal)
         # Quantize terminal-piece controls before flattening. Intermediate
         # quadrants use the ellipse construction, not this trigonometric cut.
-        cubic = tuple(tuple(round(value) for value in point) for point in cubic)
+        cubic = tuple(device_point(*normal) for normal in normals)
         if cubics:
             cubic = (cubics[-1][-1], *cubic[1:])
         cubics.append(cubic)
