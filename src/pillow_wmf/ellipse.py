@@ -11,6 +11,23 @@ _SCALE = 16
 _CUBIC_CIRCLE_CONTROL = 4 * (sqrt(2) - 1) / 3
 
 
+def box_corners(bounds):
+    """Native box traversal: retain the upper edge, reflect about its centre."""
+    left, top, right, bottom = bounds
+    cx, cy = (left + right) // 2, (top + bottom) // 2
+    upper = ((right, top), (left, top))
+    return (*upper, *((2 * cx - x, 2 * cy - y) for x, y in upper))
+
+
+def box_axes(bounds):
+    """Quantize the box's half-edge vectors before angular/corner scaling."""
+    top_right, top_left, _, bottom_right = box_corners(bounds)
+    horizontal = tuple((a - b + 1) // 2 for a, b in zip(top_right, top_left))
+    north = tuple((a - b + 1) // 2 for a, b in zip(top_right, bottom_right))
+    centre = tuple(a + (b - a + 1) // 2 + (d - a + 1) // 2 for a, b, d in zip(top_right, top_left, bottom_right))
+    return centre, horizontal, north
+
+
 def _ellipse_bounds(left, top, right, bottom, *, null_pen=False):
     # Native compatible-mode paths with PS_NULL move the center by -1/2
     # pixel and reduce each radius by 1/4 pixel. This is path geometry,
@@ -31,24 +48,16 @@ def ellipse_cubics(
         left, top, right, bottom, null_pen=null_pen
     )
     cx, cy = (left_fixed + right_fixed) // 2, (top_fixed + bottom_fixed) // 2
-    rx, ry = (right_fixed - left_fixed) // 2, (bottom_fixed - top_fixed) // 2
-    return tuple(
-        tuple((cx + x, cy + y) for x, y in curve) for curve in _ellipse_quadrants(rx, -ry if clockwise else ry)
+    rx, lx, ry = right_fixed - cx, cx - left_fixed, cy - top_fixed
+    if clockwise:
+        ry = -ry
+    cy_control = floor(_CUBIC_CIRCLE_CONTROL * ry)
+    upper = (
+        ((rx, 0), (rx, -cy_control), (ceil(rx * _CUBIC_CIRCLE_CONTROL), -ry), (0, -ry)),
+        ((0, -ry), (-ceil(lx * _CUBIC_CIRCLE_CONTROL), -ry), (-lx, -cy_control), (-rx, 0)),
     )
-
-
-def _ellipse_quadrants(rx: int, ry: int):
-    """Four canonical cubic quarters about the origin, in device sixteenths."""
-    # A signed Y radius changes traversal before rounding the controls.
-    # Reversing already-rounded CCW curves loses the clockwise floor/ceil bias.
-    horizontal_control = ceil(_CUBIC_CIRCLE_CONTROL * rx)
-    vertical_control = floor(_CUBIC_CIRCLE_CONTROL * ry)
-    return (
-        ((rx, 0), (rx, -vertical_control), (horizontal_control, -ry), (0, -ry)),
-        ((0, -ry), (-horizontal_control, -ry), (-rx, -vertical_control), (-rx, 0)),
-        ((-rx, 0), (-rx, vertical_control), (-horizontal_control, ry), (0, ry)),
-        ((0, ry), (horizontal_control, ry), (rx, vertical_control), (rx, 0)),
-    )
+    curves = (*upper, *(tuple((-x, -y) for x, y in curve) for curve in upper))
+    return tuple(tuple((cx + x, cy + y) for x, y in curve) for curve in curves)
 
 
 def round_rect_figure(
@@ -56,20 +65,43 @@ def round_rect_figure(
 ) -> DevicePath:
     """Place canonical ellipse quarters at four centres and connect the edges."""
     if not ellipse_width or not ellipse_height:
-        return DevicePath.rectangle(*(drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)))
+        bounds = drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
+        return DevicePath.polyline(box_corners(bounds), closed=True)
     x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
-    # Corner diameters are fractions of the original box. Apply those
-    # fractions to the adjusted drawing ellipse before quantizing the radii.
-    rx = floor((x1 - x0) * min(abs(ellipse_width), right - left) / (2 * (right - left)) + 0.5)
-    ry = floor((y1 - y0) * min(abs(ellipse_height), bottom - top) / (2 * (bottom - top)) + 0.5)
-    centres = ((x1 - rx, y0 + ry), (x0 + rx, y0 + ry), (x0 + rx, y1 - ry), (x1 - rx, y1 - ry))
+    # Corner diameters are fractions of the original logical box. Quantize
+    # the adjusted box axes first, then scale them by those proportions.
+    top_right, top_left, _, _ = box_corners((x0, y0, x1, y1))
+    _, horizontal, north = box_axes((x0, y0, x1, y1))
+
+    def scale(vector, proportion):
+        return tuple(floor(value * proportion + 0.5) for value in vector)
+
+    horizontal = scale(horizontal, min(abs(ellipse_width), right - left) / (right - left))
+    north = scale(north, min(abs(ellipse_height), bottom - top) / (bottom - top))
+    vertical = tuple(-value for value in north)
+
+    def add(point, vector, sign=1):
+        return tuple(a + sign * b for a, b in zip(point, vector))
+
+    def control(point, corner):
+        # Apply oriented X/Y control rounding before reflecting the lower
+        # half. Rounding final transformed coordinates loses that bias.
+        rounding = (ceil if horizontal[0] >= 0 else floor, floor if (vertical[1] >= 0) != clockwise else ceil)
+        return tuple(
+            a + (1 if b >= a else -1) * quantize(abs(b - a) * _CUBIC_CIRCLE_CONTROL)
+            for a, b, quantize in zip(point, corner, rounding)
+        )
+
+    upper = []
+    for corner, start, end in (
+        (top_right, add(top_right, vertical), add(top_right, horizontal, -1)),
+        (top_left, add(top_left, horizontal), add(top_left, vertical)),
+    ):
+        upper.append((start, control(start, corner), control(end, corner), end))
+    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+    curves = (*upper, *(tuple((2 * cx - x, 2 * cy - y) for x, y in curve) for curve in upper))
     if clockwise:
-        centres = tuple((x, y0 + y1 - y) for x, y in centres)
-        ry = -ry
-    curves = tuple(
-        tuple((cx + x, cy + y) for x, y in curve)
-        for (cx, cy), curve in zip(centres, _ellipse_quadrants(rx, ry), strict=True)
-    )
+        curves = tuple(tuple((x, 2 * cy - y) for x, y in curve) for curve in curves)
     commands = tuple(
         command for i, curve in enumerate(curves) for command in (curve, (curve[-1], curves[(i + 1) % 4][0]))
     )
@@ -105,15 +137,14 @@ def arc_cubics(
     points required to lie on the ellipse.
     """
     x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
-    cx, cy = (x0 + x1) / 32, (y0 + y1) / 32
-    rx, ry = (x1 - x0) / 32, (y1 - y0) / 32
+    centre, horizontal, north = box_axes((x0, y0, x1, y1))
     radial_left, radial_top, radial_right, radial_bottom = radial_bounds or (left, top, right, bottom)
     radial_cx = (radial_left + radial_right) / 2
     radial_cy = (radial_top + radial_bottom) / 2
     radial_rx = (radial_right - radial_left) / 2
     radial_ry = (radial_bottom - radial_top) / 2
     if clockwise:
-        ry = -ry
+        north = tuple(-value for value in north)
         radial_ry = -radial_ry
 
     def angle(point: tuple[int, int]) -> float:
@@ -133,7 +164,7 @@ def arc_cubics(
     boundaries.append(last)
 
     def device_point(nx: float, ny: float) -> tuple[float, float]:
-        return (cx + rx * nx) * 16, (cy + ry * ny) * 16
+        return tuple(c + h * nx - v * ny for c, h, v in zip(centre, horizontal, north))
 
     cubics = []
     quadrants = ellipse_cubics(
@@ -141,7 +172,10 @@ def arc_cubics(
     )
     for index, (a, b) in enumerate(pairwise(boundaries)):
         if 0 < index < len(boundaries) - 2:
-            cubics.append(quadrants[round(a / 90) % 4])
+            cubic = quadrants[round(a / 90) % 4]
+            # Native BezierTo inherits the previous endpoint; a rounded
+            # terminal point need not equal the canonical quadrant start.
+            cubics.append((cubics[-1][-1], *cubic[1:]))
             continue
         s0, c0 = sincos_degrees(a, accurate=accurate)
         s3, c3 = sincos_degrees(b, accurate=accurate)
@@ -163,6 +197,8 @@ def arc_cubics(
         # Quantize terminal-piece controls before flattening. Intermediate
         # quadrants use the ellipse construction, not this trigonometric cut.
         cubic = tuple(tuple(round(value) for value in point) for point in cubic)
+        if cubics:
+            cubic = (cubics[-1][-1], *cubic[1:])
         cubics.append(cubic)
     return tuple(cubics)
 
@@ -200,7 +236,7 @@ def arc_figure(
         closing = ((curves[-1][-1], curves[0][0]),)
     elif closure == "pie":
         x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
-        centre = ((x0 + x1) // 2, (y0 + y1) // 2)
+        centre, _, _ = box_axes((x0, y0, x1, y1))
         # Native Pie appends the centre after the cubics and closes there,
         # including full revolutions. Preserve that order for styled pens.
         closing = ((curves[-1][-1], centre), (centre, curves[0][0]))

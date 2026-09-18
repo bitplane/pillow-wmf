@@ -20,6 +20,10 @@ although Windows reference PNGs remain the compatibility oracle.
 Fractional [inside-frame probes](gdi-insideframe.md) distinguish logical radial
 normalization from normalization after integer device mapping; the latter loses
 angle precision. Drawing bounds are still constructed in device space.
+Odd inside-frame diameters require the box's rounded half-edge vectors rather
+than independent X/Y radii; see the [fixed-point box construction](gdi-insideframe.md#odd-fixed-point-diameters).
+Each cubic starts at its predecessor's actual endpoint, including transitions
+between a trigonometric terminal piece and a canonical ellipse quadrant.
 
 Endpoint coverage comes entirely from the [shared GIQ rasterizer](gdi-strokes.md#cosmetic-lines).
 The previous radial-coordinate-based endpoint adjustment was incorrect: moving

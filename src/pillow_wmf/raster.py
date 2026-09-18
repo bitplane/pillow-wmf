@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from fractions import Fraction
-from math import ceil
+from math import floor
 
 from PIL import Image
 
@@ -13,7 +13,7 @@ from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, DIBLayout, RGBBitmap, read_dib
 from .bitmap16 import read_bitmap16
 from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
-from .ellipse import arc_figure, ellipse_cubics, round_rect_figure
+from .ellipse import arc_figure, box_corners, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
 from .gdi import Call, Handle, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
@@ -558,7 +558,7 @@ class RasterContext(TraceContext):
                 covered = False
                 if self._pen.style == 6 and not pen.cosmetic:
                     dx, dy = (
-                        ceil(self._pen.width * abs(Fraction(v, w)) * 8)
+                        floor(self._pen.width * abs(Fraction(v, w)) * 16 + 0.5)
                         for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent)
                     )
                     # Equality retains a degenerate centreline and widens it
@@ -570,12 +570,19 @@ class RasterContext(TraceContext):
                             return result
                         drawing_bounds = left * 16, top * 16, right * 16, bottom * 16
                     else:
-                        drawing_bounds = left * 16 + dx, top * 16 + dy, right * 16 - dx, bottom * 16 - dy
+                        # Preserve the native signed half-width rounding.
+                        # Odd spans retain their corner geometry downstream;
+                        # they must not be replaced by a symmetric radius.
+                        drawing_bounds = (
+                            left * 16 + (dx + 1) // 2,
+                            top * 16 + (dy + 1) // 2,
+                            right * 16 - dx // 2,
+                            bottom * 16 - (dy + 1) // 2,
+                        )
                 rectangle = name == "rectangle"
                 if name == "rectangle":
-                    path = DevicePath.rectangle(
-                        *(drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16))
-                    )
+                    bounds = drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
+                    path = DevicePath.polyline(box_corners(bounds), closed=True)
                 elif name == "ellipse":
                     path = DevicePath(
                         ellipse_cubics(

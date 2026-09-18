@@ -9,8 +9,8 @@ to the original box:
 
 - Cosmetic inside-frame pens use ordinary solid-pen geometry.
 - Wide inside-frame pens start with the **untrimmed** mapped box, not the usual
-  exclusive right/bottom drawing bounds. Inset by half the transformed requested
-  width, retaining device sixteenths. This is independent of the small pen's
+  exclusive right/bottom drawing bounds. Transform the full requested pen width
+  to device sixteenths before halving. This is independent of the small pen's
   quantized raster silhouette.
 - Arc-family angles and RoundRect corner proportions use the original logical
   box, before device-coordinate rounding. Reflection changes radial orientation,
@@ -42,11 +42,41 @@ collapsed closed-path footprints, and pen half-contour traversal. See
 The manual `probe-windows-insideframe.py` checks additional exact pixels and
 reports native paths, including native rejection of oversized arc-family calls.
 
+## Odd fixed-point diameters
+
+The four corpus coin rims exposed a distinction hidden by integer-scale probes.
+[Run 35317428796](https://github.com/bitplane/pillow-wmf/actions/runs/35317428796)
+measures the native paths in device sixteenths, including all six bounded
+primitives with odd X, Y and XY pen diameters. Their geometry is reconstructed
+by these shared rules:
+
+- Round each full transformed pen diameter to fixed point. Inset the left,
+  top and bottom by its upward-rounded half; the right uses the downward-rounded
+  half. Do not round a floating-point radius independently.
+- Keep the resulting upper corners and reflect them about the integer box
+  centre to obtain the lower corners. Odd horizontal spans can therefore retain
+  a one-unit skew; replacing them with an axis-aligned rectangle loses geometry.
+- Ellipse controls retain both upper corners, then reflect the upper semicircle.
+  The left and right control distances need not be identical.
+- Arc and RoundRect use the box's half-edge vectors, quantized with
+  `(component + 1) // 2` before trigonometry or corner scaling. Keep both vector
+  components. Pie uses the corresponding origin. Consecutive arc cubics inherit
+  the previous endpoint, as native BezierTo does.
+
+For the odd-XY fixture, the adjusted bounds are `(279,279,1770,1769)`, but the
+corner traversal is `(1770,279), (279,279), (278,1769), (1769,1769)`.
+Its angular origin is `(1025,1024)` with horizontal vector `(746,0)` and north
+vector `(1,-745)`. These are geometry calculations, not pixel corrections.
+The shared stroke and fill algorithms are unchanged.
+
 ## Verification
 
 Twenty-nine committed Windows PNG atlases cover all six bounded primitives,
 solid/null brushes, thin through oversized widths, collapse boundaries,
 fractional mapping, anisotropy, reflection, and unbounded Polygon/Polyline.
+Eighteen additional odd-diameter PNGs and the four unchanged corpus coin pairs
+cover the fractional bounds construction above. Unit tests retain native
+control points as well as the exact end-to-end pixel comparisons.
 The manual probe in
 [run 35151984362](https://github.com/bitplane/pillow-wmf/actions/runs/35151984362)
 passes 3,510 exact-pixel combinations of primitive, width, brush, box aspect
