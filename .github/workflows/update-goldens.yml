@@ -20,6 +20,7 @@ on:
           - real-text
           - text-layout
           - text-styles
+          - text-decorations
           - text-encoding
           - text-missing
           - text-fallback-sizing
@@ -134,6 +135,19 @@ jobs:
         run: |
           mkdir -p text-encoding-probe
           python scripts/probe-windows-encoding.py --output text-encoding-probe ${{ inputs.probe == 'text-missing' && '--missing-only' || '' }} | tee text-encoding-probe/observations.txt
+      - name: Probe native decoration thickness
+        if: inputs.probe == 'text-decorations'
+        shell: bash
+        run: |
+          mkdir -p text-decorations
+          python scripts/probe-windows-text-decorations.py --output text-decorations | tee text-decorations/observations.txt
+      - name: Upload decoration observations
+        if: always() && inputs.probe == 'text-decorations'
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-decorations
+          path: text-decorations/
+          retention-days: 7
       - name: Upload encoding observations
         if: always() && (inputs.probe == 'text-encoding' || inputs.probe == 'text-missing')
         uses: actions/upload-artifact@v4
