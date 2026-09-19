@@ -314,7 +314,10 @@ class FontFace:
                 decorations=tuple(
                     (
                         rounded(position * size / self.units_per_em),
-                        max(1, rounded(thickness * size / self.units_per_em)),
+                        # Axis-aligned rules have a one-pixel minimum. An
+                        # oblique rule is a filled contour: a thickness that
+                        # realizes to zero remains degenerate and paints nothing.
+                        max(int(escapement % 900 == 0), rounded(thickness * size / self.units_per_em)),
                     )
                     for enabled, (position, thickness) in (
                         (underline, self.underline_metrics),

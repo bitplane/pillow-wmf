@@ -71,8 +71,11 @@ faces take precedence; synthesis is disabled by default. The monochrome model
 widens outlines horizontally by one pixel and increases advances by one for
 synthetic bold, and applies a measured approximately 0.34 shear for italic.
 Real-font masks remain approximate. Underline and strikeout use the font's
-`post`/`OS/2` metrics, with at least one device pixel of thickness; they do not
-alter advances. Style and transform parameters participate in font-cache keys.
+`post`/`OS/2` metrics. Axis-aligned rules have at least one device pixel of
+thickness, including quarter-turns and reflected mappings. Oblique rules retain
+zero realized thickness and then paint nothing; nonzero thickness still draws.
+Decorations do not alter advances. Style and transform parameters participate
+in font-cache keys.
 
 The named `text-styles` native probe uses original controlled glyphs and pinned
 real fonts, verifies the selected font bytes and records outline coordinates.
