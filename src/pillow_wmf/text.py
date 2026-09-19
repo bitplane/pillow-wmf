@@ -4,7 +4,7 @@ Font files, aliases and missing-glyph policy are supplied by the caller, not by
 a WMF. There is no host-font discovery or registry-based font substitution.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from io import BytesIO
 from itertools import groupby
@@ -54,6 +54,7 @@ class RasterFont:
     cmap: dict[int, int] = field(default_factory=dict)
     symbol: bool = False
     missing_glyph: str = "error"
+    em_width: float = 0
     _glyphs: dict[str, Glyph] = field(default_factory=dict)
 
     def shape(self, characters, max_pixels):
@@ -141,6 +142,18 @@ class FontFace:
             mapping = symbol_map if self.symbol else font.getBestCmap() or {}
             self.cmap = {codepoint: font.getGlyphID(name) for codepoint, name in mapping.items()}
             self.codepages = getattr(font["OS/2"], "ulCodePageRange1", 0)
+            self.device_metrics = {}
+            if "VDMX" in font:
+                table = font["VDMX"]
+                # RasterContext has square device pixels. These ratios describe
+                # the device, not the logical mapping or requested font width.
+                for ratio in table.ratRanges:
+                    aspect = ratio["xRatio"], ratio["yStartRatio"], ratio["yEndRatio"]
+                    if ratio["bCharSet"] == 1 and (
+                        aspect == (0, 0, 0) or aspect[0] == 1 and aspect[1] <= 1 <= aspect[2]
+                    ):
+                        self.device_metrics = dict(sorted(table.groups[ratio["groupIndex"]].items()))
+                        break
         self._sizes = {}
 
     @classmethod
@@ -151,15 +164,42 @@ class FontFace:
         """Classic compatible-mode realization; natural width follows height."""
         sx, sy = scale
         height = abs(request.height) * sy if request.height else 16
+        device_scale = 1
         if request.height > 0:
             # Cell-to-em conversion retains a fractional size for metrics;
             # the outline grid is realized separately at integer ppem.
-            height *= Fraction(self.units_per_em, self.ascent + self.descent)
-            height = Fraction(int(height * 65536), 65536)
+            fitted = self._em_for_cell(height)
+            if fitted is not None:
+                device_scale = Fraction(fitted * (self.ascent + self.descent), self.units_per_em) / height
+                height = fitted
+            else:
+                height *= Fraction(self.units_per_em, self.ascent + self.descent)
+                height = Fraction(int(height * 65536), 65536)
         if request.width and self.average_width <= 0:
             raise UnsupportedOperation("Font has no usable average-width metric")
-        width = abs(request.width) * sx * Fraction(self.units_per_em, self.average_width) if request.width else None
+        width = (
+            abs(request.width) * sx * Fraction(self.units_per_em, self.average_width) * device_scale
+            if request.width
+            else None
+        )
         return self.at_size(height, width=width, quality=request.quality, missing_glyph=missing_glyph)
+
+    def _em_for_cell(self, height):
+        """Use the first exact VDMX cell, or the entry before an overshoot.
+
+        Device heights can repeat or even decrease as hinting changes. Search
+        in ppem order, rather than sorting by cell height or interpolating.
+        Outside the table's coverage, retain ordinary outline scaling.
+        """
+        previous = None
+        for em, (ascent, bottom) in self.device_metrics.items():
+            cell = ascent - bottom
+            if cell == height:
+                return em
+            if cell > height:
+                return previous
+            previous = em
+        return None
 
     def at_size(self, size, *, width=None, quality=3, missing_glyph="error"):
         if missing_glyph not in ("error", "notdef"):
@@ -180,10 +220,11 @@ class FontFace:
             def metric(units):
                 return (units * size * 2 + self.units_per_em) // (2 * self.units_per_em)
 
+            ascent, bottom = self.device_metrics.get(rounded(size), (metric(self.ascent), -metric(self.descent)))
             self._sizes[key] = RasterFont(
                 font,
-                metric(self.ascent),
-                metric(self.descent),
+                ascent,
+                -bottom,
                 self.hinted,
                 self.design_advances,
                 float32(width / self.units_per_em),
@@ -192,6 +233,7 @@ class FontFace:
                 self.cmap,
                 self.symbol,
                 missing_glyph,
+                em_width=width,
             )
         return self._sizes[key]
 
@@ -217,7 +259,7 @@ class FontCollection:
 
     def realize(self, request, face, scale):
         primary = face.realize(request, scale, missing_glyph=self.missing_glyph)
-        linked = []
+        fallback_faces = []
         for family in self.fallbacks.get(face.family.casefold(), ()):
             key = family.casefold(), request.weight or 400, bool(request.italic)
             if key not in self._faces:
@@ -225,8 +267,26 @@ class FontCollection:
             fallback = self._faces[key]
             if fallback.symbol:
                 raise UnsupportedOperation("A symbol face cannot be a Unicode fallback")
-            linked.append(fallback.realize(request, scale, missing_glyph=self.missing_glyph))
-        return FontRun(primary, tuple(linked))
+            fallback_faces.append(fallback)
+        linked = tuple(f.realize(request, scale, missing_glyph=self.missing_glyph) for f in fallback_faces)
+        control_fallback = None
+        if fallback_faces:
+            # Shaping fallback preserves the realized cell, not the original
+            # em request. Its GDI links follow the replacement's realized em.
+            cell = Fraction(primary.ascent + primary.descent) / scale[1]
+            raw_request = replace(request, height=cell)
+            raw = fallback_faces[0].realize(raw_request, scale, missing_glyph=self.missing_glyph)
+            raw_links = tuple(
+                f.at_size(
+                    raw.font.size.y_ppem,
+                    width=raw.em_width if request.width else None,
+                    quality=request.quality,
+                    missing_glyph=self.missing_glyph,
+                )
+                for f in fallback_faces[1:]
+            )
+            control_fallback = FontRun(raw, raw_links)
+        return FontRun(primary, linked, control_fallback)
 
     def resolve(self, request):
         if request is None:
@@ -261,6 +321,7 @@ class FontRun:
 
     primary: RasterFont
     fallbacks: tuple[RasterFont, ...] = ()
+    control_fallback: "FontRun | None" = None
 
     @property
     def ascent(self):
@@ -294,7 +355,9 @@ class FontRun:
                 glyphs.extend(self._linked_glyph(c, max_pixels) for c in run)
                 continue
             missing = [c for c in run if not _blank_control(c) and not self.primary.cmap.get(ord(c))]
-            fallback = FontRun(self.fallbacks[0], self.fallbacks[1:]) if missing and self.fallbacks else self
+            fallback = self
+            if missing and self.fallbacks:
+                fallback = self.control_fallback or FontRun(self.fallbacks[0], self.fallbacks[1:])
             # Uniscribe accepts DEL's default glyph; it does not make an
             # otherwise shapeable control run switch to raw character output.
             if any(c != "\x7f" for c in missing):

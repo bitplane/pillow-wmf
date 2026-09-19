@@ -52,6 +52,14 @@ rounding one does not justify rounding all three. With no explicit width, classi
 GDI uses vertical scale for the font's natural proportions. An explicit width
 requests average character width, transformed on the horizontal axis.
 
+For square device pixels, a matching ANSI-subset
+[`VDMX` table](https://learn.microsoft.com/en-us/typography/opentype/spec/vdmx)
+overrides line metrics at its recorded ppem sizes. Positive cell requests search
+in ppem order: the first exact cell wins; an overshoot selects the preceding
+entry. Repeated and non-monotonic cell heights must not be sorted or interpolated.
+Requests outside the table use ordinary outline scaling. A cell-size override
+also scales an explicitly requested width, preserving the font's aspect.
+
 Text spacing retains fractional remainders until placement. Explicit advances
 replace natural widths and justification but retain character extra. Placement
 rounds accumulated device advances to nearest-even before the separate
@@ -155,6 +163,11 @@ control (other than DEL) falls back to raw character output through the first
 supplied fallback face and its remaining links. This can make an otherwise
 invisible C1 control visible. Separators end runs, so this effect does not cross
 tabs or line breaks.
+The replacement is realized from the base font's cell height, rather than
+reusing its original negative em request. Its raw GDI links inherit the
+replacement's realized em size and horizontal scale. Ordinary character
+fallback and control-run replacement therefore have distinct realizations;
+neither changes the base font's line metrics or existing glyphs.
 Raw linking skips zero-advance candidates and retries U+30FB (the standard GDI
 link replacement character) if no linked face supplies the character. A suffix
 consisting entirely of C1 controls bypasses linking and uses the raw face's
@@ -162,6 +175,10 @@ missing-glyph policy. Thus embedded NULs are neither string terminators nor
 automatically zero-width: their width comes from the chosen font.
 Matching native control output requires the corresponding fallback faces and
 metrics. The explicit `.notdef` policy alone does not establish Windows parity.
+Broad control-symbol coverage still needs matching native linked-font inputs;
+outline-only rendering cannot establish parity with embedded bitmap strikes.
+Fractional positive-cell advance rounding also retains discrepancies at some
+half-pixel boundaries and needs further native verification.
 
 The named `text-encoding` probe checks native byte conversion, glyph indices
 and Western/Cyrillic/symbol WMF playback. Its controlled fonts are original test
