@@ -131,6 +131,19 @@ from logical prefix extents. Reuse the same gallery output directory and pass
 `--title` to identify the current review; previously approved size sweeps need
 not be included in every new review. Keep scratch data under `~/tmp`.
 
+For extracted release corpora, use parallel WMF and PNG trees:
+
+```sh
+python scripts/text-gallery.py /path/to/sources --reference-root /path/to/128x128 \
+  --font /path/to/font.ttf --limit 12 --output /path/to/gallery
+```
+
+This selects text-bearing files, derives canvas sizes from the PNGs, and compares
+all selected inputs while limiting the displayed mismatches. Supply each needed
+font explicitly; unavailable faces remain blocked. Release font versions and
+native substitutions are unverified, so these images support visual integration
+review, not claims about controlled-font rasterizer parity.
+
 ## Boundaries
 
 Keep the parser lossless: font names, text bytes and advance arrays remain raw.
