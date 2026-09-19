@@ -44,7 +44,17 @@ class GlyphMetrics(ctypes.Structure):
     ]
 
 
-def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=None, characters=None, shaping=False):
+def observe(
+    source,
+    *,
+    family=FAMILY,
+    size=(128, 128),
+    sample=b"A B",
+    tables=None,
+    characters=None,
+    shaping=False,
+    outlines=False,
+):
     with reference_surface(*size) as (gdi, dc, _):
         ptr = ctypes.c_void_p
         callback_type = ctypes.WINFUNCTYPE(ctypes.c_int, ptr, ptr, ptr, ctypes.c_int, ctypes.c_ssize_t)
@@ -144,6 +154,40 @@ def observe(source, *, family=FAMILY, size=(128, 128), sample=b"A B", tables=Non
                             "GetTextExtentExPointW",
                         )
                         print(f"device_advances={cells} logical_prefixes={list(prefixes)}", flush=True)
+                        if outlines:
+                            for character in sorted(set(decoded)):
+                                glyph = GlyphMetrics()
+                                count = glyph_metrics(
+                                    hdc, ord(character), 2 | 0x100, ctypes.byref(glyph), 0, None, identity
+                                )
+                                if count == 0xFFFFFFFF:
+                                    raise OSError("GetGlyphOutlineW(GGO_NATIVE) failed")
+                                data = ctypes.create_string_buffer(count)
+                                if count:
+                                    glyph_metrics(
+                                        hdc, ord(character), 2 | 0x100, ctypes.byref(glyph), count, data, identity
+                                    )
+                                contours = []
+                                offset = 0
+                                while offset < count:
+                                    length, _ = struct.unpack_from("<II", data.raw, offset)
+                                    start = struct.unpack_from("<ii", data.raw, offset + 8)
+                                    points = [tuple(v / 65536 for v in start)]
+                                    cursor = offset + 16
+                                    while cursor < offset + length:
+                                        _, number = struct.unpack_from("<HH", data.raw, cursor)
+                                        cursor += 4
+                                        for _ in range(number):
+                                            points.append(
+                                                tuple(v / 65536 for v in struct.unpack_from("<ii", data.raw, cursor))
+                                            )
+                                            cursor += 8
+                                    contours.append(points)
+                                    offset += length
+                                print(
+                                    f"outline={character!r} advance={(glyph.advance_x, glyph.advance_y)} contours={contours}",
+                                    flush=True,
+                                )
                     value, point, size = TextMetrics(), wintypes.POINT(), wintypes.SIZE()
                     check(metrics(hdc, ctypes.byref(value)), "GetTextMetricsW")
                     check(position(hdc, ctypes.byref(point)), "GetCurrentPositionEx")

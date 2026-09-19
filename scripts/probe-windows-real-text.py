@@ -42,7 +42,7 @@ def main():
             source = recorder.to_bytes()
             size = STYLE_SIZE if args.styles else LAYOUT_SIZE if args.layout else SIZE
             sample = STYLE_SAMPLE if args.styles else b"A B A B" if args.layout else b" ".join(SAMPLES)
-            probe.observe(source, family=family, size=size, sample=sample, tables=tables[family])
+            probe.observe(source, family=family, size=size, sample=sample, tables=tables[family], outlines=args.styles)
             (args.output / f"{name}.wmf").write_bytes(source)
             render_wmf(source, *size).save(args.output / f"{name}.png")
 
