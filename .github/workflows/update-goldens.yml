@@ -21,6 +21,7 @@ on:
           - text-layout
           - text-encoding
           - text-missing
+          - text-fallback-sizing
           - layout
           - patblt
           - dib-brush
@@ -137,6 +138,19 @@ jobs:
         with:
           name: text-encoding-probe
           path: text-encoding-probe/
+          retention-days: 7
+      - name: Probe fallback font sizing
+        if: inputs.probe == 'text-fallback-sizing'
+        shell: bash
+        run: |
+          mkdir -p text-fallback-sizing
+          python scripts/probe-windows-encoding.py --sizing-only --output text-fallback-sizing | tee text-fallback-sizing/observations.txt
+      - name: Upload fallback sizing observations
+        if: always() && inputs.probe == 'text-fallback-sizing'
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-fallback-sizing
+          path: text-fallback-sizing/
           retention-days: 7
       - name: Verify native PatBlt
         if: inputs.probe == 'patblt' || inputs.probe == 'all'

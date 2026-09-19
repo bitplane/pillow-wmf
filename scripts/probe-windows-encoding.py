@@ -18,8 +18,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--missing-only", action="store_true")
+    parser.add_argument("--sizing-only", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
+    spec = importlib.util.spec_from_file_location("text_probe", Path(__file__).with_name("probe-windows-text.py"))
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    if args.sizing_only:
+        inspect_fallback_sizing(args.output, probe)
+        return
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     convert = bind(
         kernel,
@@ -42,9 +49,6 @@ def main():
         path = args.output / "fonts" / filename
         path.write_bytes((FONT_ROOT / filename).read_bytes())
         paths.append(path)
-    spec = importlib.util.spec_from_file_location("text_probe", Path(__file__).with_name("probe-windows-text.py"))
-    probe = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(probe)
     tables = {}
     for family, path in zip(("Noto Sans", "Noto Serif", ENCODING_FAMILY, SYMBOL_FAMILY), paths, strict=True):
         with TTFont(path) as font:
@@ -140,6 +144,50 @@ def main():
             )
 
 
+def inspect_fallback_sizing(output, probe):
+    """Separate shaping fallback realization from direct and linked font sizes."""
+    path = FONT_ROOT / "encoding.ttf"
+    with TTFont(path) as font:
+        tables = {tag: font.getTableData(tag) for tag in ("head", "hmtx", "glyf", "cmap")}
+    with private_fonts([path]):
+        for height, width in ((-12, 0), (-24, 0), (-31, 0), (29, 0), (-24, 11)):
+            for family in (ENCODING_FAMILY, "Microsoft Sans Serif", "PMingLiU"):
+                recorder = Recorder()
+                recorder.set_window_extent(*SIZE)
+                recorder.set_viewport_extent(*SIZE)
+                recorder.select_object(
+                    recorder.create_font(
+                        Font(
+                            height=height,
+                            width=width,
+                            weight=400,
+                            quality=3,
+                            face_name=family.encode().ljust(32, b"\0"),
+                        )
+                    )
+                )
+                recorder.set_background_mode(1)
+                recorder.set_text_alignment(25)
+                recorder.move_to(12, 80)
+                sample = b"A\x81\0\x01B"
+                recorder.text_out(0, 0, sample)
+                recorder.line_to(600, 80)
+                name = f"{family.replace(' ', '-')}-{height}-{width}"
+                print(f"\n[{name}]", flush=True)
+                source = recorder.to_bytes()
+                probe.observe(
+                    source,
+                    family=family,
+                    size=SIZE,
+                    sample=sample,
+                    characters="".join(map(chr, sample)),
+                    tables=tables if family == ENCODING_FAMILY else None,
+                )
+                inspect_native_text(source)
+                (output / f"{name}.wmf").write_bytes(source)
+                render_wmf(source, *SIZE).save(output / f"{name}.png")
+
+
 def inspect_native_text(source):
     """Capture GDI's downstream font/text records to identify fallback faces."""
     from windows_wmf_render import reference_surface
@@ -171,7 +219,9 @@ def inspect_native_text(source):
                 kind, length = struct.unpack_from("<II", data.raw, offset)
                 record = data.raw[offset : offset + length]
                 if kind == 82:
-                    print(f"native font={record[40:104].decode('utf-16-le').split(chr(0))[0]!r}", flush=True)
+                    family = record[40:104].decode("utf-16-le").split(chr(0))[0]
+                    height, width = struct.unpack_from("<ii", record, 12)
+                    print(f"native font={family!r} height={height} width={width}", flush=True)
                 elif kind == 84:
                     count, string_at, flags = struct.unpack_from("<III", record, 44)
                     values = struct.unpack_from(f"<{count}H", record, string_at)
