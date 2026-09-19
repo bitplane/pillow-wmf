@@ -19,6 +19,7 @@ on:
           - text
           - real-text
           - text-layout
+          - text-styles
           - text-encoding
           - text-missing
           - text-fallback-sizing
@@ -112,15 +113,16 @@ jobs:
           path: text-probe/
           retention-days: 7
       - name: Render pinned real-font samples
-        if: inputs.probe == 'real-text' || inputs.probe == 'text-layout'
+        if: inputs.probe == 'real-text' || inputs.probe == 'text-layout' || inputs.probe == 'text-styles'
         shell: bash
         run: |
           mkdir -p real-text-probe
           args=()
           if [[ "${{ inputs.probe }}" == text-layout ]]; then args+=(--layout); fi
+          if [[ "${{ inputs.probe }}" == text-styles ]]; then args+=(--styles); fi
           python scripts/probe-windows-real-text.py --output real-text-probe "${args[@]}" | tee real-text-probe/observations.txt
       - name: Upload real-font samples
-        if: always() && (inputs.probe == 'real-text' || inputs.probe == 'text-layout')
+        if: always() && (inputs.probe == 'real-text' || inputs.probe == 'text-layout' || inputs.probe == 'text-styles')
         uses: actions/upload-artifact@v4
         with:
           name: real-text-probe
