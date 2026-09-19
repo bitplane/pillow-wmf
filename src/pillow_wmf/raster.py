@@ -946,38 +946,37 @@ class RasterContext(TraceContext):
         if options and rectangle is None:
             raise ValueError("Text output options require a rectangle")
         sx, sy = self.mapping.linear_scale
-        if sx <= 0 or sy <= 0 or self.mapping.rtl:
+        if self.mapping.rtl:
             raise UnsupportedOperation("Reflected text mapping")
         if rectangle is not None:
             rectangle = (*self._point(*rectangle[:2]), *self._point(*rectangle[2:]))
+            left, top, right, bottom = rectangle
+            rectangle = min(left, right), min(top, bottom), max(left, right), max(top, bottom)
         if not args["text"]:
             return TextLayout(), rectangle
         request = self._text_state.font
         face = self.fonts.resolve(request)
-        if (
-            request.escapement
-            or request.orientation
-            or request.underline
-            or request.strikeout
-            or request.quality not in (0, 3)
-        ):
-            raise UnsupportedOperation("Unsupported font transform, decoration or quality")
+        if sx * sy < 0:
+            request = replace(request, escapement=-request.escapement)
+        if request.quality not in (0, 3):
+            raise UnsupportedOperation("Unsupported font quality")
         if self._text_state.mapper_flags:
             raise UnsupportedOperation("Text mapper flags")
         origin = self._position if self._text_state.alignment & 1 else (args["x"], args["y"])
         origin = self._point(*origin)
         layout = layout_text(
-            self.fonts.realize(request, face, (sx, sy)),
+            self.fonts.realize(request, face, (abs(sx), abs(sy))),
             args["text"],
             *origin,
             self._text_state.alignment,
             args.get("advances", ()),
             opaque=self._background_mode == 2,
             max_pixels=self.max_bitmap_pixels,
-            scale=sx,
+            scale=abs(sx),
             extra=self._text_state.character_extra,
             justification=self._text_state.justification,
             characters=self.fonts.decode(request, face, args["text"]),
+            escapement=request.escapement,
         )
         if layout.position is not None:
             logical_origin = self._position
@@ -998,6 +997,12 @@ class RasterContext(TraceContext):
         return layout, rectangle
 
     def _draw_text(self, layout, rectangle, options):
+        def paint_contour(contour, color):
+            polygon = [(x * 16, y * 16) for x, y in contour]
+            for x, y in self._contour_pixels((polygon,)):
+                if not options & 4 or rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]:
+                    self._pixel(x, y, color, operation=13)
+
         def fill(bounds):
             if bounds is not None:
                 left, top, right, bottom = bounds
@@ -1007,15 +1012,8 @@ class RasterContext(TraceContext):
 
         if options & 2:
             fill(rectangle)
-        background = layout.background
-        if options & 4 and background is not None:
-            background = (
-                max(background[0], rectangle[0]),
-                max(background[1], rectangle[1]),
-                min(background[2], rectangle[2]),
-                min(background[3], rectangle[3]),
-            )
-        fill(background)
+        if layout.background is not None:
+            paint_contour(layout.background, self._background_color)
         for left, top, glyph in layout.glyphs:
             width, height = glyph.size
             for y in range(max(0, top), min(self.image.height, top + height)):
@@ -1038,6 +1036,9 @@ class RasterContext(TraceContext):
                             self.image.putpixel((x, y), color)
         if layout.position is not None:
             self._position = layout.position
+
+        for contour in layout.decorations:
+            paint_contour(contour, self._text_color)
 
     def _pixel(self, x: int, y: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
         if 0 <= x < self.image.width and 0 <= y < self.image.height and self._clip.contains(x, y):

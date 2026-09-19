@@ -20,12 +20,24 @@ def load_faces(path):
     return [FontFace.from_path(path)]
 
 
-def gallery(source, output, *, title="Real-font mismatches", missing_glyph="error", font_paths=(), fallbacks=None):
+def gallery(
+    source,
+    output,
+    *,
+    title="Real-font mismatches",
+    missing_glyph="error",
+    font_paths=(),
+    fallbacks=None,
+    synthesize_styles=False,
+):
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     paths = [*sorted((source / "fonts").glob("*.ttf")), *font_paths]
     fonts = FontCollection(
-        (face for path in paths for face in load_faces(path)), missing_glyph=missing_glyph, fallbacks=fallbacks
+        (face for path in paths for face in load_faces(path)),
+        missing_glyph=missing_glyph,
+        fallbacks=fallbacks,
+        synthesize_styles=synthesize_styles,
     )
     entries, blocked = [], []
     exact = 0
@@ -58,6 +70,11 @@ def gallery(source, output, *, title="Real-font mismatches", missing_glyph="erro
             note = "Default quality: RGB subpixel coverage; filtering and contrast remain approximate."
         else:
             note = "Monochrome: inspect ink shape and placement; differences are not automatically waived."
+        request = context._text_state.font
+        if request and request.escapement:
+            note += " Rotation: line/background bounds and some placements still need alignment; this is not mask-only."
+        if any(scale < 0 for scale in context.mapping.linear_scale):
+            note += " Reflected mapping: opaque bounds still need alignment."
         entries.append(
             f"<section><h2>{escape(wmf.stem)} — {count} differing pixels</h2>"
             f"<p>{note}</p><div>{''.join(cells)}</div></section>"
@@ -91,6 +108,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--title", default="Real-font mismatches")
     parser.add_argument("--missing-glyph", choices=("error", "notdef"), default="error")
+    parser.add_argument(
+        "--synthesize-styles", action="store_true", help="Allow bold/italic synthesis from regular faces"
+    )
     parser.add_argument("--font", type=Path, action="append", default=[], help="Additional local font file")
     parser.add_argument("--fallback", action="append", default=[], metavar="BASE=FAMILY", help="Append a fallback face")
     args = parser.parse_args()
@@ -107,6 +127,7 @@ def main():
         missing_glyph=args.missing_glyph,
         font_paths=args.font,
         fallbacks=fallbacks,
+        synthesize_styles=args.synthesize_styles,
     )
 
 

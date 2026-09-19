@@ -11,11 +11,14 @@ TrueType faces; it never searches host font directories or silently substitutes.
 
 The supported rendering slice is single-byte Western/Cyrillic and symbol text, with
 positive or negative heights, zero-height realization, explicit average width,
-positive axis scaling and translation. It supports natural or signed explicit
+axis scaling and translation. It supports natural or signed explicit
 advances, character extra, justification, horizontal/vertical alignment,
 TA_UPDATECP, opaque backgrounds, ETO_OPAQUE, ETO_CLIPPED and the DC clip.
-Rotation, reflection, synthesized styles, decorations, default-font selection
-and other encodings remain explicitly unsupported. Missing glyphs raise by
+Escapement, reflected axis mappings, underline/strikeout and explicitly enabled
+style synthesis are implemented, but transformed text remains experimental:
+rotated line/background bounds and reflected opaque extents still differ from
+Windows. These are layout discrepancies, not merely glyph-mask differences.
+RTL layout, default-font selection and other encodings remain unsupported. Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
 
 NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY currently uses a
@@ -51,6 +54,29 @@ descent. Outline ppem, fractional advance scaling and line metrics are separate:
 rounding one does not justify rounding all three. With no explicit width, classic
 GDI uses vertical scale for the font's natural proportions. An explicit width
 requests average character width, transformed on the horizontal axis.
+
+Compatible-mode text ignores `lfOrientation` independently of `lfEscapement`.
+Axis reflection keeps glyphs upright and left-to-right; an orientation reversal
+changes the sign of escapement. Glyph outlines are transformed before mask
+rasterization, using the same 16.16 rotation as baseline placement. Non-cardinal
+rotations retain fractional advances; current-position conversion remains a
+device-to-logical operation. Background and decoration contours use the existing
+polygon rasterizer and text clipping, not image rotation or `ImageDraw`.
+See [LOGFONT](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-logfonta)
+and [compatible graphics mode](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-setgraphicsmode).
+
+`FontCollection(..., synthesize_styles=True)` permits requests for bold or italic
+to use a supplied regular face when the exact requested face is absent. Exact
+faces take precedence; synthesis is disabled by default. The monochrome model
+widens outlines horizontally by one pixel and increases advances by one for
+synthetic bold, and applies a measured approximately 0.34 shear for italic.
+Real-font masks remain approximate. Underline and strikeout use the font's
+`post`/`OS/2` metrics, with at least one device pixel of thickness; they do not
+alter advances. Style and transform parameters participate in font-cache keys.
+
+The named `text-styles` native probe uses original controlled glyphs and pinned
+real fonts, verifies the selected font bytes and records outline coordinates.
+The same mismatch gallery accepts `--synthesize-styles` for visual comparison.
 
 For square device pixels, a matching ANSI-subset
 [`VDMX` table](https://learn.microsoft.com/en-us/typography/opentype/spec/vdmx)

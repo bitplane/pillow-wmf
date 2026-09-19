@@ -1,9 +1,10 @@
-"""Explicit font inputs, glyph masks and horizontal GDI layout.
+"""Explicit font inputs, glyph masks and compatible-mode GDI text layout.
 
 Font files, aliases and missing-glyph policy are supplied by the caller, not by
 a WMF. There is no host-font discovery or registry-based font substitution.
 """
 
+from ctypes import byref
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from io import BytesIO
@@ -15,10 +16,18 @@ import freetype as ft
 from fontTools.ttLib import TTFont
 
 from .gdi import UnsupportedOperation
+from .gdi_math import sincos_degrees
 from .mapping import rounded
 from .numeric import float32
 
 C1_CONTROLS = "".join(map(chr, range(0x80, 0xA0)))
+
+
+def text_rotation(escapement):
+    """Share the font scaler's 16.16 rotation with baseline placement."""
+    angle = (escapement + 1800) % 3600 - 1800
+    sine, cosine = sincos_degrees(angle / 10, accurate=bool(angle % 900))
+    return rounded(sine * 65536) / 65536, rounded(cosine * 65536) / 65536
 
 
 def decode_single_byte(data, codepage):
@@ -34,7 +43,7 @@ class Glyph:
     size: tuple[int, int]
     bearing: tuple[int, int]
     pixels: bytes
-    advance: int
+    advance: int | Fraction
     index: int = 0
     channels: int = 1
 
@@ -55,6 +64,10 @@ class RasterFont:
     symbol: bool = False
     missing_glyph: str = "error"
     em_width: float = 0
+    escapement: int = 0
+    synthetic_bold: bool = False
+    synthetic_italic: bool = False
+    decorations: tuple[tuple[int, int], ...] = ()
     _glyphs: dict[str, Glyph] = field(default_factory=dict)
 
     def shape(self, characters, max_pixels):
@@ -71,8 +84,35 @@ class RasterFont:
             # Honour TrueType instructions without inventing auto-hints for
             # unhinted glyphs. Keep bitmap strikes outside this outline slice.
             target = ft.FT_LOAD_TARGET_MONO if self.quality == 3 else ft.FT_LOAD_TARGET_LCD
-            self.font.load_glyph(index, target | ft.FT_LOAD_NO_AUTOHINT | ft.FT_LOAD_NO_BITMAP)
+            flags = target | ft.FT_LOAD_NO_AUTOHINT | ft.FT_LOAD_NO_BITMAP
+            if self.escapement % 900:
+                flags |= ft.FT_LOAD_NO_HINTING
+            self.font.load_glyph(index, flags)
             slot = self.font.glyph
+            advance = (
+                (slot.advance.x + 32) // 64
+                if self.hinted
+                else rounded(self.design_advances[index] * self.advance_scale)
+            )
+            if self.escapement % 900:
+                advance = self.design_advances[index] * Fraction(self.advance_scale)
+            if self.synthetic_bold:
+                ft.FT_Outline_EmboldenXY(byref(slot.outline._FT_Outline), 64, 0)
+                advance += 1
+            if self.synthetic_italic:
+                # Measured native outline shear, distinct from FreeType's
+                # default oblique angle. Real-font masks remain approximate.
+                shear = ft.Matrix(65536, rounded(0.34 * 65536), 0, 65536)
+                ft.FT_Outline_Transform(byref(slot.outline._FT_Outline), byref(shear))
+            if self.escapement:
+                sine, cosine = text_rotation(self.escapement)
+                matrix = ft.Matrix(
+                    rounded(cosine * 65536),
+                    rounded(-sine * 65536),
+                    rounded(sine * 65536),
+                    rounded(cosine * 65536),
+                )
+                ft.FT_Outline_Transform(byref(slot.outline._FT_Outline), byref(matrix))
             bounds = slot.get_glyph().get_cbox(ft.FT_GLYPH_BBOX_PIXELS)
             padding = 2 if self.quality != 3 else 0  # LCD filtering can extend the mask horizontally.
             if (max(1, bounds.xMax - bounds.xMin) + padding) * max(1, bounds.yMax - bounds.yMin) > max_pixels:
@@ -96,9 +136,7 @@ class RasterFont:
                 (bitmap.width // channels, bitmap.rows),
                 (slot.bitmap_left, -slot.bitmap_top),
                 pixels,
-                (slot.advance.x + 32) // 64
-                if self.hinted
-                else rounded(self.design_advances[index] * self.advance_scale),
+                advance,
                 index,
                 channels,
             )
@@ -126,6 +164,8 @@ class FontFace:
             if not self.ascent + self.descent:
                 self.ascent, self.descent = font["hhea"].ascent, -font["hhea"].descent
             self.average_width = font["OS/2"].xAvgCharWidth
+            self.underline_metrics = font["post"].underlinePosition, font["post"].underlineThickness
+            self.strikeout_metrics = font["OS/2"].yStrikeoutPosition, font["OS/2"].yStrikeoutSize
             first = font["OS/2"].usFirstCharIndex
             self.break_character = first + 2 if first <= 1 else 32
             self.design_advances = {i: font["hmtx"][name][0] for i, name in enumerate(font.getGlyphOrder())}
@@ -182,7 +222,17 @@ class FontFace:
             if request.width
             else None
         )
-        return self.at_size(height, width=width, quality=request.quality, missing_glyph=missing_glyph)
+        return self.at_size(
+            height,
+            width=width,
+            quality=request.quality,
+            missing_glyph=missing_glyph,
+            escapement=request.escapement,
+            synthetic_bold=request.weight >= 700 and self.weight < 700,
+            synthetic_italic=bool(request.italic) and not self.italic,
+            underline=bool(request.underline),
+            strikeout=bool(request.strikeout),
+        )
 
     def _em_for_cell(self, height):
         """Use the first exact VDMX cell, or the entry before an overshoot.
@@ -201,14 +251,38 @@ class FontFace:
             previous = em
         return None
 
-    def at_size(self, size, *, width=None, quality=3, missing_glyph="error"):
+    def at_size(
+        self,
+        size,
+        *,
+        width=None,
+        quality=3,
+        missing_glyph="error",
+        escapement=0,
+        synthetic_bold=False,
+        synthetic_italic=False,
+        underline=False,
+        strikeout=False,
+    ):
         if missing_glyph not in ("error", "notdef"):
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
         if size <= 0:
             raise ValueError("Font pixel size must be positive")
         mask_width = rounded(size) if width is None else width
         width = size if width is None else width
-        key = size, width, mask_width, quality, missing_glyph
+        escapement %= 3600
+        key = (
+            size,
+            width,
+            mask_width,
+            quality,
+            missing_glyph,
+            escapement,
+            synthetic_bold,
+            synthetic_italic,
+            underline,
+            strikeout,
+        )
         if key not in self._sizes:
             # Bound the cache independently of the number of WMF font objects.
             if len(self._sizes) >= 32:
@@ -234,6 +308,20 @@ class FontFace:
                 self.symbol,
                 missing_glyph,
                 em_width=width,
+                escapement=escapement,
+                synthetic_bold=synthetic_bold,
+                synthetic_italic=synthetic_italic,
+                decorations=tuple(
+                    (
+                        rounded(position * size / self.units_per_em),
+                        max(1, rounded(thickness * size / self.units_per_em)),
+                    )
+                    for enabled, (position, thickness) in (
+                        (underline, self.underline_metrics),
+                        (strikeout, self.strikeout_metrics),
+                    )
+                    if enabled
+                ),
             )
         return self._sizes[key]
 
@@ -241,13 +329,23 @@ class FontFace:
 class FontCollection:
     """Supplied faces and explicit aliases; never discover or silently replace."""
 
-    def __init__(self, faces=(), *, ansi_codepage=1252, aliases=None, fallbacks=None, missing_glyph="error"):
+    def __init__(
+        self,
+        faces=(),
+        *,
+        ansi_codepage=1252,
+        aliases=None,
+        fallbacks=None,
+        missing_glyph="error",
+        synthesize_styles=False,
+    ):
         if ansi_codepage not in (1252, 1251):
             raise ValueError("ANSI environment must be Windows-1252 or Windows-1251")
         if missing_glyph not in ("error", "notdef"):
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
         self.ansi_codepage = ansi_codepage
         self.missing_glyph = missing_glyph
+        self.synthesize_styles = synthesize_styles
         self.aliases = {name.casefold(): target.casefold() for name, target in (aliases or {}).items()}
         self.fallbacks = {name.casefold(): tuple(targets) for name, targets in (fallbacks or {}).items()}
         self._faces = {}
@@ -262,9 +360,9 @@ class FontCollection:
         fallback_faces = []
         for family in self.fallbacks.get(face.family.casefold(), ()):
             key = family.casefold(), request.weight or 400, bool(request.italic)
-            if key not in self._faces:
+            fallback = self._select_face(key)
+            if fallback is None:
                 raise UnsupportedOperation(f"Fallback font unavailable: {family!r}")
-            fallback = self._faces[key]
             if fallback.symbol:
                 raise UnsupportedOperation("A symbol face cannot be a Unicode fallback")
             fallback_faces.append(fallback)
@@ -282,6 +380,9 @@ class FontCollection:
                     width=raw.em_width if request.width else None,
                     quality=request.quality,
                     missing_glyph=self.missing_glyph,
+                    escapement=request.escapement,
+                    synthetic_bold=request.weight >= 700 and f.weight < 700,
+                    synthetic_italic=bool(request.italic) and not f.italic,
                 )
                 for f in fallback_faces[1:]
             )
@@ -294,12 +395,16 @@ class FontCollection:
         family = decode_single_byte(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).casefold()
         family = self.aliases.get(family, family)
         key = family, request.weight or 400, bool(request.italic)
-        try:
-            return self._faces[key]
-        except KeyError as error:
-            raise UnsupportedOperation(
-                f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}"
-            ) from error
+        face = self._select_face(key)
+        if face is None:
+            raise UnsupportedOperation(f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}")
+        return face
+
+    def _select_face(self, key):
+        face = self._faces.get(key)
+        if face is None and self.synthesize_styles and key[1] in (400, 700):
+            face = self._faces.get((key[0], 400, False))
+        return face
 
     def decode(self, request, face, data):
         if face.symbol:
@@ -334,6 +439,10 @@ class FontRun:
     @property
     def break_character(self):
         return self.primary.break_character
+
+    @property
+    def decorations(self):
+        return self.primary.decorations
 
     def glyph(self, character, max_pixels):
         return self.shape(character, max_pixels)[0]
@@ -416,8 +525,9 @@ def _blank_control(character):
 @dataclass(frozen=True)
 class TextLayout:
     glyphs: tuple[tuple[int, int, Glyph], ...] = ()
-    background: tuple[int, int, int, int] | None = None
-    position: tuple[int | Fraction, int | Fraction] | None = None
+    background: tuple[tuple[int, int], ...] | None = None
+    position: tuple[int | Fraction | float, int | Fraction | float] | None = None
+    decorations: tuple[tuple[tuple[int, int], ...], ...] = ()
 
 
 def layout_text(
@@ -434,12 +544,25 @@ def layout_text(
     extra=0,
     justification=(0, 0),
     characters=None,
+    escapement=0,
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if characters is None:
         characters = decode_single_byte(text, 1252)
     if len(characters) != len(text):
         raise UnsupportedOperation("Multibyte text layout is not implemented")
+    sine, cosine = text_rotation(escapement)
+
+    def project(px, py, *, snap=True):
+        if not escapement % 3600:
+            return px, py
+        dx, dy = float32(px - x), float32(py - y)
+        dx, dy = (
+            float32(float32(dx * cosine) + float32(dy * sine)),
+            float32(float32(dy * cosine) - float32(dx * sine)),
+        )
+        return (x + rounded(dx), y + rounded(dy)) if snap else (x + dx, y + dy)
+
     horizontal, vertical = alignment & 6, alignment & 24
     if alignment & ~31 or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
         raise UnsupportedOperation("Text alignment")
@@ -467,15 +590,20 @@ def layout_text(
             mapped_offsets.append(rounded(device_offset / scale) * scale)
         offsets.append(rounded(mapped_offsets[-1]))
     run_width = total * scale if advances else rounded((total // 65536) / scale) * scale
+    if escapement % 900 and not advances:
+        run_width = Fraction(total, 65536)
     width = rounded(run_width)
     # Monochrome GDI places cached glyphs at integer origins. Centering an
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
     origin_x = x - (width if horizontal == 2 else (width + 1) // 2 if horizontal == 6 else 0)
     baseline = y + (font.ascent if vertical == 0 else -font.descent if vertical == 8 else 0)
     position = (x + (run_width if horizontal == 0 else -run_width), y) if alignment & 1 and horizontal != 6 else None
+    if position is not None:
+        position = project(*position, snap=False)
     positioned = []
     for glyph, offset in zip(glyphs, offsets[:-1], strict=True):
-        positioned.append((origin_x + offset + glyph.bearing[0], baseline + glyph.bearing[1], glyph))
+        gx, gy = project(origin_x + offset, baseline)
+        positioned.append((gx + glyph.bearing[0], gy + glyph.bearing[1], glyph))
     background_width = ceil(total * scale) if advances else ceil((Fraction(total, 65536) // scale) * scale)
     # An opaque run must also cover protruding ink, even with negative spacing
     # or a final explicit advance smaller than the glyph's black box.
@@ -486,5 +614,29 @@ def layout_text(
             for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
         ]
     )
-    background = (origin_x, baseline - font.ascent, right, baseline + font.descent) if opaque else None
-    return TextLayout(tuple(positioned), background, position)
+    background = (
+        tuple(
+            project(px, py)
+            for px, py in (
+                (origin_x, baseline - font.ascent),
+                (right, baseline - font.ascent),
+                (right, baseline + font.descent),
+                (origin_x, baseline + font.descent),
+            )
+        )
+        if opaque
+        else None
+    )
+    decorations = tuple(
+        tuple(
+            project(px, py)
+            for px, py in (
+                (origin_x, baseline - offset),
+                (origin_x + width, baseline - offset),
+                (origin_x + width, baseline - offset + thickness),
+                (origin_x, baseline - offset + thickness),
+            )
+        )
+        for offset, thickness in getattr(font, "decorations", ())
+    )
+    return TextLayout(tuple(positioned), background, position, decorations)

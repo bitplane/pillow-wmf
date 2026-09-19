@@ -63,7 +63,12 @@ class MetricFont:
 def test_alignment_and_explicit_advances_use_metrics_not_ink_bounds(horizontal, origin_x, vertical, baseline):
     result = layout_text(MetricFont(), b"A B", 30, 30, horizontal | vertical, (9, 3, 7), opaque=True, max_pixels=10)
     assert [(x, y) for x, y, _ in result.glyphs] == [(origin_x + n - 1, baseline - 7) for n in (0, 9, 12)]
-    assert result.background == (origin_x, baseline - 9, origin_x + 19, baseline + 3)
+    assert result.background == (
+        (origin_x, baseline - 9),
+        (origin_x + 19, baseline - 9),
+        (origin_x + 19, baseline + 3),
+        (origin_x, baseline + 3),
+    )
     assert result.position is None
 
 
@@ -78,9 +83,7 @@ def test_current_position_is_logical_and_saved_independently_of_glyph_cache(dc):
     assert dc._position == (8, 25)
 
 
-@pytest.mark.parametrize(
-    "changes", [{"quality": 4}, {"charset": 2}, {"underline": 1}, {"orientation": 900}, {"escapement": 900}]
-)
+@pytest.mark.parametrize("changes", [{"quality": 4}, {"charset": 2}])
 def test_unimplemented_realization_fails_before_painting_or_committing(dc, changes):
     dc.select_object(dc.create_font(replace(REQUEST, **changes)))
     image, calls = dc.image.tobytes(), list(dc.calls)

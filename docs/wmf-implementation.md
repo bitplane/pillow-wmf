@@ -146,8 +146,9 @@ creation does not resolve a physical face. Horizontal Western/Cyrillic and symbo
 supplied TrueType faces, with sizing, positive mapping scales, spacing,
 alignment, signed advances, clipping and current-position updates. Monochrome
 masks and an approximate RGB-subpixel default-quality profile are available.
-Aliases and missing-glyph fallback are explicit caller policies. Other encodings,
-automatic font linking, rotation/reflection and styles remain unsupported; see
+Aliases and missing-glyph fallback are explicit caller policies. Other encodings
+and automatic font linking remain unsupported; transformed text
+and explicitly enabled style synthesis remain experimental. See
 [text support](gdi-text.md) for the exact boundary.
 
 Pen creation follows `CreatePenIndirect`/`CreatePen`, not `ExtCreatePen`:
