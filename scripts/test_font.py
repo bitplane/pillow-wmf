@@ -72,6 +72,25 @@ def font_bytes():
     return stream.getvalue()
 
 
+def device_font_bytes():
+    """Original outlines with conspicuous, sparse device-height overrides."""
+    from fontTools.ttLib import TTFont, newTable
+
+    with TTFont(BytesIO(font_bytes()), recalcTimestamp=False) as font:
+        for record in font["name"].names:
+            if record.nameID in (1, 3, 4, 6):
+                record.string = "Pillow WMF Device Metrics"
+        table = newTable("VDMX")
+        table.version = 0
+        table.numRecs = table.numRatios = 1
+        table.ratRanges = [dict(bCharSet=1, xRatio=1, yStartRatio=1, yEndRatio=1, groupIndex=0)]
+        table.groups = [{16: (15, -4), 17: (16, -5), 18: (16, -5), 20: (17, -6), 24: (23, -6)}]
+        font["VDMX"] = table
+        data = BytesIO()
+        font.save(data)
+    return data.getvalue()
+
+
 if __name__ == "__main__":
     FONT_PATH.parent.mkdir(parents=True, exist_ok=True)
     FONT_PATH.write_bytes(font_bytes())

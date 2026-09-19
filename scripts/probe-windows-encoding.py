@@ -26,6 +26,7 @@ def main():
     spec.loader.exec_module(probe)
     if args.sizing_only:
         inspect_fallback_sizing(args.output, probe)
+        inspect_device_metrics(args.output, probe)
         return
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     convert = bind(
@@ -150,7 +151,7 @@ def inspect_fallback_sizing(output, probe):
     with TTFont(path) as font:
         tables = {tag: font.getTableData(tag) for tag in ("head", "hmtx", "glyf", "cmap")}
     with private_fonts([path]):
-        for height, width in ((-12, 0), (-24, 0), (-31, 0), (29, 0), (-24, 11)):
+        for height, width in ((-12, 0), (-24, 0), (-31, 0), (29, 0), (-24, 11), (29, 11)):
             for family in (ENCODING_FAMILY, "Microsoft Sans Serif", "PMingLiU"):
                 recorder = Recorder()
                 recorder.set_window_extent(*SIZE)
@@ -186,6 +187,26 @@ def inspect_fallback_sizing(output, probe):
                 inspect_native_text(source)
                 (output / f"{name}.wmf").write_bytes(source)
                 render_wmf(source, *SIZE).save(output / f"{name}.png")
+
+
+def inspect_device_metrics(output, probe):
+    """Measure the same synthetic VDMX font used by local unit tests."""
+    from test_font import device_font_bytes
+
+    path = output / "device-metrics.ttf"
+    path.write_bytes(device_font_bytes())
+    with TTFont(path) as font:
+        tables = {tag: font.getTableData(tag) for tag in ("head", "hmtx", "glyf", "cmap", "VDMX")}
+    family = "Pillow WMF Device Metrics"
+    with private_fonts([path]):
+        for height in (-16, -17, -18, -19, -20, -24, 15, 19, 21, 22, 23, 29, 30):
+            recorder = Recorder()
+            recorder.select_object(
+                recorder.create_font(Font(height=height, quality=3, face_name=family.encode().ljust(32, b"\0")))
+            )
+            recorder.text_out(12, 40, b"AB")
+            print(f"\n[device-metrics-{height}]", flush=True)
+            probe.observe(recorder.to_bytes(), family=family, sample=b"AB", tables=tables)
 
 
 def inspect_native_text(source):
