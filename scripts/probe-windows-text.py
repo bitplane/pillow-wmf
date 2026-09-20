@@ -107,7 +107,7 @@ def observe(
                 if function in (0x012D, 0x0521, 0x0A32):  # SelectObject, TextOut, ExtTextOut
                     selected = ctypes.create_unicode_buffer(64)
                     check(face(hdc, len(selected), selected), "GetTextFaceW")
-                    if selected.value != family:
+                    if family is not None and selected.value != family:
                         raise RuntimeError(f"Unexpected font substitution: {selected.value!r}")
                     if function == 0x012D:
                         for tag, expected in (tables or {}).items():

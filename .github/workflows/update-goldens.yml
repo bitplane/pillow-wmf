@@ -18,6 +18,7 @@ on:
           - mapping
           - precision
           - text
+          - symbol
           - real-text
           - text-layout
           - text-styles
@@ -153,6 +154,19 @@ jobs:
         with:
           name: real-text-probe
           path: real-text-probe/
+          retention-days: 7
+      - name: Probe native Symbol fonts
+        if: inputs.probe == 'symbol'
+        shell: bash
+        run: |
+          mkdir -p symbol-probe
+          python scripts/probe-windows-symbol.py --output symbol-probe | tee symbol-probe/observations.txt
+      - name: Upload Symbol observations
+        if: always() && inputs.probe == 'symbol'
+        uses: actions/upload-artifact@v4
+        with:
+          name: symbol-probe
+          path: symbol-probe/
           retention-days: 7
       - name: Probe extended DIB device acceptance
         if: inputs.probe == 'dib-boundaries'
