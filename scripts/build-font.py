@@ -88,9 +88,11 @@ def build_font(data, metrics):
             usWinAscent=1841,
             usWinDescent=432,
             xAvgCharWidth=1822,
+            yStrikeoutPosition=800,
+            yStrikeoutSize=100,
             ulCodePageRange1=1,
         )
-        builder.setupPost()
+        builder.setupPost(underlinePosition=-200, underlineThickness=100)
         builder.font["head"].created = builder.font["head"].modified = 2082844800
         builder.font.recalcTimestamp = False
         output = BytesIO()

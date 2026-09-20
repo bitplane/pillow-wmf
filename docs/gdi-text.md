@@ -131,7 +131,8 @@ Space is preserved; control bytes, DEL and the unencoded Windows-logo byte raise
 an error. Supplementary-plane symbols remain one character per input byte, so
 explicit WMF advance arrays retain their original indexing. The fallback uses
 measured Wingdings design-space advances, side bearings, glyph bounds, average
-width and line metrics. Each available Noto outline is affinely fitted to its
+width, line metrics and underline/strikeout positions and thicknesses.
+Each available Noto outline is affinely fitted to its
 mapped glyph's design bounds before ordinary GDI realization. This rule is
 independent of the input file, requested size and canvas. Native hinting and
 original artwork are not reproduced; glyph appearance remains approximate.

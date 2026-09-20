@@ -82,6 +82,8 @@ def test_wmf_playback_preserves_byte_advances_for_supplementary_symbols():
 def test_fallback_preserves_source_design_metrics_for_every_available_symbol():
     face = FontCollection(wingdings_fallback=True).resolve(REQUEST)
     assert (face.units_per_em, face.average_width, face.ascent, face.descent) == (2048, 1822, 1841, 432)
+    assert face.underline_metrics == (-200, 100)
+    assert face.strikeout_metrics == (800, 100)
     with TTFont(BytesIO(face.data)) as font:
         cmap = font.getBestCmap()
         lines = (Path(__file__).resolve().parents[2] / "src/fonts/wingdings-metrics.txt").read_text().splitlines()
@@ -127,3 +129,24 @@ def test_fallback_victory_hand_uses_design_metrics_not_canvas_fitting(size):
     # Loading the Unicode face directly never applies Wingdings metrics.
     original = FontFace.from_path(Path(__file__).resolve().parents[2] / "src/fonts/NotoSansSymbols2-Regular.ttf")
     assert (original.units_per_em, original.average_width) == (1000, 830)
+
+
+@pytest.mark.parametrize("angle", [0, 150, 900])
+def test_wingdings_decorations_retain_nonzero_thickness_when_rotated(angle):
+    fonts = FontCollection(wingdings_fallback=True)
+    request = replace(REQUEST, height=-40, quality=2, underline=1, strikeout=1, escapement=angle)
+    face = fonts.resolve(request)
+    font = fonts.realize(request, face, (1, 1))
+    # Native 40-pixel Wingdings: underline four pixels below baseline,
+    # strikeout sixteen above it, each two pixels thick.
+    assert font.decorations == ((-4, 2), (16, 2))
+    dc = RasterContext(160, 160, fonts=fonts)
+    dc.set_background_mode(1)
+    dc.set_text_alignment(24)
+    dc.select_object(dc.create_font(request))
+    dc.ext_text_out(30, 110, b" ", advances=(90,))
+    assert any(pixel != (255, 255, 255) for pixel in dc.image.get_flattened_data())
+    if angle == 0:
+        for y in (94, 95, 114, 115):
+            assert dc.image.getpixel((60, y)) == (0, 0, 0)
+        assert dc.image.getpixel((60, 110)) == (255, 255, 255)
