@@ -65,6 +65,15 @@ def placement_cases():
     ):
         variants.append((f"pdy-{name}", b"ABA", 0x2000, (19, 7, 23, -5, 17, 11), changes, alignment, background))
     variants.append(("glyph-pdy", indexed, 0x2010, (19, 7, 23, -5, 17, 11) * 2, {}, 25, 1))
+    variants.extend(
+        (f"pdy-{name}", b"ABA", 0x2000, spacing, {}, 25, 2)
+        for name, spacing in (
+            ("flat", (19, 0, 23, 0, 17, 0)),
+            ("backwards", (-19, -7, -23, 5, -17, -11)),
+            ("overlap", (3, 5, -7, -12, 0, 40)),
+            ("no-spacing", ()),
+        )
+    )
     for name, text, options, advances, changes, alignment, background in variants:
         dc = Recorder()
         dc.select_object(dc.create_font(replace(REQUEST, **changes)))
