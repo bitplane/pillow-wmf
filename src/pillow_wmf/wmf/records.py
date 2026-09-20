@@ -26,7 +26,6 @@ class Record:
     wire_function: int | None = None
     trailing: bytes = b""
     kind: ClassVar[RecordType]
-    operation: ClassVar[str | None] = None
 
     def __post_init__(self):
         freeze_fields(self)
@@ -51,7 +50,6 @@ class Record:
 class FixedRecord(Record):
     wire_layout: ClassVar[str]
     fields: ClassVar[tuple[str, ...]]
-    optional_reserved: ClassVar[bool] = False
 
     def payload(self) -> bytes:
         return pack(self.wire_layout, *(getattr(self, name) for name in self.fields))

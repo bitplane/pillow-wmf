@@ -8,6 +8,7 @@ from fontTools.ttLib import TTCollection
 from PIL import Image, ImageChops
 
 from pillow_wmf import FontCollection, FontFace, Metafile, RasterContext, UnsupportedOperation, play
+from pillow_wmf.wmf.variable import ExtTextOut, TextOut
 
 
 def load_faces(path):
@@ -61,7 +62,7 @@ def gallery(
     for index, (wmf, png) in enumerate(inputs):
         try:
             metafile = Metafile.from_bytes(wmf.read_bytes())
-            if text_only and not any(r.operation in ("text_out", "ext_text_out") for r in metafile.records):
+            if text_only and not any(isinstance(r, (TextOut, ExtTextOut)) for r in metafile.records):
                 continue
             with Image.open(png) as image:
                 native = image.convert("RGB")

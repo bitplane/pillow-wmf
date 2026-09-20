@@ -49,6 +49,9 @@ def test_windows_metrics_are_not_freetype_line_metrics(face):
 
 
 class MetricFont:
+    break_character = 32
+    decorations = ()
+
     def shape(self, characters, max_pixels):
         return tuple(self.glyph(character, max_pixels) for character in characters)
 

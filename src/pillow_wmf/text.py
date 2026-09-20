@@ -615,7 +615,7 @@ def layout_text(
             mapped_offsets.append(total * scale)
         else:
             total += glyph.advance * 65536 + int(extra * scale * 65536)
-            if ord(characters[index]) == getattr(font, "break_character", 32):
+            if ord(characters[index]) == font.break_character:
                 total += break_step
             # The accumulated device advance uses nearest-even ties before
             # conversion to logical coordinates, whose rounding is distinct.
@@ -670,6 +670,6 @@ def layout_text(
                 (origin_x, baseline - offset + thickness),
             )
         )
-        for offset, thickness in getattr(font, "decorations", ())
+        for offset, thickness in font.decorations
     )
     return TextLayout(tuple(positioned), background, position, decorations)

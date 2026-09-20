@@ -252,12 +252,3 @@ def arc_figure(
     else:
         raise ValueError(f"Unknown arc closure: {closure}")
     return DevicePath((*curves, *closing), closed=True)
-
-
-def arc_path(left: int, top: int, right: int, bottom: int, start: Point, end: Point) -> Polygon:
-    """Flatten Arc geometry for cosmetic coverage or path diagnostics."""
-    cubics = arc_cubics(left, top, right, bottom, start, end)
-    path = [cubics[0][0]]
-    for cubic in cubics:
-        path.extend(flatten_cubic(cubic))
-    return path[:-1] if start == end else path

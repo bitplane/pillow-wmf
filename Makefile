@@ -16,7 +16,7 @@ dev: .venv/.installed-dev pre-commit font  ## prepare local repo and venv for de
 test: .venv/.installed-dev font  ## run the project's tests
 	scripts/test.sh unit
 
-compatibility: .venv/.installed-dev  ## run compatibility tests against committed reference images
+compatibility: .venv/.installed-dev font  ## run compatibility tests against committed reference images
 	scripts/test.sh compatibility
 
 test-all: .venv/.installed-dev font  ## run unit and compatibility tests

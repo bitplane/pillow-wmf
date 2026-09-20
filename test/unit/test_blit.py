@@ -3,7 +3,7 @@ from itertools import product
 import pytest
 
 from pillow_wmf import FormatError, RasterContext
-from pillow_wmf.bitmap import RGBBitmap, encode_dib24, read_dib24
+from pillow_wmf.bitmap import RGBBitmap, encode_dib24, read_dib
 from pillow_wmf.blit import BlitAxis, StretchAxis
 from pillow_wmf.raster import SourceTransfer, TransferAction
 from pillow_wmf.wmf.objects import BitmapData
@@ -176,12 +176,12 @@ def test_device_transfer_maps_origin_but_not_dimensions_or_source():
 def test_band_decoder_checks_requested_buffer_and_header_budget():
     source = encode_dib24(RGBBitmap(1, 4, bytes(range(12))))
     band = BitmapData("dib", source.data[:44])
-    layout = read_dib24(band)
+    layout = read_dib(band)
     assert layout.decode(1).pixel(0, 0) == (9, 10, 11)
     with pytest.raises(FormatError, match="Truncated"):
         layout.decode(2)
     with pytest.raises(FormatError, match="limit"):
-        read_dib24(band, max_pixels=3)
+        read_dib(band, max_pixels=3)
     for rows in (0, -1, 5):
         with pytest.raises(ValueError):
             layout.decode(rows)

@@ -108,7 +108,6 @@ class DibStretchBlt(StretchBlit):
 @dataclass(frozen=True)
 class SetDibToDev(Record):
     kind: ClassVar[RecordType] = RecordType.SETDIBTODEV
-    operation: ClassVar[str] = "set_dib_to_device"
     x: int
     y: int
     width: int
@@ -161,7 +160,6 @@ class SetDibToDev(Record):
 @dataclass(frozen=True)
 class StretchDib(Record):
     kind: ClassVar[RecordType] = RecordType.STRETCHDIB
-    operation: ClassVar[str] = "stretch_dib"
     x: int
     y: int
     width: int

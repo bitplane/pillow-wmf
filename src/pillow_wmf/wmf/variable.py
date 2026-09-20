@@ -45,7 +45,6 @@ class Polyline(PointsRecord):
 @dataclass(frozen=True)
 class PolyPolygon(Record):
     kind: ClassVar[RecordType] = RecordType.POLYPOLYGON
-    operation: ClassVar[str] = "poly_polygon"
     polygons: tuple[tuple[tuple[int, int], ...], ...]
 
     def payload(self) -> bytes:
@@ -79,7 +78,6 @@ def text_padding(text: bytes, padding: bytes | None) -> bytes:
 @dataclass(frozen=True)
 class TextOut(Record):
     kind: ClassVar[RecordType] = RecordType.TEXTOUT
-    operation: ClassVar[str] = "text_out"
     x: int
     y: int
     text: bytes
@@ -103,7 +101,6 @@ class TextOut(Record):
 @dataclass(frozen=True)
 class ExtTextOut(Record):
     kind: ClassVar[RecordType] = RecordType.EXTTEXTOUT
-    operation: ClassVar[str] = "ext_text_out"
     x: int
     y: int
     text: bytes
@@ -140,7 +137,6 @@ class ExtTextOut(Record):
 @dataclass(frozen=True)
 class CreateFontIndirect(Record):
     kind: ClassVar[RecordType] = RecordType.CREATEFONTINDIRECT
-    operation: ClassVar[str] = "create_font"
     font: Font
 
     def payload(self) -> bytes:
@@ -191,7 +187,6 @@ class SetPalEntries(PaletteRecord):
 @dataclass(frozen=True)
 class CreateRegion(Record):
     kind: ClassVar[RecordType] = RecordType.CREATEREGION
-    operation: ClassVar[str] = "create_region"
     region: Region
 
     def payload(self) -> bytes:
@@ -207,7 +202,6 @@ class CreateRegion(Record):
 @dataclass(frozen=True)
 class CreatePatternBrush(Record):
     kind: ClassVar[RecordType] = RecordType.CREATEPATTERNBRUSH
-    operation: ClassVar[str] = "create_pattern_brush"
     bitmap: BitmapData
 
     def payload(self) -> bytes:
@@ -226,7 +220,6 @@ class CreatePatternBrush(Record):
 @dataclass(frozen=True)
 class DibCreatePatternBrush(Record):
     kind: ClassVar[RecordType] = RecordType.DIBCREATEPATTERNBRUSH
-    operation: ClassVar[str] = "create_dib_pattern_brush"
     style: int
     color_usage: int
     bitmap: BitmapData
@@ -246,7 +239,6 @@ class DibCreatePatternBrush(Record):
 @dataclass(frozen=True)
 class Escape(Record):
     kind: ClassVar[RecordType] = RecordType.ESCAPE
-    operation: ClassVar[str] = "escape"
     escape_function: int
     data: bytes = b""
     padding: bytes | None = None

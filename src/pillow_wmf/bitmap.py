@@ -420,10 +420,6 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
     )
 
 
-# Retain the old entry point for callers; all raster paths use the generic name.
-read_dib24 = read_dib
-
-
 def decode_dib(
     bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFAULT_MAX_BITMAP_PIXELS, palette=None
 ) -> RGBBitmap:

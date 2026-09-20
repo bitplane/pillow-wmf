@@ -68,7 +68,7 @@ coverage must be tracked separately when implementation starts.
 | `META_CREATEREGION` | `0x06FF` | 2.3.4.6 | Scan bands and repeated endpoint counts. |
 | `META_DELETEOBJECT` | `0x01F0` | 2.3.4.7 | Free file slot; verify selected/saved object behavior. |
 | `META_DIBCREATEPATTERNBRUSH` | `0x0142` | 2.3.4.8 | Style-dependent interpretation; verify BS_PATTERN case. |
-| `META_SELECTCLIPREGION` | `0x012C` | 2.3.4.9 | Region selection; verify reset/null convention experimentally. |
+| `META_SELECTCLIPREGION` | `0x012C` | 2.3.4.9 | Region selection; index zero resets clipping (see [region contracts](gdi-regions.md)). |
 | `META_SELECTOBJECT` | `0x012D` | 2.3.4.10 | Resolve file index to backend object; palette selection is separate. |
 | `META_SELECTPALETTE` | `0x0234` | 2.3.4.11 | Fixed fields; operation-specific state/geometry tests. |
 

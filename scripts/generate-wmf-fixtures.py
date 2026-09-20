@@ -8,6 +8,7 @@ from struct import pack_into
 
 from pillow_wmf import Metafile, Recorder, play
 from pillow_wmf.bitmap import RGBBitmap, encode_dib24
+from pillow_wmf.wmf.fixed import PatBlt
 from pillow_wmf.wmf.objects import BitmapData, Region, Scan
 
 FIXTURES = Path(__file__).resolve().parents[1] / "test" / "compatibility" / "wmf"
@@ -1431,7 +1432,7 @@ def pat_blt_cases():
             records = (
                 recorder.records[:-4]
                 if kind == "blits"
-                else [record for record in recorder.records if record.operation != "pat_blt"]
+                else [record for record in recorder.records if not isinstance(record, PatBlt)]
             )
             filtered = Recorder()
             play(Metafile.build(records), filtered, strict=True)

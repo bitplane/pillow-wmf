@@ -13,7 +13,6 @@ class Eof(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.EOF
     wire_layout: ClassVar[str] = ""
     fields: ClassVar[tuple[str, ...]] = ()
-    operation: ClassVar[str | None] = None
 
 
 @register
@@ -22,7 +21,6 @@ class SaveDC(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SAVEDC
     wire_layout: ClassVar[str] = ""
     fields: ClassVar[tuple[str, ...]] = ()
-    operation: ClassVar[str | None] = "save_dc"
 
 
 @register
@@ -31,7 +29,6 @@ class RealizePalette(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.REALIZEPALETTE
     wire_layout: ClassVar[str] = ""
     fields: ClassVar[tuple[str, ...]] = ()
-    operation: ClassVar[str | None] = "realize_palette"
 
 
 @register
@@ -40,8 +37,6 @@ class SetRelAbs(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETRELABS
     wire_layout: ClassVar[str] = ""
     fields: ClassVar[tuple[str, ...]] = ()
-    operation: ClassVar[str | None] = None
-    optional_reserved: ClassVar[bool] = True
 
 
 @register
@@ -50,8 +45,6 @@ class SetBkMode(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETBKMODE
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("mode",)
-    operation: ClassVar[str | None] = "set_background_mode"
-    optional_reserved: ClassVar[bool] = True
     mode: int
 
 
@@ -61,7 +54,6 @@ class SetMapMode(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETMAPMODE
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("mode",)
-    operation: ClassVar[str | None] = "set_map_mode"
     mode: int
 
 
@@ -71,8 +63,6 @@ class SetROP2(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETROP2
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("mode",)
-    operation: ClassVar[str | None] = "set_rop2"
-    optional_reserved: ClassVar[bool] = True
     mode: int
 
 
@@ -82,8 +72,6 @@ class SetPolyFillMode(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETPOLYFILLMODE
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("mode",)
-    operation: ClassVar[str | None] = "set_polygon_fill_mode"
-    optional_reserved: ClassVar[bool] = True
     mode: int
 
 
@@ -93,8 +81,6 @@ class SetStretchBltMode(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETSTRETCHBLTMODE
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("mode",)
-    operation: ClassVar[str | None] = "set_stretch_mode"
-    optional_reserved: ClassVar[bool] = True
     mode: int
 
 
@@ -104,7 +90,6 @@ class SetTextCharExtra(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETTEXTCHAREXTRA
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("extra",)
-    operation: ClassVar[str | None] = "set_text_character_extra"
     extra: int
 
 
@@ -114,7 +99,6 @@ class RestoreDC(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.RESTOREDC
     wire_layout: ClassVar[str] = "h"
     fields: ClassVar[tuple[str, ...]] = ("saved_dc",)
-    operation: ClassVar[str | None] = "restore_dc"
     saved_dc: int
 
 
@@ -124,7 +108,6 @@ class ResizePalette(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.RESIZEPALETTE
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("count",)
-    operation: ClassVar[str | None] = "resize_palette"
     count: int
 
 
@@ -134,7 +117,6 @@ class DeleteObject(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.DELETEOBJECT
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("object_index",)
-    operation: ClassVar[str | None] = "delete_object"
     object_index: int
 
 
@@ -144,7 +126,6 @@ class SelectObject(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SELECTOBJECT
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("object_index",)
-    operation: ClassVar[str | None] = "select_object"
     object_index: int
 
 
@@ -154,7 +135,6 @@ class SelectPalette(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SELECTPALETTE
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("palette",)
-    operation: ClassVar[str | None] = "select_palette"
     palette: int
 
 
@@ -164,7 +144,6 @@ class SelectClipRegion(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SELECTCLIPREGION
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("region",)
-    operation: ClassVar[str | None] = "select_clip_region"
     region: int
 
 
@@ -174,7 +153,6 @@ class PaintRegion(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.PAINTREGION
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("region",)
-    operation: ClassVar[str | None] = "paint_region"
     region: int
 
 
@@ -184,7 +162,6 @@ class InvertRegion(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.INVERTREGION
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("region",)
-    operation: ClassVar[str | None] = "invert_region"
     region: int
 
 
@@ -194,8 +171,6 @@ class SetTextAlign(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETTEXTALIGN
     wire_layout: ClassVar[str] = "H"
     fields: ClassVar[tuple[str, ...]] = ("alignment",)
-    operation: ClassVar[str | None] = "set_text_alignment"
-    optional_reserved: ClassVar[bool] = True
     alignment: int
 
 
@@ -205,7 +180,6 @@ class SetBkColor(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETBKCOLOR
     wire_layout: ClassVar[str] = "I"
     fields: ClassVar[tuple[str, ...]] = ("color",)
-    operation: ClassVar[str | None] = "set_background_color"
     color: int
 
 
@@ -215,7 +189,6 @@ class SetTextColor(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETTEXTCOLOR
     wire_layout: ClassVar[str] = "I"
     fields: ClassVar[tuple[str, ...]] = ("color",)
-    operation: ClassVar[str | None] = "set_text_color"
     color: int
 
 
@@ -225,7 +198,6 @@ class SetMapperFlags(FixedRecord):
     kind: ClassVar[RecordType] = RecordType.SETMAPPERFLAGS
     wire_layout: ClassVar[str] = "I"
     fields: ClassVar[tuple[str, ...]] = ("flags",)
-    operation: ClassVar[str | None] = "set_mapper_flags"
     flags: int
 
 
@@ -238,7 +210,6 @@ class LineTo(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "line_to"
     y: int
     x: int
 
@@ -252,7 +223,6 @@ class MoveTo(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "move_to"
     y: int
     x: int
 
@@ -266,7 +236,6 @@ class SetWindowOrg(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "set_window_origin"
     y: int
     x: int
 
@@ -280,7 +249,6 @@ class SetWindowExt(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "set_window_extent"
     y: int
     x: int
 
@@ -294,7 +262,6 @@ class SetViewportOrg(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "set_viewport_origin"
     y: int
     x: int
 
@@ -308,7 +275,6 @@ class SetViewportExt(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "set_viewport_extent"
     y: int
     x: int
 
@@ -322,7 +288,6 @@ class OffsetWindowOrg(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "offset_window_origin"
     y: int
     x: int
 
@@ -336,7 +301,6 @@ class OffsetViewportOrg(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "offset_viewport_origin"
     y: int
     x: int
 
@@ -350,7 +314,6 @@ class OffsetClipRgn(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "offset_clip_region"
     y: int
     x: int
 
@@ -366,7 +329,6 @@ class ScaleWindowExt(FixedRecord):
         "x_denominator",
         "x_numerator",
     )
-    operation: ClassVar[str | None] = "scale_window_extent"
     y_denominator: int
     y_numerator: int
     x_denominator: int
@@ -384,7 +346,6 @@ class ScaleViewportExt(FixedRecord):
         "x_denominator",
         "x_numerator",
     )
-    operation: ClassVar[str | None] = "scale_viewport_extent"
     y_denominator: int
     y_numerator: int
     x_denominator: int
@@ -402,7 +363,6 @@ class ExcludeClipRect(FixedRecord):
         "top",
         "left",
     )
-    operation: ClassVar[str | None] = "exclude_clip_rect"
     bottom: int
     right: int
     top: int
@@ -420,7 +380,6 @@ class IntersectClipRect(FixedRecord):
         "top",
         "left",
     )
-    operation: ClassVar[str | None] = "intersect_clip_rect"
     bottom: int
     right: int
     top: int
@@ -438,7 +397,6 @@ class Rectangle(FixedRecord):
         "top",
         "left",
     )
-    operation: ClassVar[str | None] = "rectangle"
     bottom: int
     right: int
     top: int
@@ -456,7 +414,6 @@ class Ellipse(FixedRecord):
         "top",
         "left",
     )
-    operation: ClassVar[str | None] = "ellipse"
     bottom: int
     right: int
     top: int
@@ -478,7 +435,6 @@ class Arc(FixedRecord):
         "top",
         "left",
     )
-    operation: ClassVar[str | None] = "arc"
     end_y: int
     end_x: int
     start_y: int
@@ -504,7 +460,6 @@ class Chord(FixedRecord):
         "top",
         "left",
     )
-    operation: ClassVar[str | None] = "chord"
     end_y: int
     end_x: int
     start_y: int
@@ -530,7 +485,6 @@ class Pie(FixedRecord):
         "top",
         "left",
     )
-    operation: ClassVar[str | None] = "pie"
     end_y: int
     end_x: int
     start_y: int
@@ -554,7 +508,6 @@ class RoundRect(FixedRecord):
         "top",
         "left",
     )
-    operation: ClassVar[str | None] = "round_rect"
     ellipse_height: int
     ellipse_width: int
     bottom: int
@@ -573,7 +526,6 @@ class SetPixel(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "set_pixel"
     color: int
     y: int
     x: int
@@ -589,7 +541,6 @@ class FloodFill(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "flood_fill"
     color: int
     y: int
     x: int
@@ -606,7 +557,6 @@ class ExtFloodFill(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "ext_flood_fill"
     mode: int
     color: int
     y: int
@@ -625,7 +575,6 @@ class PatBlt(FixedRecord):
         "y",
         "x",
     )
-    operation: ClassVar[str | None] = "pat_blt"
     rop: int
     height: int
     width: int
@@ -642,7 +591,6 @@ class FillRegion(FixedRecord):
         "region",
         "brush",
     )
-    operation: ClassVar[str | None] = "fill_region"
     region: int
     brush: int
 
@@ -658,7 +606,6 @@ class FrameRegion(FixedRecord):
         "height",
         "width",
     )
-    operation: ClassVar[str | None] = "frame_region"
     region: int
     brush: int
     height: int
@@ -674,7 +621,6 @@ class SetTextJustification(FixedRecord):
         "break_count",
         "break_extra",
     )
-    operation: ClassVar[str | None] = "set_text_justification"
     break_count: int
     break_extra: int
 
@@ -688,7 +634,6 @@ class SetLayout(FixedRecord):
         "layout",
         "reserved",
     )
-    operation: ClassVar[str | None] = "set_layout"
     layout: int
     reserved: int
 
@@ -704,7 +649,6 @@ class CreatePenIndirect(FixedRecord):
         "unused_y",
         "color",
     )
-    operation: ClassVar[str | None] = "create_pen"
     style: int
     width: int
     unused_y: int
@@ -721,7 +665,6 @@ class CreateBrushIndirect(FixedRecord):
         "color",
         "hatch",
     )
-    operation: ClassVar[str | None] = "create_brush"
     style: int
     color: int
     hatch: int
