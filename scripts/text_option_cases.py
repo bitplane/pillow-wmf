@@ -54,6 +54,8 @@ def rtl_cases():
         ("angle", 25, 0, {"escapement": 300}, (128, 128)),
         ("fractional", 25, 0, {}, (192, 160)),
         ("pdy", 25, 0x2000, {}, (128, 128)),
+        ("pdy-right", 27, 0x2000, {}, (128, 128)),
+        ("pdy-center", 31, 0x2000, {}, (128, 128)),
     ):
         dc = Recorder()
         dc.select_object(dc.create_font(replace(REQUEST, **changes)))
