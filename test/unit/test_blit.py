@@ -192,7 +192,9 @@ def test_invalid_transfer_does_not_commit_or_modify_image(operation):
     source = encode_dib24(RGBBitmap(1, 1, bytes((1, 2, 3))))
     source = BitmapData("dib", source.data[:39])
     context = RasterContext(2, 2)
-    with pytest.raises(FormatError, match="Truncated"):
+    from pillow_wmf import UnsupportedOperation
+
+    with pytest.raises(UnsupportedOperation, match="Truncated"):
         if operation == "dib_bit_blt":
             context.dib_bit_blt(0, 0, 1, 1, 0, 0, 0xCC0020, source)
         else:

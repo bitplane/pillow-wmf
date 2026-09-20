@@ -41,7 +41,8 @@ def play(
     free = list(range(len(slots)))
     free_slots = set(free)
     omissions = []
-    save_depth = 0
+    saved = []
+    backend_saved = []
 
     def release(slot):
         if slot not in free_slots:
@@ -62,16 +63,20 @@ def play(
         if record.kind == RecordType.SETRELABS:
             continue  # Required-ignore, even in strict mode.
         name, binding = BY_KIND[record.kind]
-        if name == "save_dc" and save_depth >= limits.max_saved_states:
+        if name == "save_dc" and max(len(saved), len(backend_saved)) >= limits.max_saved_states:
             raise PlaybackError(f"Record {index}: saved-state limit exceeded")
         if name == "restore_dc":
             level = record.saved_dc
-            target = level if level > 0 else save_depth + level + 1
-            if level == 0 or target < 1 or target > save_depth:
+            target = level if level > 0 else len(saved) + level + 1
+            if level == 0 or target < 1 or target > len(saved):
                 raise PlaybackError(f"Record {index}: invalid saved DC reference")
-            save_depth = target - 1
+            native_saved = saved[target - 1]
+            del saved[target - 1 :]
+            if native_saved is None:
+                omit(index, record.function(), "Saved DC was unsupported")
+                continue
         elif name == "save_dc":
-            save_depth += 1
+            saved.append(None)
         references = dict(binding.references)
         arguments = {}
         missing = False
@@ -96,6 +101,12 @@ def play(
         for parameter in binding.signed_words:
             value = arguments[parameter]
             arguments[parameter] = value - 0x10000 if value & 0x8000 else value
+
+        if name == "restore_dc":
+            # File save levels include omitted saves. Backend levels do not,
+            # and may also include frames left by a rejected restore.
+            native_index = backend_saved.index(native_saved)
+            arguments["saved_dc"] = native_saved if level > 0 else native_index - len(backend_saved)
 
         slot = None
         if record.kind in CREATION_TYPES:
@@ -126,6 +137,13 @@ def play(
             slots[slot] = result
             if backend.is_null_object(result):
                 release(slot)
+        if name == "save_dc":
+            if not isinstance(result, int) or isinstance(result, bool) or result <= 0 or result in backend_saved:
+                raise PlaybackError(f"Record {index}: save did not return a valid saved DC identifier")
+            saved[-1] = result
+            backend_saved.append(result)
+        elif name == "restore_dc":
+            del backend_saved[native_index:]
         if record.kind == RecordType.DELETEOBJECT:
             slots[record.object_index] = empty
             release(record.object_index)

@@ -264,6 +264,86 @@ def test_unsupported_save_restore_reports_both_records():
     assert len(play(file, GDI())) == 2
 
 
+@pytest.mark.parametrize("absolute", [False, True])
+def test_rejected_saves_do_not_shift_backend_restore_levels(absolute):
+    class RejectSecondSave(TraceContext):
+        attempts = 0
+
+        def invoke(self, call):
+            if call.name == "save_dc":
+                self.attempts += 1
+                if self.attempts == 2:
+                    raise UnsupportedOperation("save")
+            return super().invoke(call)
+
+    file = Metafile.build(
+        [
+            fixed.SaveDC(),
+            fixed.SaveDC(),
+            fixed.SaveDC(),
+            fixed.RestoreDC(3 if absolute else -1),
+            fixed.RestoreDC(2 if absolute else -1),
+            fixed.RestoreDC(1 if absolute else -1),
+        ]
+    )
+    backend = RejectSecondSave()
+    omissions = play(file, backend)
+    assert [issue.record_index for issue in omissions] == [1, 4]
+    assert backend._save_depth == 0
+
+
+def test_rejected_restore_keeps_backend_frames_accounted_for():
+    class RejectFirstRestore(TraceContext):
+        attempts = 0
+
+        def invoke(self, call):
+            if call.name == "restore_dc":
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise UnsupportedOperation("restore")
+            return super().invoke(call)
+
+    file = Metafile.build(
+        [
+            fixed.SaveDC(),
+            fixed.SaveDC(),
+            fixed.RestoreDC(-1),
+            fixed.RestoreDC(-1),
+        ]
+    )
+    backend = RejectFirstRestore()
+    assert len(play(file, backend)) == 1
+    assert backend.calls[-1] == Call.make("restore_dc", saved_dc=-2)
+    assert backend._save_depth == 0
+
+
+def test_malformed_bitmap_is_omitted_before_any_state_changes():
+    from pillow_wmf import RasterContext
+
+    recorder = Recorder()
+    recorder.dib_stretch_blt(0, 0, 2, 2, 0, 0, 2, 2, 0x00CC0020, BitmapData("dib", b"\x28" + bytes(47)))
+    recorder.set_pixel(1, 1, 255)
+    context = RasterContext(3, 3)
+    issues = play(recorder.metafile(), context)
+    assert len(issues) == 1
+    assert "malformed input" in issues[0].reason
+    assert [call.name for call in context.calls] == ["set_pixel"]
+    assert context.image.getpixel((1, 1)) == (255, 0, 0)
+    with pytest.raises(UnsupportedOperation, match="malformed input"):
+        play(recorder.metafile(), RasterContext(3, 3), strict=True)
+
+
+def test_bitmap_limits_are_fatal_even_in_tolerant_playback():
+    from pillow_wmf import RasterContext
+    from pillow_wmf.bitmap import RGBBitmap, encode_dib24
+    from pillow_wmf.wmf.binary import ResourceLimitError
+
+    recorder = Recorder()
+    recorder.dib_stretch_blt(0, 0, 2, 2, 0, 0, 2, 2, 0x00CC0020, encode_dib24(RGBBitmap(2, 2, bytes(12))))
+    with pytest.raises(ResourceLimitError):
+        play(recorder.metafile(), RasterContext(3, 3, max_bitmap_pixels=1))
+
+
 def test_sequence_inputs_are_snapshotted():
     points = [[1, 2], [3, 4]]
     text = bytearray(b"hello")

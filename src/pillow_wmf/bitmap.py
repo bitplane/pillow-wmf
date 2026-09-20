@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from struct import pack, pack_into, unpack_from
 
 from .gdi import UnsupportedOperation
-from .wmf.binary import FormatError
+from .wmf.binary import FormatError, ResourceLimitError
 from .wmf.objects import BitmapData
 
 DEFAULT_MAX_BITMAP_PIXELS = 16_777_216
@@ -372,7 +372,7 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
         raise FormatError("RLE requires bottom-up dimensions and a nonzero image size")
     height = abs(signed_height)
     if width * height > max_pixels:
-        raise FormatError("Decoded bitmap pixel limit exceeded")
+        raise ResourceLimitError("Decoded bitmap pixel limit exceeded")
     offset = header_size
     masks = (0x7C00, 0x03E0, 0x001F) if depth == 16 else (0xFF0000, 0xFF00, 0xFF)
     if compression == 3:

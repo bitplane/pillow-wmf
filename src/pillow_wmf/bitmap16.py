@@ -5,7 +5,7 @@ from struct import pack, unpack_from
 
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, field_color, validate_masks
 from .gdi import UnsupportedOperation
-from .wmf.binary import FormatError
+from .wmf.binary import FormatError, ResourceLimitError
 from .wmf.objects import BitmapData
 
 
@@ -72,7 +72,7 @@ def read_bitmap16(bitmap, *, native_pattern=False, max_pixels=DEFAULT_MAX_BITMAP
     if depth not in (1, 4, 8, 16, 24, 32):
         raise UnsupportedOperation(f"Bitmap16 depth {depth}")
     if width * height > max_pixels:
-        raise FormatError("Decoded bitmap pixel limit exceeded")
+        raise ResourceLimitError("Decoded bitmap pixel limit exceeded")
     stride = ((width * depth + 15) // 16) * 2
     if pattern:
         # CreateBitmapIndirect consumes the stored row pitch; CreateBitmap

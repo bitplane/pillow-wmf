@@ -8,6 +8,10 @@ class FormatError(ValueError):
     """The input cannot be interpreted safely as a WMF structure."""
 
 
+class ResourceLimitError(FormatError):
+    """A configured safety limit was exceeded; never a recoverable omission."""
+
+
 @dataclass(frozen=True)
 class Limits:
     """Allocation/work limits; these are policy, not WMF format limits."""

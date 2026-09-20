@@ -40,6 +40,7 @@ from .stroke import (
 )
 from .text import FontCollection, TextLayout, layout_text
 from .trace import TraceContext
+from .wmf.binary import FormatError, ResourceLimitError
 from .wmf.objects import Font
 
 
@@ -187,10 +188,11 @@ class RasterContext(TraceContext):
             path.append((x * 16, y * 16))
         return path
 
-    def invoke(self, call: Call) -> Handle | int | None:
-        call = self._prepare(call)
+    def _prepare_effect(self, call):
+        """Validate and decode inputs before recording or changing DC state."""
         name = call.name
         a = call.kwargs
+        text_layout = text_rectangle = transfer = pattern = region_mask = layout = None
         if name == "escape":
             if a["escape_function"] not in BITMAP_NOOP_ESCAPES:
                 raise UnsupportedOperation(f"escape {a['escape_function']:#06x}")
@@ -344,6 +346,18 @@ class RasterContext(TraceContext):
         }:
             raise UnsupportedOperation(name)
 
+        return text_layout, text_rectangle, transfer, pattern, region_mask, layout
+
+    def invoke(self, call: Call) -> Handle | int | None:
+        call = self._prepare(call)
+        name = call.name
+        a = call.kwargs
+        try:
+            text_layout, text_rectangle, transfer, pattern, region_mask, layout = self._prepare_effect(call)
+        except ResourceLimitError:
+            raise
+        except FormatError as error:
+            raise UnsupportedOperation(f"{name}: malformed input: {error}") from error
         if name == "restore_dc":
             level = a["saved_dc"]
             target = level if level > 0 else len(self._saved) + level + 1
