@@ -29,6 +29,10 @@ def cases(*, corpus=False):
 
 
 def all_cases():
+    boundaries = runpy.run_path(str(Path(__file__).with_name("dib_boundary_cases.py")))["cases"]
+    for name, recorder in boundaries():
+        if name in {"png-stretch", "linked-brush"}:
+            yield f"dib-extended-{name}", recorder
     yield from runpy.run_path(str(Path(__file__).with_name("text_fixtures.py")))["cases"]()
     yield from runpy.run_path(str(Path(__file__).with_name("path_boundary_fixtures.py")))["cases"]()
     yield from runpy.run_path(str(Path(__file__).with_name("precision_fixtures.py")))["cases"]()

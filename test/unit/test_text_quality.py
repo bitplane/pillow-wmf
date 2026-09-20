@@ -45,8 +45,28 @@ def test_outline_quality_retains_request_and_explicit_monochrome():
     assert masks[0] == masks[1] == masks[2]
 
 
-@pytest.mark.parametrize("quality", [4, 5, 6, 255])
+@pytest.mark.parametrize("quality", [7, 255])
 def test_unsupported_smoothing_modes_are_not_treated_as_default(quality):
     face = FontFace.from_path(ROOT / "test/fonts/layout.ttf")
     with pytest.raises(UnsupportedOperation, match="quality"):
         face.at_size(24, quality=quality)
+
+
+def test_explicit_grayscale_and_cleartype_masks():
+    face = FontFace.from_path(ROOT / "test/fonts/layout.ttf")
+    gray = face.at_size(24, quality=4).glyph("A", 10000)
+    assert gray.channels == 1
+    assert any(0 < coverage < 255 for coverage in gray.pixels)
+    default = face.at_size(24, quality=0).glyph("A", 10000)
+    assert face.at_size(24, quality=5).glyph("A", 10000) == default
+    assert face.at_size(24, quality=6).glyph("A", 10000) == default
+
+
+def test_grayscale_coverage_is_composited_not_thresholded():
+    face = FontFace.from_path(ROOT / "test/fonts/layout.ttf")
+    dc = RasterContext(80, 60, fonts=FontCollection([face]))
+    dc.select_object(dc.create_font(Font(height=-24, quality=4, face_name=face.family.encode())))
+    dc.set_background_mode(1)
+    dc.text_out(10, 10, b"A")
+    pixels = set(dc.image.get_flattened_data())
+    assert any(0 < r < 255 and r == g == b for r, g, b in pixels)

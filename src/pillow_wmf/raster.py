@@ -22,7 +22,10 @@ from .constants import (
     BS_SOLID,
     COLORONCOLOR,
     ETO_CLIPPED,
+    ETO_NUMERICSLATIN,
+    ETO_NUMERICSLOCAL,
     ETO_OPAQUE,
+    ETO_RTLREADING,
     FLOODFILLBORDER,
     FLOODFILLSURFACE,
     HALFTONE,
@@ -212,7 +215,11 @@ class RasterContext(TraceContext):
     def _accepts_dib(layout):
         # The native reference surface is a 32-bit RGB DIB. PAL_INDICES avoids
         # colour translation and requires matching source/device pixel depths.
-        return layout.header_size != 12 and (layout.color_usage != 2 or layout.depth == 32)
+        return (
+            layout.header_size != 12
+            and layout.compression in (0, 1, 2, 3)
+            and (layout.color_usage != 2 or layout.depth == 32)
+        )
 
     def is_null_object(self, handle: Handle) -> bool:
         return handle.owner is self and handle in self._objects and self._objects[handle] is None
@@ -1089,10 +1096,12 @@ class RasterContext(TraceContext):
 
     def _prepare_text(self, args):
         options = args.get("options", 0)
-        if options & ~(ETO_OPAQUE | ETO_CLIPPED):
+        # Reading order and numeral substitution do not alter our supported
+        # left-to-right code pages. Arabic/Hebrew remain explicit boundaries.
+        if options & ~(ETO_OPAQUE | ETO_CLIPPED | ETO_RTLREADING | ETO_NUMERICSLOCAL | ETO_NUMERICSLATIN):
             raise UnsupportedOperation("Text output options")
         rectangle = args.get("rectangle")
-        if options and rectangle is None:
+        if options & (ETO_OPAQUE | ETO_CLIPPED) and rectangle is None:
             raise ValueError("Text output options require a rectangle")
         sx, sy = self.mapping.linear_scale
         if self.mapping.rtl:
@@ -1107,8 +1116,8 @@ class RasterContext(TraceContext):
         face = self.fonts.resolve(request)
         if sx * sy < 0:
             request = replace(request, escapement=-request.escapement)
-        if self._text_state.mapper_flags:
-            raise UnsupportedOperation("Text mapper flags")
+        # Mapper flags constrain physical-font selection, not drawing with an
+        # already explicitly supplied TrueType face. Retain them in DC state.
         origin = self._position if self._text_state.alignment & TA_UPDATECP else (args["x"], args["y"])
         origin = self._point(*origin)
         layout = layout_text(
@@ -1170,11 +1179,13 @@ class RasterContext(TraceContext):
                     ):
                         continue
                     index = ((y - top) * width + x - left) * glyph.channels
-                    if glyph.channels == 1:
+                    if glyph.channels == 1 and glyph.pixels[index] in (0, 255):
                         if glyph.pixels[index]:
                             self._pixel(x, y, self._text_color, operation=13)
                     else:
-                        coverage = glyph.pixels[index : index + 3]
+                        coverage = (
+                            (glyph.pixels[index],) * 3 if glyph.channels == 1 else glyph.pixels[index : index + 3]
+                        )
                         foreground = self._palette.colorref(self._text_color)
                         background = self.image.getpixel((x, y))
                         color = tuple(

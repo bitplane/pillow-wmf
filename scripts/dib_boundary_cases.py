@@ -39,7 +39,7 @@ def bitmaps():
                 rle=depth < 32,
             ).data
         )
-        pack_into("I", data, 16, compression)
+        pack_into("<I", data, 16, compression)
         yield f"cmyk-{depth}", BitmapData("dib", bytes(data))
     for name, color_space in (
         ("srgb", 0x73524742),
@@ -48,23 +48,23 @@ def bitmaps():
         ("linked", 0x4C494E4B),
     ):
         data = bytearray(encode_dib(3, 2, samples, depth=24, header_size=124).data)
-        pack_into("I", data, 56, color_space)
+        pack_into("<I", data, 56, color_space)
         if name == "calibrated":
             # sRGB primaries, deliberately non-default gamma to expose ICM.
             pack_into(
-                "9i",
+                "<9i",
                 data,
                 60,
                 *(int(v * (1 << 30)) for v in (0.4124, 0.2126, 0.0193, 0.3576, 0.7152, 0.1192, 0.1805, 0.0722, 0.9505)),
             )
-            pack_into("3I", data, 96, *(int(1.8 * 65536),) * 3)
+            pack_into("<3I", data, 96, *(int(1.8 * 65536),) * 3)
         if name in ("embedded", "linked"):
             if name == "embedded":
                 profile = bytearray(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
                 profile[24:36] = pack(">6H", 2020, 1, 1, 0, 0, 0)
             else:
                 profile = b"pillow-wmf-nonexistent-profile.icm\0"
-            pack_into("III", data, 108, 4, len(data), len(profile))
+            pack_into("<III", data, 108, 4, len(data), len(profile))
             data.extend(profile)
         yield name, BitmapData("dib", bytes(data) + bytes(len(data) % 2))
 

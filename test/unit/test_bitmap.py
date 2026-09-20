@@ -65,7 +65,7 @@ def test_invalid_header_fields(offset, fmt, value):
         decode_dib(BitmapData("dib", bytes(data)))
 
 
-@pytest.mark.parametrize("offset,fmt,value", ((0, "I", 64), (14, "H", 2), (16, "I", 4), (16, "I", 5)))
+@pytest.mark.parametrize("offset,fmt,value", ((0, "I", 64), (14, "H", 2)))
 def test_unimplemented_representations_are_not_approximated(offset, fmt, value):
     data = bytearray(encode_dib24(RGBBitmap(1, 1, bytes(3))).data)
     pack_into("<" + fmt, data, offset, value)

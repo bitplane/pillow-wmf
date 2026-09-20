@@ -97,9 +97,16 @@ dispatch from filtering arithmetic.
 [Logical palettes](gdi-palettes.md) adds DIB_PAL_COLORS and
 DIB_PAL_INDICES layout handling and native RGB-device realization.
 [Bitmap16](gdi-bitmap16.md) is covered separately.
-Unsupported: JPEG/PNG/CMYK payloads, linked/embedded profiles and
-ICM colour management. V4/V5 header acceptance is not a claim of ICM support.
-Linked/embedded profiles are rejected explicitly and never followed as paths.
+JPEG/PNG/CMYK headers and payloads are preserved, but have no RGB decoder.
+The RGB reference device rejects these formats: transfers leave the destination
+unchanged, and DIB-brush creation leaves a null object slot. Playback continues.
+The named `dib-boundaries` probe checks all five transfer/brush paths; compact
+`dib-extended-*` references retain the device-rejection and profile contracts.
+
+ICM colour management is unsupported and disabled on the reference device.
+V4/V5 colour-space, gamma and linked/embedded profile fields therefore do not
+transform RGB values. They are retained without interpreting profile data or
+following linked paths. Header acceptance is not a claim of ICM support.
 
 Sources: [BITMAPINFOHEADER](https://learn.microsoft.com/en-us/previous-versions/dd183376(v=vs.85)),
 [bitmap header types](https://learn.microsoft.com/en-us/windows/win32/gdi/bitmap-header-types),

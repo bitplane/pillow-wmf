@@ -16,6 +16,7 @@ from pathlib import Path
 import freetype as ft
 from fontTools.ttLib import TTFont
 
+from .constants import TA_RTLREADING
 from .gdi import UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import rounded
@@ -108,7 +109,7 @@ class RasterFont:
         if character not in self._glyphs:
             # Honour TrueType instructions without inventing auto-hints for
             # unhinted glyphs. Keep bitmap strikes outside this outline slice.
-            target = ft.FT_LOAD_TARGET_MONO if self.quality == 3 else ft.FT_LOAD_TARGET_LCD
+            target = {3: ft.FT_LOAD_TARGET_MONO, 4: ft.FT_LOAD_TARGET_NORMAL}.get(self.quality, ft.FT_LOAD_TARGET_LCD)
             flags = target | ft.FT_LOAD_NO_AUTOHINT | ft.FT_LOAD_NO_BITMAP
             if self.escapement % 900:
                 flags |= ft.FT_LOAD_NO_HINTING
@@ -139,17 +140,19 @@ class RasterFont:
                 )
                 ft.FT_Outline_Transform(byref(slot.outline._FT_Outline), byref(matrix))
             bounds = slot.get_glyph().get_cbox(ft.FT_GLYPH_BBOX_PIXELS)
-            padding = 2 if self.quality != 3 else 0  # LCD filtering can extend the mask horizontally.
+            padding = 0 if self.quality in (3, 4) else 2  # LCD filtering can extend the mask horizontally.
             if (max(1, bounds.xMax - bounds.xMin) + padding) * max(1, bounds.yMax - bounds.yMin) > max_pixels:
                 raise ValueError("Glyph pixel limit exceeded")
-            slot.render(ft.FT_RENDER_MODE_MONO if self.quality == 3 else ft.FT_RENDER_MODE_LCD)
+            slot.render(
+                {3: ft.FT_RENDER_MODE_MONO, 4: ft.FT_RENDER_MODE_NORMAL}.get(self.quality, ft.FT_RENDER_MODE_LCD)
+            )
             bitmap = slot.bitmap
             packed = bitmap.buffer
-            channels = 1 if self.quality == 3 else 3
-            expected_mode = ft.FT_PIXEL_MODE_MONO if channels == 1 else ft.FT_PIXEL_MODE_LCD
+            channels = 1 if self.quality in (3, 4) else 3
+            expected_mode = {3: ft.FT_PIXEL_MODE_MONO, 4: ft.FT_PIXEL_MODE_GRAY}.get(self.quality, ft.FT_PIXEL_MODE_LCD)
             if bitmap.pixel_mode != expected_mode:
                 raise UnsupportedOperation("Unexpected glyph bitmap format")
-            if channels == 1:
+            if self.quality == 3:
                 pixels = bytes(
                     255 if packed[y * bitmap.pitch + x // 8] & (128 >> (x % 8)) else 0
                     for y in range(bitmap.rows)
@@ -297,7 +300,7 @@ class FontFace:
         # Draft/proof affect legacy bitmap strike selection. For the static
         # TrueType outlines supported here, they share default smoothing.
         # Keep the requested value in the realized font and its cache key.
-        if quality not in (0, 1, 2, 3):
+        if quality not in range(7):
             raise UnsupportedOperation("Unsupported font quality")
         if missing_glyph not in ("error", "notdef"):
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
@@ -627,7 +630,7 @@ def layout_text(
         return (x + rounded(dx), y + rounded(dy)) if snap else (x + dx, y + dy)
 
     horizontal, vertical = alignment & 6, alignment & 24
-    if alignment & ~31 or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
+    if alignment & ~(31 | TA_RTLREADING) or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
         raise UnsupportedOperation("Text alignment")
     if advances and len(advances) != len(text):
         raise ValueError("Text advance count must match the byte count")

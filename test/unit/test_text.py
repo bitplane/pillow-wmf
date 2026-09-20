@@ -86,7 +86,7 @@ def test_current_position_is_logical_and_saved_independently_of_glyph_cache(dc):
     assert dc._position == (8, 25)
 
 
-@pytest.mark.parametrize("changes", [{"quality": 4}, {"charset": 2}])
+@pytest.mark.parametrize("changes", [{"quality": 255}, {"charset": 2}])
 def test_unimplemented_realization_fails_before_painting_or_committing(dc, changes):
     dc.select_object(dc.create_font(replace(REQUEST, **changes)))
     image, calls = dc.image.tobytes(), list(dc.calls)

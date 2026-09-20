@@ -7,6 +7,8 @@ generator outputs, never exclude files from compatibility test discovery.
 
 # Driver rounding, mode transitions, extent ordering and pen algorithm limits.
 MAPPING = """
+dib-extended-png-stretch
+dib-extended-linked-brush
 text-em-height
 text-layout-and-clip
 text-cell-height

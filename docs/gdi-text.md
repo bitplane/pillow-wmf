@@ -37,7 +37,9 @@ PROOF_QUALITY share the same outline-font rendering policy, currently a
 fixed RGB-subpixel profile matching the oracle's smoothing mode; it does not
 inherit the Linux desktop configuration. Its FreeType filtering and direct RGB
 coverage composition are an approximation, not an implementation of Windows'
-ClearType contrast/filtering. Explicit smoothing modes are deferred. Real-font
+ClearType contrast/filtering. ANTIALIASED_QUALITY uses grayscale coverage;
+CLEARTYPE_QUALITY and CLEARTYPE_NATURAL_QUALITY use the RGB-subpixel policy.
+These modes express smoothing intent, not exact Windows mask reproduction. Real-font
 mapped ink placement also remains subject to visual comparison even when native
 glyph indices and device advances agree.
 
@@ -47,6 +49,14 @@ static TrueType outline backend. The original quality value remains in the WMF,
 selected font and realization cache. Use the named `text-quality` probe to
 compare default, draft, proof and explicit monochrome with identical native
 font inputs; it checks small text, cell sizing and width-scaled rotated text.
+
+With an explicitly supplied static TrueType face, mapper flags and the tested
+output/clip precision hints do not change rendering. Reading-order and numeric
+substitution flags are accepted for the supported left-to-right code pages;
+this does not provide Hebrew/Arabic shaping or RTL layout. The named
+`text-options` probe checks these distinctions, current-position updates and
+smoothing modes using the controlled test font. Glyph-index output and paired
+horizontal/vertical advances remain unsupported rather than being ignored.
 
 Supply fonts explicitly, for example:
 

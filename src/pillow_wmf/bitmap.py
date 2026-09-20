@@ -198,7 +198,7 @@ class DIBLayout:
     @property
     def complete(self) -> bool:
         """Whether the packed object contains the entire declared image."""
-        size = self.image_size if self.compression in (1, 2) else self.stride * self.height
+        size = self.image_size if self.compression in (1, 2, 4, 5, 12, 13) else self.stride * self.height
         return len(self.data) >= self.offset + size
 
     def decode(
@@ -217,6 +217,8 @@ class DIBLayout:
         ``gap_color`` selects a realized background instead of palette index 0;
         ``preserve_gaps`` retains coverage so unwritten pixels can be skipped.
         """
+        if self.compression not in (0, 1, 2, 3):
+            raise UnsupportedOperation(f"DIB compression {self.compression} has no RGB decoder")
         if self.color_usage and self.depth <= 8:
             if palette is None:
                 raise UnsupportedOperation("DIB palette resolution requires a logical palette")
@@ -359,16 +361,21 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
         )
     if width <= 0 or signed_height == 0 or planes != 1:
         raise FormatError("Invalid DIB dimensions or plane count")
-    if depth not in (1, 4, 8, 16, 24, 32) or compression not in (0, 1, 2, 3):
+    if depth not in (0, 1, 4, 8, 16, 24, 32) or compression not in (0, 1, 2, 3, 4, 5, 11, 12, 13):
         raise UnsupportedOperation(f"DIB depth {depth}, compression {compression}")
     if (
         (compression == 1 and depth != 8)
         or (compression == 2 and depth != 4)
         or (compression == 3 and depth not in (16, 32))
+        or (compression in (4, 5) and depth != 0)
+        or (depth == 0 and compression not in (4, 5))
+        or (compression == 11 and depth != 32)
+        or (compression == 12 and depth != 8)
+        or (compression == 13 and depth != 4)
         or (header_size == 12 and depth not in (1, 4, 8, 24))
     ):
         raise FormatError("Invalid DIB depth/compression combination")
-    if compression in (1, 2) and (signed_height < 0 or image_size == 0):
+    if compression in (1, 2, 4, 5, 12, 13) and (signed_height < 0 or image_size == 0):
         raise FormatError("RLE requires bottom-up dimensions and a nonzero image size")
     height = abs(signed_height)
     if width * height > max_pixels:
@@ -382,9 +389,10 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
         validate_masks(masks, depth)
         if header_size == 40:
             offset += 12
-    if header_size >= 108 and unpack_from("<I", data, 56)[0] in (0x4C494E4B, 0x4D424544):
-        raise UnsupportedOperation("Linked/embedded DIB colour profiles")
-    if depth <= 8:
+    # Colour-space/profile fields are retained but not interpreted. The RGB
+    # playback device has ICM disabled; in particular, linked paths are never
+    # opened. Packed V5 profiles follow the pixel array, not the colour table.
+    if 0 < depth <= 8:
         if colors > 1 << depth:
             raise FormatError("DIB colour table exceeds bit depth")
         colors = colors or 1 << depth
