@@ -1,8 +1,8 @@
 """Native-controlled glyph geometry, state and explicit style selection."""
 
+import runpy
 from dataclasses import replace
 from pathlib import Path
-import runpy
 
 import pytest
 

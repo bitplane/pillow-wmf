@@ -1,8 +1,8 @@
 """Device metric tables control font cells independently of outline geometry."""
 
+import runpy
 from dataclasses import replace
 from pathlib import Path
-import runpy
 
 import pytest
 

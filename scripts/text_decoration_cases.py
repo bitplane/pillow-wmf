@@ -1,8 +1,8 @@
 """Distinguish missing, subpixel and visible font decoration thicknesses."""
 
+import runpy
 from io import BytesIO
 from pathlib import Path
-import runpy
 
 from fontTools.ttLib import TTFont
 

@@ -131,6 +131,8 @@ def arc_control_normals(first: float, last: float, start, end):
 
     def control(normal):
         # Native evaluates a weighted sum, not n + weight*(tangent - n).
-        return tuple(float32(float32(remainder * n) + float32(weight * t)) for n, t in zip(normal, tangent))
+        return tuple(
+            float32(float32(remainder * n) + float32(weight * t)) for n, t in zip(normal, tangent, strict=False)
+        )
 
     return start, control(start), control(end), end

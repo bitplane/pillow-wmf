@@ -5,7 +5,6 @@ from ctypes import wintypes
 
 from windows_wmf_render import bind, check, reference_surface
 
-
 POLYGON = (
     (1602, 2641),
     (1631, 2648),

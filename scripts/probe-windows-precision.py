@@ -36,7 +36,7 @@ def read_path(gdi, dc):
         raise RuntimeError("GetPath failed")
     points, kinds = (wintypes.POINT * count)(), (ctypes.c_ubyte * count)()
     assert gdi.GetPath(dc, points, kinds, count) == count
-    return [(p.x, p.y, kind) for p, kind in zip(points, kinds)]
+    return [(p.x, p.y, kind) for p, kind in zip(points, kinds, strict=False)]
 
 
 def main():
@@ -52,7 +52,7 @@ def main():
     )
     # Identify the exact public-symbol images, not just a nearby OS release.
     for name in ("win32kbase.sys", "win32kfull.sys"):
-        data = (Path(os.environ["SystemRoot"]) / "System32" / name).read_bytes()
+        data = (Path(os.environ["SYSTEMROOT"]) / "System32" / name).read_bytes()
         pe = struct.unpack_from("<I", data, 0x3C)[0]
         timestamp = struct.unpack_from("<I", data, pe + 8)[0]
         image_size = struct.unpack_from("<I", data, pe + 24 + 56)[0]

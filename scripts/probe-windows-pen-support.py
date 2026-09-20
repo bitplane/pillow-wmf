@@ -76,7 +76,12 @@ def main():
                     kinds = (ctypes.c_ubyte * count)()
                     assert gdi.GetPath(dc, points, kinds, count) == count
                     print(
-                        width, window, endpoint, coordinates, [(p.x, p.y, k) for p, k in zip(points, kinds)], flush=True
+                        width,
+                        window,
+                        endpoint,
+                        coordinates,
+                        [(p.x, p.y, k) for p, k in zip(points, kinds, strict=False)],
+                        flush=True,
                     )
                 check(gdi.FillPath(dc), "FillPath")
                 gdi.GdiFlush()

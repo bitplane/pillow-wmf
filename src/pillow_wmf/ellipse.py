@@ -21,9 +21,11 @@ def box_corners(bounds):
 def box_axes(bounds):
     """Quantize the box's half-edge vectors before angular/corner scaling."""
     top_right, top_left, _, bottom_right = box_corners(bounds)
-    horizontal = tuple((a - b + 1) // 2 for a, b in zip(top_right, top_left))
-    north = tuple((a - b + 1) // 2 for a, b in zip(top_right, bottom_right))
-    centre = tuple(a + (b - a + 1) // 2 + (d - a + 1) // 2 for a, b, d in zip(top_right, top_left, bottom_right))
+    horizontal = tuple((a - b + 1) // 2 for a, b in zip(top_right, top_left, strict=False))
+    north = tuple((a - b + 1) // 2 for a, b in zip(top_right, bottom_right, strict=False))
+    centre = tuple(
+        a + (b - a + 1) // 2 + (d - a + 1) // 2 for a, b, d in zip(top_right, top_left, bottom_right, strict=False)
+    )
     return centre, horizontal, north
 
 
@@ -83,7 +85,7 @@ def round_rect_figure(
     vertical = tuple(-value for value in north)
 
     def add(point, vector, sign=1):
-        return tuple(a + sign * b for a, b in zip(point, vector))
+        return tuple(a + sign * b for a, b in zip(point, vector, strict=False))
 
     def control(point, corner):
         # Apply oriented X/Y control rounding before reflecting the lower
@@ -91,7 +93,7 @@ def round_rect_figure(
         rounding = (horizontal[0] >= 0, (vertical[1] >= 0) == clockwise)
         return tuple(
             a + (1 if b >= a else -1) * circle_control(abs(b - a), upward=upward)
-            for a, b, upward in zip(point, corner, rounding)
+            for a, b, upward in zip(point, corner, rounding, strict=False)
         )
 
     upper = []

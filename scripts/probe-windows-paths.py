@@ -83,7 +83,7 @@ def main():
                     outputs.append(ctypes.string_at(bits, 128 * 128 * 4))
                 print(
                     f"styled-ellipse-{box}-style-{style}-path-diffs: "
-                    f"{tuple(sum(a[i : i + 3] != b[i : i + 3] for i in range(0, len(a), 4)) for a, b in zip((outputs[0], outputs[0]), outputs[1:]))}"
+                    f"{tuple(sum(a[i : i + 3] != b[i : i + 3] for i in range(0, len(a), 4)) for a, b in zip((outputs[0], outputs[0]), outputs[1:], strict=False))}"
                 )
                 gdi.SelectObject(dc, old_pen)
                 gdi.DeleteObject(pen)
@@ -169,7 +169,7 @@ def main():
                     print(f"ellipse-{name}-widened-expanded: {len(expanded)} vertices {expanded}")
                     check(gdi.SetWindowExtEx(dc, 128, 128, None), "SetWindowExtEx")
                     starts = [index for index, (_, _, kind) in enumerate(widened) if kind == 6]
-                    counts = [end - start for start, end in zip(starts, starts[1:] + [len(widened)])]
+                    counts = [end - start for start, end in zip(starts, starts[1:] + [len(widened)], strict=False)]
                     vertices = (wintypes.POINT * len(widened))(*(wintypes.POINT(x, y) for x, y, _ in widened))
                     lengths = (integer * len(counts))(*counts)
                     region = check(gdi.CreatePolyPolygonRgn(vertices, lengths, len(counts), 1), "CreatePolyPolygonRgn")

@@ -7,6 +7,13 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.13"
+license = {file = "LICENSE.md"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
 
 dependencies = [
     "pillow>=12.3",
@@ -22,7 +29,7 @@ dev = [
     "pytest-cov",
     "build",
     "twine",
-    "ruff",
+    "ruff==0.16.7",
     "pydoc-markdown"
 ]
 
@@ -30,9 +37,18 @@ dev = [
 build-backend = "flit_core.buildapi"
 requires = ["flit_core >=3.2,<4"]
 
+[project.urls]
+Repository = "https://github.com/bitplane/pillow-wmf"
+Issues = "https://github.com/bitplane/pillow-wmf/issues"
+
 [tool.ruff]
 line-length = 120
 target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "SIM", "UP"]
+# Prefer explicit branches over nested conditional expressions.
+ignore = ["SIM108"]
 
 [tool.ruff.format]
 docstring-code-format = true

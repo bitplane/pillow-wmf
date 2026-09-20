@@ -575,7 +575,7 @@ class RasterContext(TraceContext):
                 if self._pen.style == 6 and not pen.cosmetic:
                     dx, dy = (
                         floor(self._pen.width * abs(Fraction(v, w)) * 16 + 0.5)
-                        for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent)
+                        for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent, strict=False)
                     )
                     # Equality retains a degenerate centreline and widens it
                     # normally. Only a negative interior triggers GDI's
@@ -1088,7 +1088,7 @@ class RasterContext(TraceContext):
             # not at the floor of its fractional geometric starting point.
             # Advance through unclipped spans so clipping never resets style.
             position = 0
-            segments = zip(path.vertices, path.vertices[1:])
+            segments = zip(path.vertices, path.vertices[1:], strict=False)
             for start, end in segments:
                 span = cosmetic_span(start, end)
                 major = 1 if abs(end[1] - start[1]) > abs(end[0] - start[0]) else 0
@@ -1136,7 +1136,7 @@ class RasterContext(TraceContext):
                     pixels.update(self._contour_pixels((outline,)))
             if not pen.cosmetic:
                 segments = path.segments
-                pairs = zip(segments, segments[1:] + (segments[:1] if path.closed else ()))
+                pairs = zip(segments, segments[1:] + (segments[:1] if path.closed else ()), strict=False)
                 for first, second in pairs:
                     join = join_outline(first, second, pen, miter=miter)
                     if join:

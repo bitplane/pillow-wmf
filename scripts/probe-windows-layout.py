@@ -68,7 +68,9 @@ def main():
                         points = (wintypes.POINT * count)()
                         kinds = (ctypes.c_ubyte * count)()
                         get_path(hdc, points, kinds, count)
-                        print(f"PATH28.4 {name} {function:04x}: {[(p.x, p.y, k) for p, k in zip(points, kinds)]}")
+                        print(
+                            f"PATH28.4 {name} {function:04x}: {[(p.x, p.y, k) for p, k in zip(points, kinds, strict=False)]}"
+                        )
                         gdi.RestoreDC(hdc, saved)
                         gdi.AbortPath(hdc)
                     if function in (0x0103, 0x020B, 0x020C, 0x020D, 0x020E, 0x0149, 0x001E, 0x0127):

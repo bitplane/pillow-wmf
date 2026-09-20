@@ -90,7 +90,7 @@ def main():
                     cmap = font.getBestCmap() or {}
                     if 0 in cmap or 0x81 in cmap:
 
-                        def glyph_metrics(codepoint):
+                        def glyph_metrics(codepoint, cmap=cmap, font=font):
                             name = cmap.get(codepoint, ".notdef")
                             glyph = font["glyf"][name]
                             return (font.getGlyphID(name), font["hmtx"][name], glyph.numberOfContours)

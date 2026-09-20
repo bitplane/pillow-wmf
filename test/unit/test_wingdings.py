@@ -1,16 +1,16 @@
 """Explicit legacy encoding conversion, separate from glyph appearance."""
 
 from dataclasses import replace
-from pathlib import Path
 from fractions import Fraction
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fontTools.ttLib import TTFont
 
 from pillow_wmf import FontCollection, FontFace, Metafile, RasterContext, Recorder, UnsupportedOperation, play
-from pillow_wmf.wmf.objects import Font
 from pillow_wmf.wingdings import FALLBACK_FAMILY, decode_wingdings
+from pillow_wmf.wmf.objects import Font
 
 REQUEST = Font(height=-24, weight=400, quality=3, charset=2, face_name=b"Wingdings".ljust(32, b"\0"))
 

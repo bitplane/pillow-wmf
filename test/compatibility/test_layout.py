@@ -41,7 +41,7 @@ def test_generated_fixtures_are_reproducible_and_playable() -> None:
 
 
 def test_committed_references_are_valid() -> None:
-    for source_path, png_path in PAIRS:
+    for _source_path, png_path in PAIRS:
         assert png_path.is_file(), f"Missing Windows reference: {png_path.name}"
         with Image.open(png_path) as image:
             assert image.format == "PNG"

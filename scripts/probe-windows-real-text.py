@@ -9,10 +9,12 @@ from real_text_cases import FONTS, SAMPLES, SIZE, cases, fetch_fonts
 from test_font import FAMILY, FONT_PATH
 from text_layout_cases import SIZE as LAYOUT_SIZE
 from text_layout_cases import cases as layout_cases
+from text_quality_cases import SAMPLE as QUALITY_SAMPLE
+from text_quality_cases import SIZE as QUALITY_SIZE
+from text_quality_cases import cases as quality_cases
 from text_style_cases import SAMPLE as STYLE_SAMPLE
 from text_style_cases import SIZE as STYLE_SIZE
 from text_style_cases import cases as style_cases
-from text_quality_cases import SIZE as QUALITY_SIZE, SAMPLE as QUALITY_SAMPLE, cases as quality_cases
 from windows_wmf_render import private_fonts, render_wmf
 
 

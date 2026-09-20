@@ -11,7 +11,9 @@ from pillow_wmf import Metafile, RasterContext, play
 def verify():
     cases = runpy.run_path(str(Path(__file__).with_name("generate-wmf-fixtures.py")))["dib_brush_cases"]
     failures = 0
-    for count, (name, recorder) in enumerate(cases(), 1):
+    count = 0
+    for name, recorder in cases():
+        count += 1
         source = recorder.to_bytes()
         expected = render_wmf(source, 128, 128)
         context = RasterContext(128, 128)

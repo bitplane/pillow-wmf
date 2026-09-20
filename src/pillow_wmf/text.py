@@ -7,9 +7,9 @@ a WMF. There is no host-font discovery or registry-based font substitution.
 from ctypes import byref
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
+from importlib.resources import files
 from io import BytesIO
 from itertools import groupby
-from importlib.resources import files
 from math import ceil
 from pathlib import Path
 
@@ -420,11 +420,15 @@ class FontCollection:
         family = self.aliases.get(family, family)
         key = family, request.weight or 400, bool(request.italic)
         face = self._select_face(key)
-        if face is None and self.wingdings_fallback and family == "wingdings":
-            if key[1:] == (400, False) or self.synthesize_styles and key[1] in (400, 700):
-                if self._wingdings_face is None:
-                    self._wingdings_face = FontFace.bundled_wingdings()
-                face = self._wingdings_face
+        if (
+            face is None
+            and self.wingdings_fallback
+            and family == "wingdings"
+            and (key[1:] == (400, False) or self.synthesize_styles and key[1] in (400, 700))
+        ):
+            if self._wingdings_face is None:
+                self._wingdings_face = FontFace.bundled_wingdings()
+            face = self._wingdings_face
         if face is None:
             raise UnsupportedOperation(f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}")
         return face

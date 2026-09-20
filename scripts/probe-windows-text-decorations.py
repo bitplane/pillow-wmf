@@ -1,8 +1,8 @@
 """Measure native decoration thickness; original fonts only, no test suite."""
 
 import argparse
-from pathlib import Path
 import runpy
+from pathlib import Path
 
 from fontTools.ttLib import TTFont
 from text_decoration_cases import SIZE, THICKNESSES, cases, family_name, font_bytes

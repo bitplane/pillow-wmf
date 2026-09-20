@@ -1,8 +1,8 @@
 """Outline font-matching hints share the default smoothing policy."""
 
+import runpy
 from dataclasses import replace
 from pathlib import Path
-import runpy
 
 import pytest
 

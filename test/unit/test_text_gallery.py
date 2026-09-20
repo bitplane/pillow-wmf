@@ -1,7 +1,7 @@
 """Gallery bookkeeping is exact even when visual review is bounded."""
 
-from pathlib import Path
 import runpy
+from pathlib import Path
 
 from PIL import Image
 

@@ -57,7 +57,7 @@ class FixedRecord(Record):
     @classmethod
     def read(cls, reader: Reader, function: int, limits: Limits):
         values = reader.unpack(cls.wire_layout)
-        return cls(**dict(zip(cls.fields, values)), wire_function=function, trailing=reader.rest())
+        return cls(**dict(zip(cls.fields, values, strict=False)), wire_function=function, trailing=reader.rest())
 
 
 @dataclass(frozen=True)

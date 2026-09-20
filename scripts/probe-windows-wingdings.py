@@ -2,14 +2,14 @@
 
 import argparse
 import os
-from pathlib import Path
 import runpy
+from pathlib import Path
 
 from fontTools.ttLib import TTFont
+from windows_wmf_render import render_wmf
 
 from pillow_wmf import Recorder
 from pillow_wmf.wmf.objects import Font
-from windows_wmf_render import render_wmf
 
 
 def main():
@@ -54,7 +54,7 @@ def main():
             )
     observe = runpy.run_path(str(Path(__file__).with_name("probe-windows-text.py")))["observe"]
     if args.visual:
-        from wingdings_visual_cases import SIZE, SAMPLE, cases
+        from wingdings_visual_cases import SAMPLE, SIZE, cases
 
         for name, recorder in cases():
             data = recorder.to_bytes()

@@ -175,7 +175,9 @@ def main():
             previous = check(gdi.SelectObject(dc, pen), "SelectObject")
             try:
                 vertices = realize_pen(width).vertices
-                edges = {(b[0] - a[0], b[1] - a[1]) for a, b in zip(vertices, vertices[1:] + vertices[:1])}
+                edges = {
+                    (b[0] - a[0], b[1] - a[1]) for a, b in zip(vertices, vertices[1:] + vertices[:1], strict=False)
+                }
                 check(gdi.SetGraphicsMode(dc, 2), "SetGraphicsMode")
                 for (dx, dy), epsilon, phase in product(sorted(edges), (-1, 0, 1), ((0, 0), (1, 7), (8, 8))):
                     delta = (dx * 8 + ((dy > 0) - (dy < 0)) * epsilon, dy * 8 - ((dx > 0) - (dx < 0)) * epsilon)

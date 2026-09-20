@@ -32,7 +32,7 @@ class DevicePath:
     @classmethod
     def polyline(cls, points, *, closed=False):
         points = tuple(points)
-        return cls(tuple(zip(points, points[1:] + (points[:1] if closed else ()))), closed)
+        return cls(tuple(zip(points, points[1:] + (points[:1] if closed else ()), strict=False)), closed)
 
     @classmethod
     def rectangle(cls, left: int, top: int, right: int, bottom: int):
@@ -229,7 +229,7 @@ def contains(polygons: tuple[Polygon, ...], x: int, y: int, *, fill_mode: int = 
     px, py = x * 16, y * 16
     winding = 0
     for polygon in polygons:
-        for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1]):
+        for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1], strict=False):
             if (y1 > py) == (y2 > py):
                 continue
             cross = (px - x1) * (y2 - y1) - (py - y1) * (x2 - x1)

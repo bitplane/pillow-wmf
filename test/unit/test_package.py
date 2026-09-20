@@ -7,9 +7,10 @@ def test_package_imports() -> None:
 def test_bundled_wingdings_font_and_license():
     from importlib.resources import files
 
+    import pytest
+
     from pillow_wmf import FontCollection, FontFace, UnsupportedOperation
     from pillow_wmf.wmf.objects import Font
-    import pytest
 
     face = FontFace.bundled_wingdings()
     assert face.family == "Pillow WMF Wingdings Fallback"
@@ -26,8 +27,8 @@ def test_bundled_wingdings_font_and_license():
 
 
 def test_font_build_matches_packaged_bytes():
-    from pathlib import Path
     import runpy
+    from pathlib import Path
 
     from pillow_wmf import FontFace
 
