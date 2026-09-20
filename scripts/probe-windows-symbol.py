@@ -23,8 +23,8 @@ def main():
             source,
             family=None,
             size=SIZE,
-            sample=b"AaWw\xe6\xe7\xe8",
-            characters="\uf041\uf061\uf057\uf077\uf0e6\uf0e7\uf0e8",
+            sample=bytes(range(256)),
+            characters="".join(chr(0xF000 | byte) for byte in range(256)),
         )
         (args.output / f"{name}.wmf").write_bytes(source)
         render_wmf(source, *SIZE).save(args.output / f"{name}.png")
