@@ -1,4 +1,4 @@
-# GDI text support and development plan
+# GDI text support
 
 The target is Windows WMF playback, including text's effects on subsequent
 drawing. Glyph rasterization uncertainty must not weaken existing exact tests.
@@ -337,11 +337,11 @@ one-character/one-glyph placement is a sound default.
 See [ExtTextOutA](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-exttextouta).
 
 The WMF option vocabulary does not establish how every flag works through
-classic metafile playback. Probe ETO_GLYPH_INDEX, ETO_PDY and language/RTL flags
-through actual WMFs before interpreting their payloads as modern API inputs.
+classic metafile playback. Glyph-index, paired-advance and RTL contracts above
+are tested through actual WMFs, not inferred from modern API inputs.
 See [WMF text flags](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/830cec14-2f3c-46f3-8f20-82b3da370573).
 
-## First oracle experiments
+## Native verification
 
 Use a tiny, uniquely named, redistributable test font with known metrics,
 asymmetric glyphs and a space. Use identical font bytes locally and on Windows;
@@ -349,7 +349,7 @@ load it privately for the oracle. Private loading is supported by
 [AddFontResourceEx](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-addfontresourceexw).
 Confirm the selected face and charset, not just successful font creation.
 
-Start with compact, discriminating cases rather than a Cartesian-product matrix:
+Use compact, discriminating cases rather than a Cartesian-product matrix:
 
 | Question | Distinguishing cases |
 | --- | --- |
@@ -370,22 +370,7 @@ WMF/PNG fixtures for visible results. Reuse references, run comparisons on Linux
 and retain only compact regressions locally. Do not introduce per-image metadata
 or launch a broad Windows matrix as routine verification.
 
-## Delivery gates
-
-1. **Resolution and state:** font objects, selection and saved state; explicit
-   environment and resolver policy. Unit-test layout against controlled metrics.
-2. **First visible slice:** horizontal monochrome ASCII using the controlled
-   font, explicit advances, alignment, clipping and background painting. Include
-   an empty opaque text call and a current-position-dependent drawing operation.
-3. **Measured layout:** derived advances, height/width realization, spacing and
-   justification, rotation/reflection, underline/strikeout and synthesized styles.
-4. **Encoding:** Western/Cyrillic and symbol runs, then DBCS and language
-   processing. Add synthetic coverage where corpora provide no evidence.
-5. **Real fonts:** pinned, legally usable font inputs, fallback diagnostics and
-   corpus comparisons. Expand to raster/vector legacy fonts and smoothing only
-   with explicit scope and evidence; do not substitute silently and call it parity.
-
-The mask provider uses FreeType's monochrome TrueType path, but does not assume
+The mask provider uses FreeType's TrueType rasterization, but does not assume
 general GDI parity. Bitmap format and hinting target are separate controls; request and measure
 both. Keep positioned glyphs inspectable so bitmap differences can be separated
 from layout errors. See [FreeType glyph loading](https://freetype.org/freetype2/docs/reference/ft2-glyph_retrieval.html).
@@ -413,8 +398,5 @@ values. Its [text implementation](https://github.com/wine-mirror/wine/blob/maste
 and [font implementation](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/font.c)
 are starting points for studying conversion, realization and fallback.
 
-Before freezing interfaces, resolve rounding order, actual charset selection,
-malformed-byte behaviour, explicit spacing versus character extra/justification,
-and the distinction between ordinary opaque backgrounds and ETO_OPAQUE.
 Investigate one contract at a time and retain the resulting rules, not a history
 of workflow runs or temporary experiments.

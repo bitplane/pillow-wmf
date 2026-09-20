@@ -75,7 +75,7 @@ See [layout](gdi-layout.md).
 
 The [stroke](gdi-strokes.md), [region](gdi-regions.md) and
 [bitmap transfer](gdi-dib-transfers.md) contracts describe those consumers.
-Font realization remains deferred.
+[Text layout](gdi-text.md) describes font realization and text-specific mapping.
 
 ## Device metrics and playback setup
 

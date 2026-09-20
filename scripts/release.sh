@@ -1,5 +1,6 @@
 #!/bin/bash
 
+set -euo pipefail
 source .venv/bin/activate
 
 # dirty
@@ -12,7 +13,7 @@ if [[ "$VERSION" != "$TAG_NAME" ]]; then
     exit 1
 fi
 
-if [ -z "$PYPI_TOKEN" ]; then
+if [ -z "${PYPI_TOKEN:-}" ]; then
   echo "PYPI_TOKEN is not set. Can't authenticate to upload"
   exit 1
 fi

@@ -6,8 +6,8 @@ from ctypes import wintypes
 
 from windows_wmf_render import bind, check, reference_surface
 
-# Observed on windows-2025, run 35071353163. One suite-wide environment contract,
-# not per-image metadata. Physical-mode goldens depend on these device metrics.
+# Suite-wide device contract, not per-image metadata. Physical-mode reference
+# images depend on these device metrics.
 REFERENCE_DEVICE_CAPS = {
     "HORZSIZE": (4, 271),
     "VERTSIZE": (6, 203),

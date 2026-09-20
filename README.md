@@ -1,9 +1,12 @@
 # pillow-wmf
 
-A Windows Metafile loader for Pillow. Under development; no plugin yet.
+A Windows Metafile renderer for Pillow. Under development; no plugin yet.
 
 The goal is a pixel-perfect version with WMF and EMF playback and recording
 using a GDI driver.
+
+This is a correctness-first, pure-Python GDI emulator. Per-pixel drawing can be
+slow on large canvases; it is not yet a high-throughput document-image loader.
 
 ```python
 from pathlib import Path
@@ -18,7 +21,7 @@ The size sets the canvas; the WMF's mapping records control drawing coordinates,
 without implicit fit-to-bounds scaling. Text requires explicitly supplied fonts.
 Use `FontCollection(faces, default_font=Font(...))` to configure the initial
 font, including its size, for files that draw text without selecting one;
-`Font` is available from `pillow_wmf.wmf.objects`. No host font is selected silently.
+`Font` is available from `pillow_wmf`. No host font is selected silently.
 For partial output, use `play(metafile, context, strict=False)` and inspect the
 returned omissions. Malformed embedded bitmap inputs are omitted before state
 changes, but malformed WMF structure and resource-limit violations remain fatal.
@@ -37,13 +40,13 @@ one area, select its probe explicitly, for example:
 gh workflow run update-goldens.yml -f probe=patblt
 ```
 
-The `all` choice runs every native probe and should only be used deliberately,
-with explicit approval when an agent is doing the work. This keeps runner costs
-down for forks as well as the main repository.
+Each dispatch selects one named probe; there is no catch-all choice. Broad
+native testing requires deliberate selection and explicit approval when an
+agent is doing the work. This keeps runner costs down for forks too.
 
 - [Implementation contracts and coverage](docs/wmf-implementation.md)
 - [Format research and scope](docs/wmf-format-research.md)
 - [Complete record inventory](docs/wmf-record-inventory.md)
 - [Stroke algorithms and native validation](docs/gdi-strokes.md)
 - [ROP2 painting and native validation](docs/gdi-rop2.md)
-- [Text support and development plan](docs/gdi-text.md)
+- [Text support](docs/gdi-text.md)

@@ -102,4 +102,3 @@ the oracle. The implementation is not a transcription of Wine's source.
 
 See also [additional formats and compression](gdi-dib-formats.md),
 [palettes](gdi-palettes.md), and [legacy Bitmap16 playback](gdi-bitmap16.md).
-Fonts remain deferred.

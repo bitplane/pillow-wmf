@@ -19,8 +19,10 @@ jobs:
           python-version: "3.13"
       - name: Build dev environment
         run: make dev
-      - name: Unit tests
-        run: make test
+      - name: Verify committed font bytes
+        run: git diff --exit-code -- src/pillow_wmf/fonts
+      - name: Unit and exact compatibility tests
+        run: make test-all
       - name: Build distribution
         run: make dist
       - name: Push release

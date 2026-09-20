@@ -1,6 +1,6 @@
 # the things that don't have output files or run every time
 .PHONY: help all install test test-all compatibility dev coverage clean \
-		pre-commit update-pre-commit docs dist update-template font
+		pre-commit update-pre-commit docs dist release update-template font
 
 
 PROJECT_NAME := pillow_wmf

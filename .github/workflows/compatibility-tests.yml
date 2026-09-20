@@ -14,5 +14,7 @@ jobs:
           python-version: "3.13"
       - name: Build development environment
         run: make dev
+      - name: Verify committed font bytes
+        run: git diff --exit-code -- src/pillow_wmf/fonts
       - name: Compare with Windows reference images
         run: make compatibility

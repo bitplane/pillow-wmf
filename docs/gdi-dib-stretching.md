@@ -68,8 +68,8 @@ form of the native remainder-carrying scan accumulator. The weights sum to
 compositor, with bounded per-transfer caches, not a second rasterizer. Clipping
 the destination does not restart the filter or replace its neighbours.
 
-Use `scripts/analyze-halftone.py` to compare the production reduction sampler
-against the WMF inputs and Windows PNGs.
+Use `scripts/reference_compare.py CORPUS_DIR` to compare production rendering
+against WMF inputs and Windows PNGs.
 
 ### Fixed-decimal enlargement
 
@@ -89,8 +89,7 @@ the tent weights:
    contribution towards the left. Round the weighted result with
    `(sum + 4096) >> 13`.
 
-Use `scripts/analyze-halftone-expansion.py` to compare the production sampler
-against enlargement and mixed-axis transfers. For mixed-axis transfers, reduce
+The same comparison command covers enlargement and mixed-axis transfers. Reduce
 the shrinking axis first, including sharpening and saturation, then enlarge the
 other axis.
 This does not replace the two-axis reducer with two independent sharpen passes.
@@ -204,4 +203,3 @@ Additional depths and RLE compression are covered by
 format-dependent channel conversion. [Logical palettes](gdi-palettes.md)
 resolve into the same transfer pipeline. [Legacy Bitmap16](gdi-bitmap16.md)
 covers modern playback and reuses that pipeline for source-free copies.
-Fonts remain deferred.

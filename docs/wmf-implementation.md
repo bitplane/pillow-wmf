@@ -201,4 +201,4 @@ and unsupported operations fail explicitly.
 Windows generates missing PNGs; comparisons run locally or on Linux. See the
 [fixture cycle](wmf-foundation-fixtures.md), [layout](gdi-layout.md),
 [Bitmap16](gdi-bitmap16.md) and [object lifetime](gdi-object-lifetime.md) contracts.
-Font rendering remains deferred.
+See [text support](gdi-text.md) for font inputs and glyph-mask limitations.

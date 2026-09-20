@@ -9,7 +9,7 @@ on:
         default: all
         options: [all, corpus]
       probe:
-        description: "Optional native probe (all is expensive; explicit approval required)"
+        description: "Optional named native probe"
         type: choice
         default: none
         options:
@@ -52,7 +52,6 @@ on:
           - roundrects
           - pies
           - chords
-          - all
   push:
     branches: [master]
     paths:
@@ -107,6 +106,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install project
+        id: install
         run: python -m pip install .
       - name: Probe record-local rejection
         if: inputs.probe == 'record-rejection'
@@ -122,7 +122,7 @@ jobs:
           path: record-rejection/
           retention-days: 7
       - name: Report native coordinate mapping
-        if: inputs.probe == 'mapping' || inputs.probe == 'all'
+        if: inputs.probe == 'mapping'
         run: python scripts/probe-windows-mapping.py
       - name: Inspect binary-review arithmetic boundaries
         if: inputs.probe == 'precision'
@@ -255,19 +255,19 @@ jobs:
           path: text-fallback-sizing/
           retention-days: 7
       - name: Verify native PatBlt
-        if: inputs.probe == 'patblt' || inputs.probe == 'all'
+        if: inputs.probe == 'patblt'
         run: python scripts/probe-windows-patblt.py
       - name: Report native layout state
         if: inputs.probe == 'layout'
         run: python scripts/probe-windows-layout.py
       - name: Verify native DIB brushes
-        if: inputs.probe == 'dib-brush' || inputs.probe == 'all'
+        if: inputs.probe == 'dib-brush'
         run: python scripts/probe-windows-dib-brush.py
       - name: Report native drawing paths
-        if: inputs.probe == 'paths' || inputs.probe == 'all'
+        if: inputs.probe == 'paths'
         run: python scripts/probe-windows-paths.py
       - name: Verify native stroke matrix
-        if: inputs.probe == 'strokes' || inputs.probe == 'all'
+        if: inputs.probe == 'strokes'
         run: python scripts/probe-windows-strokes.py
       - name: Inspect fractional pen support
         if: inputs.probe == 'pen-support'
@@ -279,13 +279,13 @@ jobs:
         if: inputs.probe == 'polygon-support'
         run: python scripts/probe-windows-polygon-support.py
       - name: Probe native Arc paths
-        if: inputs.probe == 'arcs' || inputs.probe == 'all'
+        if: inputs.probe == 'arcs'
         run: python scripts/probe-windows-arcs.py
       - name: Verify native edge cases
-        if: inputs.probe == 'edge-cases' || inputs.probe == 'all'
+        if: inputs.probe == 'edge-cases'
         run: python scripts/probe-windows-edge-cases.py
       - name: Render missing reference images
-        if: needs.preflight.outputs.missing == 'true'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.preflight.outputs.missing == 'true' }}
         shell: bash
         run: |
           root=test/compatibility/wmf
@@ -293,28 +293,28 @@ jobs:
           args=(--root "$root" --size 128x128)
           python scripts/update-goldens.py "${args[@]}"
       - name: Verify native regions
-        if: inputs.probe == 'regions' || inputs.probe == 'all'
+        if: inputs.probe == 'regions'
         run: python scripts/probe-windows-regions.py
       - name: Verify native region painting
-        if: inputs.probe == 'region-paint' || inputs.probe == 'all'
+        if: inputs.probe == 'region-paint'
         run: python scripts/probe-windows-region-paint.py
       - name: Probe native inside-frame paths
-        if: inputs.probe == 'insideframe' || inputs.probe == 'all'
+        if: inputs.probe == 'insideframe'
         run: python scripts/probe-windows-insideframe.py
       - name: Measure native inside-frame insets
         if: inputs.probe == 'insideframe-inset'
         run: python scripts/probe-windows-insideframe-inset.py
       - name: Probe native RoundRect paths
-        if: inputs.probe == 'roundrects' || inputs.probe == 'all'
+        if: inputs.probe == 'roundrects'
         run: python scripts/probe-windows-roundrects.py
       - name: Probe native Pie paths
-        if: inputs.probe == 'pies' || inputs.probe == 'all'
+        if: inputs.probe == 'pies'
         run: python scripts/probe-windows-pies.py
       - name: Probe native Chord paths
-        if: inputs.probe == 'chords' || inputs.probe == 'all'
+        if: inputs.probe == 'chords'
         run: python scripts/probe-windows-chords.py
       - name: Commit reference images
-        if: needs.preflight.outputs.missing == 'true'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.preflight.outputs.missing == 'true' }}
         shell: bash
         run: |
           git add -- ':(glob)test/compatibility/wmf/**/*.png'

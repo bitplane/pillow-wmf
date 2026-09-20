@@ -41,10 +41,9 @@ def test_reference_comparison_preserves_dc_state_and_surface_clipping(tmp_path):
     assert result.first == (1, 1, (17, 34, 51), (18, 34, 51))
 
 
-@pytest.mark.parametrize("script", ("analyze-halftone.py", "analyze-halftone-expansion.py"))
-def test_diagnostics_fail_on_differences_without_writing_references(script, monkeypatch, tmp_path, capsys):
+def test_diagnostics_fail_on_differences_without_writing_references(monkeypatch, tmp_path, capsys):
     monkeypatch.syspath_prepend(str(SCRIPTS))
-    main = runpy.run_path(str(SCRIPTS / script))["main"]
+    main = runpy.run_path(str(SCRIPTS / "reference_compare.py"))["main"]
     path = tmp_path / "empty.wmf"
     path.write_bytes(Recorder().to_bytes())
     profile = tmp_path / "2x2"
@@ -52,11 +51,11 @@ def test_diagnostics_fail_on_differences_without_writing_references(script, monk
     png = profile / "empty.png"
     expected = Image.new("RGB", (2, 2), "white")
     expected.save(png)
-    assert main([path]) == 0
+    assert main([str(tmp_path)]) == 0
     expected.putpixel((0, 0), (254, 255, 255))
     expected.save(png)
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    assert main([path]) == 1
+    assert main([str(tmp_path)]) == 1
     assert "1/4 pixels differ" in capsys.readouterr().out
     assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
 

@@ -13,9 +13,9 @@
 - The reference workflow defaults to **no probes**. Select a named probe when
   needed, for example:
   `gh workflow run update-goldens.yml -f probe=patblt`.
-- Never dispatch `probe=all` as routine verification, including after a shared
-  implementation change. Get explicit user approval for a full native matrix
-  run. Start with local regressions and narrowly targeted native probes instead.
+- Dispatch one named probe at a time. There is no catch-all probe choice.
+  Get explicit user approval before scheduling a broad native matrix across
+  multiple dispatches. Start with local regressions and targeted probes instead.
 - Reuse committed references. New WMFs need PNGs; changed cases are regenerated
   by deliberately deleting their PNGs. Do not add per-fixture metadata, relax
   pixel comparisons, or regenerate existing PNGs to hide implementation failures.

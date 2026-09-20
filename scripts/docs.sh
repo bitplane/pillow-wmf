@@ -19,21 +19,22 @@ pydoc-markdown -p "$MODULE_NAME" > ../docs/pydoc/index.md
 cd ..
 
 # Check out the main website repo
-TMP_DIR=$(mktemp -d)
+mkdir -p "${TMPDIR:-$HOME/tmp}"
+docs_workspace=$(mktemp -d "${TMPDIR:-$HOME/tmp}/pillow-wmf-docs.XXXXXX")
 
 # Cleanup on exit
 cleanup() {
     echo "Cleaning up..."
-    rm -rf "$TMP_DIR"
+    rm -rf "$docs_workspace"
 }
 trap cleanup EXIT
 
 # Clone the repository
-echo "Cloning $REPO_URL into $TMP_DIR..."
-git clone --depth=1 "$REPO_URL" "$TMP_DIR"
+echo "Cloning $REPO_URL into $docs_workspace..."
+git clone --depth=1 "$REPO_URL" "$docs_workspace"
 
 # Set up the destination path
-FULL_DEST_PATH="$TMP_DIR/$DEST_PATH"
+FULL_DEST_PATH="$docs_workspace/$DEST_PATH"
 
 # Copy files from source to destination
 echo "Copying files from $SRC_PATH to $FULL_DEST_PATH..."
@@ -51,7 +52,7 @@ find . -type l -exec sh -c 'cat "$1" > "$2/$1"' _ {} "$FULL_DEST_PATH" \;
 
 # Commit and push
 echo "Committing and pushing changes..."
-cd "$TMP_DIR"
+cd "$docs_workspace"
 git add "$DEST_PATH"
 git commit -m "$COMMIT_MSG"
 git push

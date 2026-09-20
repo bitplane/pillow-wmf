@@ -20,5 +20,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Build dev environment
         run: make dev
+      - name: Verify committed font bytes
+        run: git diff --exit-code -- src/pillow_wmf/fonts
       - name: Unit tests
         run: make test
