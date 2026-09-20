@@ -55,8 +55,27 @@ output/clip precision hints do not change rendering. Reading-order and numeric
 substitution flags are accepted for the supported left-to-right code pages;
 this does not provide Hebrew/Arabic shaping or RTL layout. The named
 `text-options` probe checks these distinctions, current-position updates and
-smoothing modes using the controlled test font. Glyph-index output and paired
-horizontal/vertical advances remain unsupported rather than being ignored.
+smoothing modes using the controlled test font.
+
+`ETO_GLYPH_INDEX` consumes little-endian WORD glyph IDs from the WMF text byte
+array. It bypasses character decoding, shaping and font linking. An odd trailing
+byte is ignored; spacing entries are consumed per glyph, not summed per byte
+pair. Invalid IDs select the supplied face's `.notdef` glyph independently of
+the Unicode missing-character policy.
+
+`ETO_PDY` consumes horizontal/vertical advance pairs. Positive vertical values
+move upwards along the font's vertical axis, before escapement rotation. Glyph
+placement and current-position updates share the same accumulated displacement;
+right alignment reverses the horizontal current-position displacement, not its
+vertical component. Decorations use each glyph's unrotated ink span. A record
+with PDY but no advance array does not draw or change the current position.
+
+Unrotated opaque PDY output bounds the positioned glyph cells, including ink
+overhangs. Rotated opaque PDY output remains explicitly unsupported: its native
+background geometry is not established. Transparent rotated glyph masks remain
+subject to the font-rendering approximation described above. The named
+`text-placement` probe checks glyph IDs, spacing, alignment, background bounds
+and decorations; `text-glyph-*` and `text-pdy-*` retain compact exact regressions.
 
 Supply fonts explicitly, for example:
 

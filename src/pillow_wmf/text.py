@@ -72,6 +72,7 @@ class Glyph:
     advance: int | Fraction
     index: int = 0
     channels: int = 1
+    ink_span: tuple[int, int] = (0, 0)
 
 
 @dataclass
@@ -94,7 +95,7 @@ class RasterFont:
     synthetic_bold: bool = False
     synthetic_italic: bool = False
     decorations: tuple[tuple[int, int], ...] = ()
-    _glyphs: dict[str, Glyph] = field(default_factory=dict)
+    _glyphs: dict[int, Glyph] = field(default_factory=dict)
 
     def shape(self, characters, max_pixels):
         return tuple(self.glyph(character, max_pixels) for character in characters)
@@ -106,7 +107,13 @@ class RasterFont:
             index = self.cmap.get(codepoint - 0xF000, 0)
         if not index and self.missing_glyph == "error":
             raise UnsupportedOperation(f"Missing glyph for U+{ord(character):04X}")
-        if character not in self._glyphs:
+        return self.glyph_index(index, max_pixels)
+
+    def glyph_index(self, index, max_pixels):
+        """Realize a physical glyph without character mapping or font linking."""
+        if not 0 <= index < self.font.num_glyphs:
+            index = 0
+        if index not in self._glyphs:
             # Honour TrueType instructions without inventing auto-hints for
             # unhinted glyphs. Keep bitmap strikes outside this outline slice.
             target = {3: ft.FT_LOAD_TARGET_MONO, 4: ft.FT_LOAD_TARGET_NORMAL}.get(self.quality, ft.FT_LOAD_TARGET_LCD)
@@ -130,6 +137,7 @@ class RasterFont:
                 # default oblique angle. Real-font masks remain approximate.
                 shear = ft.Matrix(65536, rounded(0.34 * 65536), 0, 65536)
                 ft.FT_Outline_Transform(byref(slot.outline._FT_Outline), byref(shear))
+            ink_bounds = slot.get_glyph().get_cbox(ft.FT_GLYPH_BBOX_SUBPIXELS)
             if self.escapement:
                 sine, cosine = text_rotation(self.escapement)
                 matrix = ft.Matrix(
@@ -160,15 +168,16 @@ class RasterFont:
                 )
             else:
                 pixels = bytes(packed[y * bitmap.pitch + x] for y in range(bitmap.rows) for x in range(bitmap.width))
-            self._glyphs[character] = Glyph(
+            self._glyphs[index] = Glyph(
                 (bitmap.width // channels, bitmap.rows),
                 (slot.bitmap_left, -slot.bitmap_top),
                 pixels,
                 advance,
                 index,
                 channels,
+                (rounded(Fraction(ink_bounds.xMin, 64)), rounded(Fraction(ink_bounds.xMax, 64))),
             )
-        glyph = self._glyphs[character]
+        glyph = self._glyphs[index]
         if glyph.size[0] * glyph.size[1] > max_pixels:
             raise ValueError("Glyph pixel limit exceeded")
         return glyph
@@ -513,6 +522,9 @@ class FontRun:
     def glyph(self, character, max_pixels):
         return self.shape(character, max_pixels)[0]
 
+    def glyph_index(self, index, max_pixels):
+        return self.primary.glyph_index(index, max_pixels)
+
     def shape(self, characters, max_pixels):
         """Shape SBCS control runs before choosing masks and advances.
 
@@ -611,11 +623,14 @@ def layout_text(
     justification=(0, 0),
     characters=None,
     escapement=0,
+    glyph_indices=None,
+    vertical_advances=(),
+    vertical_scale=1,
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
-    if characters is None:
+    if characters is None and glyph_indices is None:
         characters = decode_single_byte(text, 1252)
-    if len(characters) != len(text):
+    if glyph_indices is None and len(characters) != len(text):
         raise UnsupportedOperation("Multibyte text layout is not implemented")
     sine, cosine = text_rotation(escapement)
 
@@ -632,10 +647,18 @@ def layout_text(
     horizontal, vertical = alignment & 6, alignment & 24
     if alignment & ~(31 | TA_RTLREADING) or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
         raise UnsupportedOperation("Text alignment")
-    if advances and len(advances) != len(text):
+    count = len(text) if glyph_indices is None else len(glyph_indices)
+    if advances and len(advances) != count:
         raise ValueError("Text advance count must match the byte count")
-    glyphs = font.shape(characters, max_pixels)
+    if vertical_advances and len(vertical_advances) != count:
+        raise ValueError("Vertical advance count must match the glyph count")
+    glyphs = (
+        font.shape(characters, max_pixels)
+        if glyph_indices is None
+        else tuple(font.glyph_index(index, max_pixels) for index in glyph_indices)
+    )
     offsets = [0]
+    vertical_offsets = [0]
     mapped_offsets = [0]
     total = 0
     break_count, break_extra = justification
@@ -643,12 +666,15 @@ def layout_text(
     # instead of distributing rounded per-character additions.
     break_step = int(Fraction(break_extra * scale * 65536, break_count)) if break_count > 0 else 0
     for index, glyph in enumerate(glyphs):
+        vertical_offsets.append(
+            vertical_offsets[-1] - (vertical_advances[index] * vertical_scale if vertical_advances else 0)
+        )
         if advances:
             total += advances[index] + extra
             mapped_offsets.append(total * scale)
         else:
             total += glyph.advance * 65536 + int(extra * scale * 65536)
-            if ord(characters[index]) == font.break_character:
+            if glyph_indices is None and ord(characters[index]) == font.break_character:
                 total += break_step
             # The accumulated device advance uses nearest-even ties before
             # conversion to logical coordinates, whose rounding is distinct.
@@ -663,12 +689,16 @@ def layout_text(
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
     origin_x = x - (width if horizontal == 2 else (width + 1) // 2 if horizontal == 6 else 0)
     baseline = y + (font.ascent if vertical == 0 else -font.descent if vertical == 8 else 0)
-    position = (x + (run_width if horizontal == 0 else -run_width), y) if alignment & 1 and horizontal != 6 else None
+    position = (
+        (x + (run_width if horizontal == 0 else -run_width), y + vertical_offsets[-1])
+        if alignment & 1 and horizontal != 6
+        else None
+    )
     if position is not None:
         position = project(*position, snap=False)
     positioned = []
-    for glyph, offset in zip(glyphs, offsets[:-1], strict=True):
-        gx, gy = project(origin_x + offset, baseline)
+    for glyph, offset, dy in zip(glyphs, offsets[:-1], vertical_offsets[:-1], strict=True):
+        gx, gy = project(origin_x + offset, baseline + rounded(dy))
         positioned.append((gx + glyph.bearing[0], gy + glyph.bearing[1], glyph))
     background_width = ceil(total * scale) if advances else ceil((Fraction(total, 65536) // scale) * scale)
     # An opaque run must also cover protruding ink, even with negative spacing
@@ -680,29 +710,48 @@ def layout_text(
             for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
         ]
     )
+    left = origin_x
+    top, bottom = baseline - font.ascent, baseline + font.descent
+    if vertical_advances:
+        # PDY uses the positioned glyph bounds rather than one horizontal
+        # cell strip. Horizontal bounds include the run origin and final
+        # advance, plus protruding ink; GDI includes the rightmost column.
+        left = min([left] + [origin_x + dx + glyph.bearing[0] for glyph, dx in zip(glyphs, offsets[:-1], strict=True)])
+        right += 1
+        top += min(map(rounded, vertical_offsets[:-1]), default=0)
+        bottom += max(map(rounded, vertical_offsets[:-1]), default=0)
     background = (
         tuple(
             project(px, py)
             for px, py in (
-                (origin_x, baseline - font.ascent),
-                (right, baseline - font.ascent),
-                (right, baseline + font.descent),
-                (origin_x, baseline + font.descent),
+                (left, top),
+                (right, top),
+                (right, bottom),
+                (left, bottom),
             )
         )
         if opaque
         else None
     )
+    decoration_spans = (
+        tuple(
+            (origin_x + dx + glyph.ink_span[0], baseline + rounded(dy), glyph.ink_span[1] - glyph.ink_span[0])
+            for glyph, dx, dy in zip(glyphs, offsets[:-1], vertical_offsets[:-1], strict=True)
+        )
+        if vertical_advances
+        else ((origin_x, baseline, width),)
+    )
     decorations = tuple(
         tuple(
             project(px, py)
             for px, py in (
-                (origin_x, baseline - offset),
-                (origin_x + width, baseline - offset),
-                (origin_x + width, baseline - offset + thickness),
-                (origin_x, baseline - offset + thickness),
+                (span_x, span_y - offset),
+                (span_x + span_width, span_y - offset),
+                (span_x + span_width, span_y - offset + thickness),
+                (span_x, span_y - offset + thickness),
             )
         )
         for offset, thickness in font.decorations
+        for span_x, span_y, span_width in decoration_spans
     )
     return TextLayout(tuple(positioned), background, position, decorations)

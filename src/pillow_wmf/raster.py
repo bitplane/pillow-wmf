@@ -22,9 +22,11 @@ from .constants import (
     BS_SOLID,
     COLORONCOLOR,
     ETO_CLIPPED,
+    ETO_GLYPH_INDEX,
     ETO_NUMERICSLATIN,
     ETO_NUMERICSLOCAL,
     ETO_OPAQUE,
+    ETO_PDY,
     ETO_RTLREADING,
     FLOODFILLBORDER,
     FLOODFILLSURFACE,
@@ -1098,7 +1100,15 @@ class RasterContext(TraceContext):
         options = args.get("options", 0)
         # Reading order and numeral substitution do not alter our supported
         # left-to-right code pages. Arabic/Hebrew remain explicit boundaries.
-        if options & ~(ETO_OPAQUE | ETO_CLIPPED | ETO_RTLREADING | ETO_NUMERICSLOCAL | ETO_NUMERICSLATIN):
+        if options & ~(
+            ETO_OPAQUE
+            | ETO_CLIPPED
+            | ETO_RTLREADING
+            | ETO_NUMERICSLOCAL
+            | ETO_NUMERICSLATIN
+            | ETO_GLYPH_INDEX
+            | ETO_PDY
+        ):
             raise UnsupportedOperation("Text output options")
         rectangle = args.get("rectangle")
         if options & (ETO_OPAQUE | ETO_CLIPPED) and rectangle is None:
@@ -1120,19 +1130,39 @@ class RasterContext(TraceContext):
         # already explicitly supplied TrueType face. Retain them in DC state.
         origin = self._position if self._text_state.alignment & TA_UPDATECP else (args["x"], args["y"])
         origin = self._point(*origin)
+        glyph_indices = None
+        advances = args.get("advances", ())
+        if options & ETO_GLYPH_INDEX:
+            # WMF counts bytes even when the payload contains WORD glyph IDs.
+            # A trailing odd byte and excess spacing entries are not consumed.
+            text = args["text"]
+            glyph_indices = tuple(int.from_bytes(text[i : i + 2], "little") for i in range(0, len(text) - 1, 2))
+            advances = advances[: len(glyph_indices) * (2 if options & ETO_PDY else 1)]
+        vertical_advances = ()
+        if options & ETO_PDY and not advances:
+            # Native WMF playback rejects this record without changing the DC.
+            return TextLayout(), None
+        if options & ETO_PDY and advances:
+            vertical_advances = advances[1::2]
+            advances = advances[::2]
+            if self._background_mode == OPAQUE and request.escapement % 3600:
+                raise UnsupportedOperation("Rotated opaque text with paired advances")
         layout = layout_text(
             self.fonts.realize(request, face, (abs(sx), abs(sy))),
             args["text"],
             *origin,
             self._text_state.alignment,
-            args.get("advances", ()),
+            advances,
             opaque=self._background_mode == OPAQUE,
             max_pixels=self.max_bitmap_pixels,
             scale=abs(sx),
             extra=self._text_state.character_extra,
             justification=self._text_state.justification,
-            characters=self.fonts.decode(request, face, args["text"]),
+            characters=self.fonts.decode(request, face, args["text"]) if glyph_indices is None else None,
             escapement=request.escapement,
+            glyph_indices=glyph_indices,
+            vertical_advances=vertical_advances,
+            vertical_scale=abs(sy),
         )
         if layout.position is not None:
             logical_origin = self._position

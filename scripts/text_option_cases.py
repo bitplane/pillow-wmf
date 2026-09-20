@@ -1,15 +1,17 @@
 """Isolate WMF text option, mapper and font-request semantics."""
 
 from dataclasses import replace
+from pathlib import Path
 from struct import pack
 
 from fontTools.ttLib import TTFont
-from test_font import FAMILY, FONT_PATH
 
 from pillow_wmf import Recorder
 from pillow_wmf.wmf.objects import Font
 
 SIZE = (192, 128)
+FONT_PATH = Path(__file__).resolve().parents[1] / "test/fonts/layout.ttf"
+FAMILY = "Pillow WMF Test"
 REQUEST = Font(height=-24, weight=400, quality=3, face_name=FAMILY.encode().ljust(32, b"\0"))
 
 
