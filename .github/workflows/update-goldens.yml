@@ -27,6 +27,7 @@ on:
           - wingdings-metrics
           - text-encoding
           - text-encoding-extended
+          - text-options
           - text-missing
           - text-fallback-sizing
           - layout
@@ -134,6 +135,19 @@ jobs:
         with:
           name: real-text-probe
           path: real-text-probe/
+          retention-days: 7
+      - name: Probe WMF text options
+        if: inputs.probe == 'text-options'
+        shell: bash
+        run: |
+          mkdir -p text-options
+          python scripts/probe-windows-text-options.py --output text-options | tee text-options/observations.txt
+      - name: Upload text option observations
+        if: always() && inputs.probe == 'text-options'
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-options
+          path: text-options/
           retention-days: 7
       - name: Probe single-byte text encodings
         if: inputs.probe == 'text-encoding' || inputs.probe == 'text-missing' || inputs.probe == 'text-encoding-extended'
