@@ -471,6 +471,10 @@ class FontCollection:
             control_fallback = FontRun(raw, raw_links)
         return FontRun(primary, linked, control_fallback)
 
+    def layout_font(self, request, face, scale, *, characters=None):
+        """Prepare a run; controlled fonts never depend on host discovery."""
+        return self.realize(request, face, scale)
+
     def resolve(self, request):
         request = self.default_font if request is None else request
         if request is None:

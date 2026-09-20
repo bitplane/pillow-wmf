@@ -22,6 +22,11 @@ without implicit fit-to-bounds scaling. Text requires explicitly supplied fonts.
 Use `FontCollection(faces, default_font=Font(...))` to configure the initial
 font, including its size, for files that draw text without selecting one;
 `Font` is available from `pillow_wmf`. No host font is selected silently.
+For best-effort rendering with installed fonts, pass
+`fonts=SystemFontCollection()` (also exported from `pillow_wmf`). This opts into
+family and missing-glyph substitution, including the bundled Wingdings mapping.
+Inspect `image.info["wmf_font_substitutions"]` for the replacements used.
+This does not promise Windows font metrics or pixel parity.
 For partial output, use `play(metafile, context, strict=False)` and inspect the
 returned omissions. Malformed embedded bitmap inputs are omitted before state
 changes, but malformed WMF structure and resource-limit violations remain fatal.

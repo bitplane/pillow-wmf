@@ -4,6 +4,7 @@ from PIL import Image
 
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS
 from .raster import RasterContext
+from .system_fonts import SystemFontCollection
 from .text import FontCollection
 from .wmf import Limits, Metafile
 from .wmf.player import play
@@ -28,4 +29,6 @@ def render(
     metafile = Metafile.from_bytes(data, limits=limits)
     context = RasterContext(*size, background=background, fonts=fonts, max_bitmap_pixels=max_bitmap_pixels)
     play(metafile, context, strict=True, limits=limits)
+    if isinstance(fonts, SystemFontCollection):
+        context.image.info["wmf_font_substitutions"] = tuple(fonts.substitutions)
     return context.image

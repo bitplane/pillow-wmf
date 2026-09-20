@@ -1,12 +1,45 @@
 # GDI text support
 
+## Installed-font policy
+
+`SystemFontCollection()` is an opt-in alternative to controlled `FontCollection`
+inputs. Discovery happens on first text use, using Fontconfig's installed-file
+inventory when available, otherwise conventional system/user font directories.
+Only static TrueType faces supported by the renderer are eligible; CFF and
+variable fonts are ignored. `paths=[...]` supplies an application-owned inventory
+instead. Font collection files are enumerated by face index; outlines are loaded
+only when selected. No fonts are downloaded or discovered from WMF-supplied paths.
+
+Resolution prefers the named family and requested weight/style, then known
+substitute families for Arial/Helvetica, Times and Courier, then the LOGFONT
+pitch/family category. Ties are deterministic within an inventory. Missing
+Unicode glyphs use other installed faces, preserving the primary line metrics.
+Input bytes retain the requested Windows code page regardless of the substitute's
+advertised charset bits. If coverage is exhausted, `.notdef` is used and reported.
+
+Wingdings uses the bundled Unicode mapping when its original face is unavailable.
+Other missing symbol families fail rather than reinterpret their bytes as Latin
+text. Glyph-index runs require a matching family, weight and style; even matching
+names cannot guarantee glyph-ID compatibility across different font versions.
+
+The initial font is a 16-pixel-em Arial request unless `default_font=Font(...)`
+is supplied. An environment with no usable ordinary fonts fails explicitly;
+the symbol subset is not a general-purpose text font.
+
+Use one collection per rendering job. Its `substitutions` list contains immutable
+`FontSubstitution(requested, selected, reason)` records for family/style changes,
+symbol mapping, glyph coverage and unresolved glyphs. `render(..., fonts=fonts)`
+copies these into `image.info["wmf_font_substitutions"]`. This is a best-effort
+display policy, not a Windows-parity claim. Explicit `FontCollection` behavior
+and exact compatibility tests remain independent of installed fonts.
+
 The target is Windows WMF playback, including text's effects on subsequent
 drawing. Glyph rasterization uncertainty must not weaken existing exact tests.
 
 ## Current support
 
-Font creation, selection and saved state retain the logical request. Text
-drawing resolves an exact family, weight and italic style from caller-supplied
+Font creation, selection and saved state retain the logical request. With the
+controlled `FontCollection`, drawing resolves an exact family, weight and italic style from caller-supplied
 TrueType faces; it never searches host font directories or silently substitutes.
 
 The supported rendering slice is single-byte Western, Central European,
@@ -18,7 +51,7 @@ TA_UPDATECP, opaque backgrounds, ETO_OPAQUE, ETO_CLIPPED and the DC clip.
 Escapement, reflected axis mappings, RTL device layout, underline/strikeout and
 explicitly enabled style synthesis are implemented. Transformed real-font masks
 remain approximate; controlled geometry regressions retain exact comparisons.
-Automatic host-font selection and other encodings remain unsupported.
+Other encodings remain unsupported by either font policy.
 An initial logical font can be supplied with `FontCollection(default_font=...)`.
 Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
