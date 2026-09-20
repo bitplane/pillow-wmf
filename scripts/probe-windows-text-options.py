@@ -6,7 +6,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
-from text_option_cases import FAMILY, FONT_PATH, SIZE, cases, placement_cases
+from text_option_cases import FAMILY, FONT_PATH, SIZE, cases, placement_cases, rtl_cases
 from windows_wmf_render import bind, check, private_fonts, reference_surface, render_wmf
 
 
@@ -60,12 +60,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--placement", action="store_true")
+    parser.add_argument("--rtl", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     with TTFont(FONT_PATH) as font:
         tables = {tag: font.getTableData(tag) for tag in ("head", "hmtx", "glyf", "cmap")}
     with private_fonts([FONT_PATH]):
-        for name, recorder in placement_cases() if args.placement else cases():
+        selected = rtl_cases if args.rtl else placement_cases if args.placement else cases
+        for name, recorder in selected():
             print(f"[{name}]", flush=True)
             source = recorder.to_bytes()
             (args.output / f"{name}.wmf").write_bytes(source)

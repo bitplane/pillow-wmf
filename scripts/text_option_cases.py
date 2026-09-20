@@ -44,6 +44,41 @@ def cases():
 __all__ = ["FAMILY", "FONT_PATH", "SIZE", "cases"]
 
 
+def rtl_cases():
+    for name, alignment, options, changes, scale in (
+        ("left", 25, 0, {}, (128, 128)),
+        ("right", 27, 0, {}, (128, 128)),
+        ("center", 31, 0, {}, (128, 128)),
+        ("opaque", 25, 6, {}, (128, 128)),
+        ("quarter", 25, 0, {"escapement": 900}, (128, 128)),
+        ("angle", 25, 0, {"escapement": 300}, (128, 128)),
+        ("fractional", 25, 0, {}, (192, 160)),
+        ("pdy", 25, 0x2000, {}, (128, 128)),
+    ):
+        dc = Recorder()
+        dc.select_object(dc.create_font(replace(REQUEST, **changes)))
+        dc.set_layout(1)
+        dc.set_window_extent(128, 128)
+        dc.set_viewport_extent(*scale)
+        dc.set_window_origin(-3, 2)
+        dc.set_viewport_origin(7, 5)
+        dc.set_background_mode(1)
+        dc.set_background_color(0x99CCFF)
+        dc.set_text_alignment(alignment)
+        dc.move_to(45, 65)
+        dc.ext_text_out(
+            80,
+            80,
+            b"ABA",
+            options=options,
+            advances=(19, 7, 23, -5, 17, 11) if options & 0x2000 else (19, 23, 17),
+            rectangle=(35, 40, 105, 90) if options & 6 else None,
+        )
+        dc.line_to(115, 100)
+        dc.set_pixel(120, 120, 0x00FF00)
+        yield f"rtl-{name}", dc
+
+
 def placement_cases():
     """Distinguish byte decoding, glyph indexing and two-dimensional spacing."""
     with TTFont(FONT_PATH) as font:

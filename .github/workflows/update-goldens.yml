@@ -29,6 +29,7 @@ on:
           - text-encoding-extended
           - text-options
           - text-placement
+          - text-rtl
           - escapes
           - text-missing
           - text-fallback-sizing
@@ -153,15 +154,16 @@ jobs:
           path: dib-boundaries/
           retention-days: 7
       - name: Probe WMF text options
-        if: inputs.probe == 'text-options' || inputs.probe == 'text-placement'
+        if: inputs.probe == 'text-options' || inputs.probe == 'text-placement' || inputs.probe == 'text-rtl'
         shell: bash
         run: |
           mkdir -p text-options
           args=()
           if [[ "${{ inputs.probe }}" == text-placement ]]; then args+=(--placement); fi
+          if [[ "${{ inputs.probe }}" == text-rtl ]]; then args+=(--rtl); fi
           python scripts/probe-windows-text-options.py --output text-options "${args[@]}" | tee text-options/observations.txt
       - name: Upload text option observations
-        if: always() && (inputs.probe == 'text-options' || inputs.probe == 'text-placement')
+        if: always() && (inputs.probe == 'text-options' || inputs.probe == 'text-placement' || inputs.probe == 'text-rtl')
         uses: actions/upload-artifact@v4
         with:
           name: text-options
