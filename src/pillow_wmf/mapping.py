@@ -4,6 +4,16 @@ from dataclasses import dataclass
 from fractions import Fraction
 from math import floor
 
+from .constants import (
+    MM_ANISOTROPIC,
+    MM_HIENGLISH,
+    MM_HIMETRIC,
+    MM_ISOTROPIC,
+    MM_LOENGLISH,
+    MM_LOMETRIC,
+    MM_TEXT,
+    MM_TWIPS,
+)
 from .numeric import float32
 
 
@@ -27,18 +37,18 @@ def scaled(value: int, numerator: int, denominator: int) -> int:
 
 # Extents for the reference bitmap device; independent of the canvas size.
 PHYSICAL_EXTENTS = {
-    2: ((2709, 2032), (1024, -768)),
-    3: ((27093, 20320), (1024, -768)),
-    4: ((1067, 800), (1024, -768)),
-    5: ((10667, 8000), (1024, -768)),
-    6: ((15360, 11520), (1024, -768)),
-    7: ((2709, 2032), (1024, -768)),
+    MM_LOMETRIC: ((2709, 2032), (1024, -768)),
+    MM_HIMETRIC: ((27093, 20320), (1024, -768)),
+    MM_LOENGLISH: ((1067, 800), (1024, -768)),
+    MM_HIENGLISH: ((10667, 8000), (1024, -768)),
+    MM_TWIPS: ((15360, 11520), (1024, -768)),
+    MM_ISOTROPIC: ((2709, 2032), (1024, -768)),
 }
 
 
 @dataclass
 class Mapping:
-    mode: int = 8
+    mode: int = MM_ANISOTROPIC
     window_origin: tuple[int, int] = (0, 0)
     viewport_origin: tuple[int, int] = (0, 0)
     window_extent: tuple[int, int] = (128, 128)
@@ -67,7 +77,7 @@ class Mapping:
     def set_layout(self, layout):
         self.layout = layout
         if self.rtl:
-            self.mode = 8
+            self.mode = MM_ANISOTROPIC
 
     def _axes(self):
         for i in range(2):
@@ -147,15 +157,15 @@ class Mapping:
         return tuple(result)
 
     def set_mode(self, mode: int) -> None:
-        self.mode = 8 if self.rtl else mode
-        if mode == 1:
+        self.mode = MM_ANISOTROPIC if self.rtl else mode
+        if mode == MM_TEXT:
             self.window_extent = (1, 1)
             self.viewport_extent = (1, 1)
         elif mode in PHYSICAL_EXTENTS:
             self.window_extent, self.viewport_extent = PHYSICAL_EXTENTS[mode]
 
     def set_extent(self, *, window: bool, x: int, y: int) -> None:
-        if self.mode not in (7, 8) or not x or not y:
+        if self.mode not in (MM_ISOTROPIC, MM_ANISOTROPIC) or not x or not y:
             return
         if window:
             self.window_extent = (x, y)
@@ -164,7 +174,7 @@ class Mapping:
         self._fix_isotropic()
 
     def scale_extent(self, *, window: bool, xn: int, xd: int, yn: int, yd: int) -> None:
-        if self.mode not in (7, 8) or not xn or not xd or not yn or not yd:
+        if self.mode not in (MM_ISOTROPIC, MM_ANISOTROPIC) or not xn or not xd or not yn or not yd:
             return
         old = self.window_extent if window else self.viewport_extent
         x, y = scaled(old[0], xn, xd), scaled(old[1], yn, yd)
@@ -177,7 +187,7 @@ class Mapping:
         self._fix_isotropic()
 
     def _fix_isotropic(self) -> None:
-        if self.mode != 7:
+        if self.mode != MM_ISOTROPIC:
             return
         wx, wy = self.window_extent
         vx, vy = self.viewport_extent

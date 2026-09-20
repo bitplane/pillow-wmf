@@ -10,9 +10,38 @@ from math import floor
 from PIL import Image
 
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, DIBLayout, RGBBitmap, read_dib
-from .bitmap16 import read_bitmap16
+from .bitmap16 import Bitmap16Layout, read_bitmap16
 from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
+from .constants import (
+    ALTERNATE,
+    BLACKONWHITE,
+    BS_HATCHED,
+    BS_NULL,
+    BS_PATTERN,
+    BS_SOLID,
+    COLORONCOLOR,
+    ETO_CLIPPED,
+    ETO_OPAQUE,
+    FLOODFILLBORDER,
+    FLOODFILLSURFACE,
+    HALFTONE,
+    MM_ANISOTROPIC,
+    MM_TEXT,
+    OPAQUE,
+    PS_INSIDEFRAME,
+    PS_NULL,
+    PS_SOLID,
+    R2_BLACK,
+    R2_COPYPEN,
+    R2_NOP,
+    R2_NOT,
+    R2_WHITE,
+    TA_UPDATECP,
+    TRANSPARENT,
+    WHITEONBLACK,
+    WINDING,
+)
 from .ellipse import arc_figure, box_corners, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
 from .gdi import Call, Handle, UnsupportedOperation
@@ -56,13 +85,13 @@ def logical_color(colorref):
 class Pen:
     color: tuple[int, int, int] | PaletteIndex
     width: int = 1
-    style: int = 0
+    style: int = PS_SOLID
 
 
 @dataclass(frozen=True)
 class Brush:
     color: tuple[int, int, int] | PaletteIndex
-    style: int = 0
+    style: int = BS_SOLID
     hatch: int = 0
     pattern: RGBBitmap | DIBLayout | None = None
     monochrome: bool = False
@@ -84,14 +113,26 @@ class SourceTransfer:
 
 
 @dataclass(frozen=True)
+class PreparedEffect:
+    """Decoded inputs shared by validation and application, never DC state."""
+
+    text_layout: TextLayout | None = None
+    text_rectangle: tuple[int, int, int, int] | None = None
+    transfer: SourceTransfer | TransferAction | None = None
+    pattern: RGBBitmap | DIBLayout | None = None
+    region_mask: RegionMask | None = None
+    layout: Bitmap16Layout | DIBLayout | None = None
+
+
+@dataclass(frozen=True)
 class TextState:
-    """Logical text setup retained until glyph rendering is implemented."""
+    """Logical font, alignment and spacing retained by SaveDC/RestoreDC."""
 
     alignment: int = 0
     character_extra: int = 0
     justification: tuple[int, int] = (0, 0)
     mapper_flags: int = 0
-    font: Font | None = None  # None denotes the device's unresolved default font.
+    font: Font | None = None  # None uses the caller's configured default, if any.
 
 
 @dataclass(frozen=True)
@@ -153,10 +194,10 @@ class RasterContext(TraceContext):
         self._pen = Pen((0, 0, 0), width=0)
         self._brush = Brush((255, 255, 255))
         self._position = (0, 0)
-        self._polygon_fill_mode = 1
-        self._rop2 = 13
-        self._stretch_mode = 1
-        self._background_mode = 2
+        self._polygon_fill_mode = ALTERNATE
+        self._rop2 = R2_COPYPEN
+        self._stretch_mode = BLACKONWHITE
+        self._background_mode = OPAQUE
         self._background_color = (255, 255, 255)
         self._text_color = (0, 0, 0)
         self._text_state = TextState()
@@ -212,32 +253,34 @@ class RasterContext(TraceContext):
             if a["layout"] & ~9:
                 raise UnsupportedOperation(f"Layout {a['layout']}")
         elif name == "set_map_mode":
-            if a["mode"] not in range(1, 9):
+            if a["mode"] not in range(MM_TEXT, MM_ANISOTROPIC + 1):
                 raise UnsupportedOperation(f"Map mode {a['mode']}")
         elif name == "set_polygon_fill_mode":
-            if a["mode"] not in (1, 2):
+            if a["mode"] not in (ALTERNATE, WINDING):
                 raise UnsupportedOperation(f"Polygon fill mode {a['mode']}")
         elif name == "set_rop2":
-            if a["mode"] not in range(1, 17):
+            if a["mode"] not in range(R2_BLACK, R2_WHITE + 1):
                 raise UnsupportedOperation(f"ROP2 mode {a['mode']}")
         elif name == "set_stretch_mode":
-            if a["mode"] not in (1, 2, 3, 4):
+            if a["mode"] not in (BLACKONWHITE, WHITEONBLACK, COLORONCOLOR, HALFTONE):
                 raise UnsupportedOperation(f"Stretch mode {a['mode']}")
         elif name in ("dib_bit_blt", "dib_stretch_blt", "stretch_dib"):
             transfer = self._prepare_transfer(name, a)
         elif name in ("bit_blt", "stretch_blt"):
             transfer = self._prepare_legacy_transfer(name, a)
         elif name == "set_background_mode":
-            if a["mode"] not in (1, 2):
+            if a["mode"] not in (TRANSPARENT, OPAQUE):
                 raise UnsupportedOperation(f"Background mode {a['mode']}")
         elif name == "ext_flood_fill":
-            if a["mode"] not in (0, 1):
+            if a["mode"] not in (FLOODFILLBORDER, FLOODFILLSURFACE):
                 raise UnsupportedOperation(f"Flood fill mode {a['mode']}")
         elif name == "create_pen":
             if a["width"] < 0:
                 raise UnsupportedOperation("Negative pen width")
         elif name == "create_brush":
-            if a["style"] not in (0, 1, 2) or (a["style"] == 2 and a["hatch"] not in range(6)):
+            if a["style"] not in (BS_SOLID, BS_NULL, BS_HATCHED) or (
+                a["style"] == BS_HATCHED and a["hatch"] not in range(6)
+            ):
                 raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
         elif name == "create_pattern_brush":
             layout = read_bitmap16(a["bitmap"], native_pattern=True, max_pixels=self.max_bitmap_pixels)
@@ -299,376 +342,465 @@ class RasterContext(TraceContext):
                 if a["region"].scans
                 else None
             )
-        elif name not in {
-            "select_palette",
-            "realize_palette",
-            "pat_blt",
-            "flood_fill",
-            "fill_region",
-            "paint_region",
-            "invert_region",
-            "frame_region",
-            "select_clip_region",
-            "set_window_origin",
-            "set_viewport_origin",
-            "set_window_extent",
-            "set_viewport_extent",
-            "offset_window_origin",
-            "offset_viewport_origin",
-            "scale_window_extent",
-            "scale_viewport_extent",
-            "move_to",
-            "line_to",
-            "polyline",
-            "polygon",
-            "poly_polygon",
-            "set_polygon_fill_mode",
-            "set_rop2",
-            "set_background_color",
-            "set_text_color",
-            "set_text_alignment",
-            "set_text_character_extra",
-            "set_text_justification",
-            "set_mapper_flags",
-            "rectangle",
-            "ellipse",
-            "arc",
-            "chord",
-            "pie",
-            "round_rect",
-            "set_pixel",
-            "save_dc",
-            "restore_dc",
-            "intersect_clip_rect",
-            "exclude_clip_rect",
-            "offset_clip_region",
-            "delete_object",
-        }:
-            raise UnsupportedOperation(name)
-
-        return text_layout, text_rectangle, transfer, pattern, region_mask, layout
+        return PreparedEffect(text_layout, text_rectangle, transfer, pattern, region_mask, layout)
 
     def invoke(self, call: Call) -> Handle | int | None:
         call = self._prepare(call)
-        name = call.name
-        a = call.kwargs
+        handler = getattr(self, f"_apply_{call.name}", None)
+        if handler is None:
+            raise UnsupportedOperation(call.name)
         try:
-            text_layout, text_rectangle, transfer, pattern, region_mask, layout = self._prepare_effect(call)
+            prepared = self._prepare_effect(call)
         except ResourceLimitError:
             raise
         except FormatError as error:
-            raise UnsupportedOperation(f"{name}: malformed input: {error}") from error
-        if name == "restore_dc":
-            level = a["saved_dc"]
-            target = level if level > 0 else len(self._saved) + level + 1
-            snapshot = self._saved[target - 1]
+            raise UnsupportedOperation(f"{call.name}: malformed input: {error}") from error
         result = self._commit(call)
-        if name in ("text_out", "ext_text_out"):
-            self._draw_text(text_layout, text_rectangle, a.get("options", 0))
-        elif name == "create_palette":
-            self._objects[result] = LogicalPalette(a["palette"].entries) if a["palette"].entries else None
-        elif name == "select_palette":
-            if a["handle"] is not None and self._objects[a["handle"]] is not None:
-                self._palette = self._objects[a["handle"]]
-        elif name in ("set_palette_entries", "animate_palette"):
-            self._palette.update(a["palette"].start, a["palette"].entries, animate=name == "animate_palette")
-        elif name == "resize_palette":
-            self._palette.resize(a["count"])
-        elif name == "set_map_mode":
-            self.mapping.set_mode(a["mode"])
-        elif name == "set_layout":
-            self.mapping.set_layout(a["layout"])
-        elif name == "set_polygon_fill_mode":
-            self._polygon_fill_mode = a["mode"]
-        elif name == "set_rop2":
-            self._rop2 = a["mode"]
-        elif name == "set_stretch_mode":
-            self._stretch_mode = a["mode"]
-        elif name == "set_background_mode":
-            self._background_mode = a["mode"]
-        elif name == "set_background_color":
-            self._background_color = logical_color(a["color"])
-        elif name == "set_text_color":
-            self._text_color = logical_color(a["color"])
-        elif name == "set_text_alignment":
-            self._text_state = replace(self._text_state, alignment=a["alignment"])
-        elif name == "set_text_character_extra":
-            self._text_state = replace(self._text_state, character_extra=a["extra"])
-        elif name == "set_text_justification":
-            self._text_state = replace(self._text_state, justification=(a["break_count"], a["break_extra"]))
-        elif name == "set_mapper_flags":
-            self._text_state = replace(self._text_state, mapper_flags=a["flags"])
-        elif name == "set_window_origin":
-            self.mapping.window_origin = a["x"], a["y"]
-        elif name == "set_viewport_origin":
-            self.mapping.viewport_origin = a["x"], a["y"]
-        elif name == "set_window_extent":
-            self.mapping.set_extent(window=True, x=a["x"], y=a["y"])
-        elif name == "set_viewport_extent":
-            self.mapping.set_extent(window=False, x=a["x"], y=a["y"])
-        elif name == "offset_window_origin":
-            x, y = self.mapping.window_origin
-            self.mapping.window_origin = x + a["x"], y + a["y"]
-        elif name == "offset_viewport_origin":
-            x, y = self.mapping.viewport_origin
-            self.mapping.viewport_origin = x + a["x"], y + a["y"]
-        elif name in ("scale_window_extent", "scale_viewport_extent"):
-            self.mapping.scale_extent(
-                window=name == "scale_window_extent",
-                xn=a["x_numerator"],
-                xd=a["x_denominator"],
-                yn=a["y_numerator"],
-                yd=a["y_denominator"],
-            )
-        elif name == "create_pen":
-            # CreatePenIndirect uses CreatePen, not ExtCreatePen: unrecognized
-            # styles become PS_SOLID, including styles with join/cap bits.
-            # Normalize the realized object only; preserve the requested call.
-            style = a["style"] if a["style"] in range(7) else 0
-            self._objects[result] = Pen(logical_color(a["color"]), a["width"], style)
-        elif name == "create_brush":
-            self._objects[result] = Brush(logical_color(a["color"]), a["style"], a["hatch"])
-        elif name == "create_font":
-            self._objects[result] = a["font"]
-        elif name == "create_pattern_brush":
-            self._objects[result] = (
-                Brush((0, 0, 0), style=3, pattern=pattern, monochrome=layout.depth == 1, realizable=pattern is not None)
-                if layout.complete
-                else None
-            )
-        elif name == "create_dib_pattern_brush":
-            self._objects[result] = (
-                Brush((0, 0, 0), style=3, pattern=pattern, monochrome=a["style"] == 3) if pattern is not None else None
-            )
-        elif name == "create_region":
-            self._objects[result] = region_mask
-        elif name == "select_clip_region":
-            self._clip = ClipRegion(
-                mask=self._clip_mask(self._objects[a["region"]]) if a["region"] is not None else None
-            )
-        elif name == "select_object":
-            obj = self._objects[a["handle"]] if a["handle"] is not None else None
-            if isinstance(obj, Pen):
-                self._pen = obj
-            elif isinstance(obj, Font):
-                self._text_state = replace(self._text_state, font=obj)
-            elif isinstance(obj, RegionMask):
-                self._clip = ClipRegion(mask=self._clip_mask(obj))
-            elif obj is None:
-                pass  # Selecting a null object fails without changing state.
-            else:
-                self._brush = obj
-        elif name == "delete_object":
-            if not self.is_null_object(a["handle"]):
-                del self._objects[a["handle"]]
-        elif name == "move_to":
-            self._position = a["x"], a["y"]
-        elif name == "line_to":
-            self._line(self._point(*self._position), self._point(a["x"], a["y"]))
-            self._position = a["x"], a["y"]
-        elif name == "polyline":
-            self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
-        elif name in {"polygon", "poly_polygon"}:
-            polygons = (a["points"],) if name == "polygon" else a["polygons"]
-            # PolyPolygon validates the entire contour list before painting.
-            # Dropping short contours would incorrectly draw the valid ones.
-            if name == "poly_polygon" and any(len(points) < 2 for points in polygons):
-                return result
-            paths = tuple(self._mapped_path(points) for points in polygons)
-            self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))
-        elif name == "set_pixel":
-            self._pixel(*self._point(a["x"], a["y"]), logical_color(a["color"]))
-        elif name == "pat_blt":
-            self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
-        elif name in ("bit_blt", "stretch_blt", "dib_bit_blt", "set_dib_to_device", "dib_stretch_blt", "stretch_dib"):
-            if isinstance(transfer, SourceTransfer):
-                self._source_blt(
-                    transfer.bitmap,
-                    transfer.horizontal,
-                    transfer.vertical,
-                    transfer.operation,
-                    pad_bounds=transfer.pad_bounds,
-                )
-            elif transfer is TransferAction.PATTERN:
-                self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
-        elif name in ("flood_fill", "ext_flood_fill"):
-            self._flood_fill(
-                self._point(a["x"], a["y"]), self._palette.colorref(logical_color(a["color"])), a.get("mode", 0)
-            )
-        elif name == "save_dc":
-            self._saved.append(
-                SavedDC(
-                    mapping=replace(self.mapping),
-                    pen=self._pen,
-                    brush=self._brush,
-                    position=self._position,
-                    clip=self._clip,
-                    polygon_fill_mode=self._polygon_fill_mode,
-                    rop2=self._rop2,
-                    background_mode=self._background_mode,
-                    background_color=self._background_color,
-                    text_color=self._text_color,
-                    stretch_mode=self._stretch_mode,
-                    palette=self._palette,
-                    text_state=self._text_state,
-                )
-            )
-        elif name == "restore_dc":
-            self.mapping = snapshot.mapping
-            self._pen = snapshot.pen
-            self._brush = snapshot.brush
-            self._position = snapshot.position
-            self._clip = snapshot.clip
-            self._polygon_fill_mode = snapshot.polygon_fill_mode
-            self._rop2 = snapshot.rop2
-            self._background_mode = snapshot.background_mode
-            self._background_color = snapshot.background_color
-            self._text_color = snapshot.text_color
-            self._stretch_mode = snapshot.stretch_mode
-            self._palette = snapshot.palette
-            self._text_state = snapshot.text_state
-            del self._saved[target - 1 :]
-        elif name in ("intersect_clip_rect", "exclude_clip_rect"):
-            left, top = self.mapping.clip_point(a["left"], a["top"])
-            right, bottom = self.mapping.clip_point(a["right"], a["bottom"])
-            rectangle = (min(left, right), min(top, bottom), max(left, right), max(top, bottom))
-            if name == "intersect_clip_rect":
-                self._clip = self._clip.intersect(rectangle)
-            else:
-                self._clip = self._clip.exclude(rectangle)
-        elif name == "offset_clip_region":
-            dx, dy = self.mapping.clip_displacement(a["x"], a["y"])
-            self._clip = self._clip.offset(dx, dy)
-        elif name in {"fill_region", "paint_region", "invert_region", "frame_region"}:
-            region = self._objects[a["region"]]
-            if region is not None:
-                if name == "frame_region":
-                    region = region.frame(
-                        *frame_footprint(
-                            a["width"],
-                            a["height"],
-                            *self.mapping.linear_scale,
-                        ),
-                        point=self._point,
-                    )
-                else:
-                    region = region.transformed(self._point)
-                brush = self._objects[a["brush"]] if "brush" in a else self._brush
-                for left, top, right, bottom in region.rectangles():
-                    for y in range(max(0, top), min(self.image.height, bottom)):
-                        for x in range(max(0, left), min(self.image.width, right)):
-                            color = (0, 0, 0) if name == "invert_region" else self._brush_color_at(x, y, brush)
-                            if color is not None:
-                                self._pixel(x, y, color, operation=6 if name == "invert_region" else None)
-        elif name in {"rectangle", "ellipse", "arc", "chord", "pie", "round_rect"}:
-            pen = self._realized_pen()
-            # Native EBOX decrements RTL logical X edges before transforming.
-            # Rectangle's wide-pen path enters EBOX after its own decrement.
-            shift = int(self.mapping.rtl) * (1 + (name == "rectangle" and not pen.cosmetic))
-            left, top = self._point(a["left"] - shift, a["top"])
-            right, bottom = self._point(a["right"] - shift, a["bottom"])
-            left, right = sorted((left, right))
-            top, bottom = sorted((top, bottom))
-            if right > left and bottom > top:
-                drawing_bounds = None
-                covered = False
-                if self._pen.style == 6 and not pen.cosmetic:
-                    dx, dy = (
-                        floor(self._pen.width * abs(Fraction(v, w)) * 16 + 0.5)
-                        for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent, strict=False)
-                    )
-                    # Equality retains a degenerate centreline and widens it
-                    # normally. Only a negative interior triggers GDI's
-                    # pen-colour fill (or rejection for arc-family calls).
-                    covered = self._pen.width > min(abs(a["right"] - a["left"]), abs(a["bottom"] - a["top"]))
-                    if covered:
-                        if name in {"arc", "chord", "pie"}:
-                            return result
-                        drawing_bounds = left * 16, top * 16, right * 16, bottom * 16
-                    else:
-                        # Preserve the native signed half-width rounding.
-                        # Odd spans retain their corner geometry downstream;
-                        # they must not be replaced by a symmetric radius.
-                        drawing_bounds = (
-                            left * 16 + (dx + 1) // 2,
-                            top * 16 + (dy + 1) // 2,
-                            right * 16 - dx // 2,
-                            bottom * 16 - (dy + 1) // 2,
-                        )
-                rectangle = name == "rectangle"
-                if name == "rectangle":
-                    bounds = drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
-                    path = DevicePath.polyline(box_corners(bounds), closed=True)
-                elif name == "ellipse":
-                    path = DevicePath(
-                        ellipse_cubics(
-                            left,
-                            top,
-                            right,
-                            bottom,
-                            null_pen=self._pen.style == 5,
-                            drawing_bounds=drawing_bounds,
-                            clockwise=self.mapping.rtl,
-                        ),
-                        closed=True,
-                    )
-                elif name == "round_rect":
-                    # Corner proportions are established before integer device
-                    # mapping, just like arc radial directions.
-                    width = Fraction(abs(a["ellipse_width"]) * (right - left), abs(a["right"] - a["left"]))
-                    height = Fraction(abs(a["ellipse_height"]) * (bottom - top), abs(a["bottom"] - a["top"]))
-                    rectangle = not width or not height
-                    path = round_rect_figure(
-                        left,
-                        top,
-                        right,
-                        bottom,
-                        width,
-                        height,
-                        null_pen=self._pen.style == 5,
-                        drawing_bounds=drawing_bounds,
-                        clockwise=self.mapping.rtl,
-                    )
-                else:
-                    sx, sy = (1 if value >= 0 else -1 for value in self.mapping.linear_scale)
-                    start = sx * a["start_x"], sy * a["start_y"]
-                    end = sx * a["end_x"], sy * a["end_y"]
-                    x0, x1 = sorted((sx * (a["left"] - shift), sx * (a["right"] - shift)))
-                    y0, y1 = sorted((sy * a["top"], sy * a["bottom"]))
-                    path = arc_figure(
-                        left,
-                        top,
-                        right,
-                        bottom,
-                        start,
-                        end,
-                        closure="open" if name == "arc" else name,
-                        null_pen=self._pen.style == 5,
-                        drawing_bounds=drawing_bounds,
-                        radial_bounds=(x0, y0, x1, y1),
-                        clockwise=self.mapping.rtl,
-                    )
-                if covered:
-                    for x, y in self._contour_pixels((path.vertices,)):
-                        self._pixel(x, y, self._pen.color)
-                elif name == "arc":
-                    self._stroke_path(path)
-                else:
-                    brush = self._brush
-                    # Rectangle's block-fill realization simplifies ROPs
-                    # independent of the pattern before applying hatch
-                    # transparency. Region/path fills retain the hatch mask.
-                    if rectangle and brush.style == 2 and self._rop2 in (1, 6, 11, 16):
-                        brush = replace(brush, style=0)
-                    self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
+        handler(call, prepared, result)
         if isinstance(result, Handle) and self.is_null_object(result):
-            # A failed creation is a typed null value, not an allocated GDI
-            # object. Intern it so WMF slot reuse cannot leak backend handles.
+            # Intern failed creations so file-slot reuse cannot leak handles.
             del self._live[result.serial]
             del self._objects[result]
             result = Handle(0, result.kind, self)
             self._objects[result] = None
         return result
+
+    def _apply_escape(self, call, prepared, result):
+        pass  # Accepted printer metadata has no effect on a bitmap DC.
+
+    _apply_realize_palette = _apply_escape
+
+    def _apply_text_out(self, call, prepared, result):
+        a = call.kwargs
+        self._draw_text(prepared.text_layout, prepared.text_rectangle, a.get("options", 0))
+
+    _apply_ext_text_out = _apply_text_out
+
+    def _apply_create_palette(self, call, prepared, result):
+        a = call.kwargs
+        self._objects[result] = LogicalPalette(a["palette"].entries) if a["palette"].entries else None
+
+    def _apply_select_palette(self, call, prepared, result):
+        a = call.kwargs
+        if a["handle"] is not None and self._objects[a["handle"]] is not None:
+            self._palette = self._objects[a["handle"]]
+
+    def _apply_set_palette_entries(self, call, prepared, result):
+        name = call.name
+        a = call.kwargs
+        self._palette.update(a["palette"].start, a["palette"].entries, animate=name == "animate_palette")
+
+    _apply_animate_palette = _apply_set_palette_entries
+
+    def _apply_resize_palette(self, call, prepared, result):
+        a = call.kwargs
+        self._palette.resize(a["count"])
+
+    def _apply_set_map_mode(self, call, prepared, result):
+        a = call.kwargs
+        self.mapping.set_mode(a["mode"])
+
+    def _apply_set_layout(self, call, prepared, result):
+        a = call.kwargs
+        self.mapping.set_layout(a["layout"])
+
+    def _apply_set_polygon_fill_mode(self, call, prepared, result):
+        a = call.kwargs
+        self._polygon_fill_mode = a["mode"]
+
+    def _apply_set_rop2(self, call, prepared, result):
+        a = call.kwargs
+        self._rop2 = a["mode"]
+
+    def _apply_set_stretch_mode(self, call, prepared, result):
+        a = call.kwargs
+        self._stretch_mode = a["mode"]
+
+    def _apply_set_background_mode(self, call, prepared, result):
+        a = call.kwargs
+        self._background_mode = a["mode"]
+
+    def _apply_set_background_color(self, call, prepared, result):
+        a = call.kwargs
+        self._background_color = logical_color(a["color"])
+
+    def _apply_set_text_color(self, call, prepared, result):
+        a = call.kwargs
+        self._text_color = logical_color(a["color"])
+
+    def _apply_set_text_alignment(self, call, prepared, result):
+        a = call.kwargs
+        self._text_state = replace(self._text_state, alignment=a["alignment"])
+
+    def _apply_set_text_character_extra(self, call, prepared, result):
+        a = call.kwargs
+        self._text_state = replace(self._text_state, character_extra=a["extra"])
+
+    def _apply_set_text_justification(self, call, prepared, result):
+        a = call.kwargs
+        self._text_state = replace(self._text_state, justification=(a["break_count"], a["break_extra"]))
+
+    def _apply_set_mapper_flags(self, call, prepared, result):
+        a = call.kwargs
+        self._text_state = replace(self._text_state, mapper_flags=a["flags"])
+
+    def _apply_set_window_origin(self, call, prepared, result):
+        a = call.kwargs
+        self.mapping.window_origin = a["x"], a["y"]
+
+    def _apply_set_viewport_origin(self, call, prepared, result):
+        a = call.kwargs
+        self.mapping.viewport_origin = a["x"], a["y"]
+
+    def _apply_set_window_extent(self, call, prepared, result):
+        a = call.kwargs
+        self.mapping.set_extent(window=True, x=a["x"], y=a["y"])
+
+    def _apply_set_viewport_extent(self, call, prepared, result):
+        a = call.kwargs
+        self.mapping.set_extent(window=False, x=a["x"], y=a["y"])
+
+    def _apply_offset_window_origin(self, call, prepared, result):
+        a = call.kwargs
+        x, y = self.mapping.window_origin
+        self.mapping.window_origin = x + a["x"], y + a["y"]
+
+    def _apply_offset_viewport_origin(self, call, prepared, result):
+        a = call.kwargs
+        x, y = self.mapping.viewport_origin
+        self.mapping.viewport_origin = x + a["x"], y + a["y"]
+
+    def _apply_scale_window_extent(self, call, prepared, result):
+        name = call.name
+        a = call.kwargs
+        self.mapping.scale_extent(
+            window=name == "scale_window_extent",
+            xn=a["x_numerator"],
+            xd=a["x_denominator"],
+            yn=a["y_numerator"],
+            yd=a["y_denominator"],
+        )
+
+    _apply_scale_viewport_extent = _apply_scale_window_extent
+
+    def _apply_create_pen(self, call, prepared, result):
+        a = call.kwargs
+        # CreatePenIndirect uses CreatePen, not ExtCreatePen: unrecognized
+        # styles become PS_SOLID, including styles with join/cap bits.
+        # Normalize the realized object only; preserve the requested call.
+        style = a["style"] if a["style"] in range(PS_SOLID, PS_INSIDEFRAME + 1) else PS_SOLID
+        self._objects[result] = Pen(logical_color(a["color"]), a["width"], style)
+
+    def _apply_create_brush(self, call, prepared, result):
+        a = call.kwargs
+        self._objects[result] = Brush(logical_color(a["color"]), a["style"], a["hatch"])
+
+    def _apply_create_font(self, call, prepared, result):
+        a = call.kwargs
+        self._objects[result] = a["font"]
+
+    def _apply_create_pattern_brush(self, call, prepared, result):
+        self._objects[result] = (
+            Brush(
+                (0, 0, 0),
+                style=BS_PATTERN,
+                pattern=prepared.pattern,
+                monochrome=prepared.layout.depth == 1,
+                realizable=prepared.pattern is not None,
+            )
+            if prepared.layout.complete
+            else None
+        )
+
+    def _apply_create_dib_pattern_brush(self, call, prepared, result):
+        a = call.kwargs
+        self._objects[result] = (
+            Brush((0, 0, 0), style=BS_PATTERN, pattern=prepared.pattern, monochrome=a["style"] == BS_PATTERN)
+            if prepared.pattern is not None
+            else None
+        )
+
+    def _apply_create_region(self, call, prepared, result):
+        self._objects[result] = prepared.region_mask
+
+    def _apply_select_clip_region(self, call, prepared, result):
+        a = call.kwargs
+        self._clip = ClipRegion(mask=self._clip_mask(self._objects[a["region"]]) if a["region"] is not None else None)
+
+    def _apply_select_object(self, call, prepared, result):
+        a = call.kwargs
+        obj = self._objects[a["handle"]] if a["handle"] is not None else None
+        if isinstance(obj, Pen):
+            self._pen = obj
+        elif isinstance(obj, Font):
+            self._text_state = replace(self._text_state, font=obj)
+        elif isinstance(obj, RegionMask):
+            self._clip = ClipRegion(mask=self._clip_mask(obj))
+        elif obj is None:
+            pass  # Selecting a null object fails without changing state.
+        else:
+            self._brush = obj
+
+    def _apply_delete_object(self, call, prepared, result):
+        a = call.kwargs
+        if not self.is_null_object(a["handle"]):
+            del self._objects[a["handle"]]
+
+    def _apply_move_to(self, call, prepared, result):
+        a = call.kwargs
+        self._position = a["x"], a["y"]
+
+    def _apply_line_to(self, call, prepared, result):
+        a = call.kwargs
+        self._line(self._point(*self._position), self._point(a["x"], a["y"]))
+        self._position = a["x"], a["y"]
+
+    def _apply_polyline(self, call, prepared, result):
+        a = call.kwargs
+        self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
+
+    def _apply_polygon(self, call, prepared, result):
+        name = call.name
+        a = call.kwargs
+        polygons = (a["points"],) if name == "polygon" else a["polygons"]
+        # PolyPolygon validates the entire contour list before painting.
+        # Dropping short contours would incorrectly draw the valid ones.
+        if name == "poly_polygon" and any(len(points) < 2 for points in polygons):
+            return result
+        paths = tuple(self._mapped_path(points) for points in polygons)
+        self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))
+
+    _apply_poly_polygon = _apply_polygon
+
+    def _apply_set_pixel(self, call, prepared, result):
+        a = call.kwargs
+        self._pixel(*self._point(a["x"], a["y"]), logical_color(a["color"]))
+
+    def _apply_pat_blt(self, call, prepared, result):
+        a = call.kwargs
+        self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
+
+    def _apply_bit_blt(self, call, prepared, result):
+        a = call.kwargs
+        if isinstance(prepared.transfer, SourceTransfer):
+            self._source_blt(
+                prepared.transfer.bitmap,
+                prepared.transfer.horizontal,
+                prepared.transfer.vertical,
+                prepared.transfer.operation,
+                pad_bounds=prepared.transfer.pad_bounds,
+            )
+        elif prepared.transfer is TransferAction.PATTERN:
+            self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
+
+    _apply_stretch_blt = _apply_bit_blt
+    _apply_dib_bit_blt = _apply_bit_blt
+    _apply_set_dib_to_device = _apply_bit_blt
+    _apply_dib_stretch_blt = _apply_bit_blt
+    _apply_stretch_dib = _apply_bit_blt
+
+    def _apply_flood_fill(self, call, prepared, result):
+        a = call.kwargs
+        self._flood_fill(
+            self._point(a["x"], a["y"]), self._palette.colorref(logical_color(a["color"])), a.get("mode", 0)
+        )
+
+    _apply_ext_flood_fill = _apply_flood_fill
+
+    def _apply_save_dc(self, call, prepared, result):
+        self._saved.append(
+            SavedDC(
+                mapping=replace(self.mapping),
+                pen=self._pen,
+                brush=self._brush,
+                position=self._position,
+                clip=self._clip,
+                polygon_fill_mode=self._polygon_fill_mode,
+                rop2=self._rop2,
+                background_mode=self._background_mode,
+                background_color=self._background_color,
+                text_color=self._text_color,
+                stretch_mode=self._stretch_mode,
+                palette=self._palette,
+                text_state=self._text_state,
+            )
+        )
+
+    def _apply_restore_dc(self, call, prepared, result):
+        a = call.kwargs
+        level = a["saved_dc"]
+        target = level if level > 0 else len(self._saved) + level + 1
+        snapshot = self._saved[target - 1]
+        self.mapping = snapshot.mapping
+        self._pen = snapshot.pen
+        self._brush = snapshot.brush
+        self._position = snapshot.position
+        self._clip = snapshot.clip
+        self._polygon_fill_mode = snapshot.polygon_fill_mode
+        self._rop2 = snapshot.rop2
+        self._background_mode = snapshot.background_mode
+        self._background_color = snapshot.background_color
+        self._text_color = snapshot.text_color
+        self._stretch_mode = snapshot.stretch_mode
+        self._palette = snapshot.palette
+        self._text_state = snapshot.text_state
+        del self._saved[target - 1 :]
+
+    def _apply_intersect_clip_rect(self, call, prepared, result):
+        name = call.name
+        a = call.kwargs
+        left, top = self.mapping.clip_point(a["left"], a["top"])
+        right, bottom = self.mapping.clip_point(a["right"], a["bottom"])
+        rectangle = (min(left, right), min(top, bottom), max(left, right), max(top, bottom))
+        if name == "intersect_clip_rect":
+            self._clip = self._clip.intersect(rectangle)
+        else:
+            self._clip = self._clip.exclude(rectangle)
+
+    _apply_exclude_clip_rect = _apply_intersect_clip_rect
+
+    def _apply_offset_clip_region(self, call, prepared, result):
+        a = call.kwargs
+        dx, dy = self.mapping.clip_displacement(a["x"], a["y"])
+        self._clip = self._clip.offset(dx, dy)
+
+    def _apply_fill_region(self, call, prepared, result):
+        name = call.name
+        a = call.kwargs
+        region = self._objects[a["region"]]
+        if region is not None:
+            if name == "frame_region":
+                region = region.frame(
+                    *frame_footprint(
+                        a["width"],
+                        a["height"],
+                        *self.mapping.linear_scale,
+                    ),
+                    point=self._point,
+                )
+            else:
+                region = region.transformed(self._point)
+            brush = self._objects[a["brush"]] if "brush" in a else self._brush
+            for left, top, right, bottom in region.rectangles():
+                for y in range(max(0, top), min(self.image.height, bottom)):
+                    for x in range(max(0, left), min(self.image.width, right)):
+                        color = (0, 0, 0) if name == "invert_region" else self._brush_color_at(x, y, brush)
+                        if color is not None:
+                            self._pixel(x, y, color, operation=R2_NOT if name == "invert_region" else None)
+
+    _apply_paint_region = _apply_fill_region
+    _apply_invert_region = _apply_fill_region
+    _apply_frame_region = _apply_fill_region
+
+    def _apply_rectangle(self, call, prepared, result):
+        name = call.name
+        a = call.kwargs
+        pen = self._realized_pen()
+        # Native EBOX decrements RTL logical X edges before transforming.
+        # Rectangle's wide-pen path enters EBOX after its own decrement.
+        shift = int(self.mapping.rtl) * (1 + (name == "rectangle" and not pen.cosmetic))
+        left, top = self._point(a["left"] - shift, a["top"])
+        right, bottom = self._point(a["right"] - shift, a["bottom"])
+        left, right = sorted((left, right))
+        top, bottom = sorted((top, bottom))
+        if right > left and bottom > top:
+            drawing_bounds = None
+            covered = False
+            if self._pen.style == PS_INSIDEFRAME and not pen.cosmetic:
+                dx, dy = (
+                    floor(self._pen.width * abs(Fraction(v, w)) * 16 + 0.5)
+                    for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent, strict=False)
+                )
+                # Equality retains a degenerate centreline and widens it
+                # normally. Only a negative interior triggers GDI's
+                # pen-colour fill (or rejection for arc-family calls).
+                covered = self._pen.width > min(abs(a["right"] - a["left"]), abs(a["bottom"] - a["top"]))
+                if covered:
+                    if name in {"arc", "chord", "pie"}:
+                        return result
+                    drawing_bounds = left * 16, top * 16, right * 16, bottom * 16
+                else:
+                    # Preserve the native signed half-width rounding.
+                    # Odd spans retain their corner geometry downstream;
+                    # they must not be replaced by a symmetric radius.
+                    drawing_bounds = (
+                        left * 16 + (dx + 1) // 2,
+                        top * 16 + (dy + 1) // 2,
+                        right * 16 - dx // 2,
+                        bottom * 16 - (dy + 1) // 2,
+                    )
+            rectangle = name == "rectangle"
+            if name == "rectangle":
+                bounds = drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
+                path = DevicePath.polyline(box_corners(bounds), closed=True)
+            elif name == "ellipse":
+                path = DevicePath(
+                    ellipse_cubics(
+                        left,
+                        top,
+                        right,
+                        bottom,
+                        null_pen=self._pen.style == PS_NULL,
+                        drawing_bounds=drawing_bounds,
+                        clockwise=self.mapping.rtl,
+                    ),
+                    closed=True,
+                )
+            elif name == "round_rect":
+                # Corner proportions are established before integer device
+                # mapping, just like arc radial directions.
+                width = Fraction(abs(a["ellipse_width"]) * (right - left), abs(a["right"] - a["left"]))
+                height = Fraction(abs(a["ellipse_height"]) * (bottom - top), abs(a["bottom"] - a["top"]))
+                rectangle = not width or not height
+                path = round_rect_figure(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    width,
+                    height,
+                    null_pen=self._pen.style == PS_NULL,
+                    drawing_bounds=drawing_bounds,
+                    clockwise=self.mapping.rtl,
+                )
+            else:
+                sx, sy = (1 if value >= 0 else -1 for value in self.mapping.linear_scale)
+                start = sx * a["start_x"], sy * a["start_y"]
+                end = sx * a["end_x"], sy * a["end_y"]
+                x0, x1 = sorted((sx * (a["left"] - shift), sx * (a["right"] - shift)))
+                y0, y1 = sorted((sy * a["top"], sy * a["bottom"]))
+                path = arc_figure(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    start,
+                    end,
+                    closure="open" if name == "arc" else name,
+                    null_pen=self._pen.style == PS_NULL,
+                    drawing_bounds=drawing_bounds,
+                    radial_bounds=(x0, y0, x1, y1),
+                    clockwise=self.mapping.rtl,
+                )
+            if covered:
+                for x, y in self._contour_pixels((path.vertices,)):
+                    self._pixel(x, y, self._pen.color)
+            elif name == "arc":
+                self._stroke_path(path)
+            else:
+                brush = self._brush
+                # Rectangle's block-fill realization simplifies ROPs
+                # independent of the pattern before applying hatch
+                # transparency. Region/path fills retain the hatch mask.
+                if rectangle and brush.style == BS_HATCHED and self._rop2 in (R2_BLACK, R2_NOT, R2_NOP, R2_WHITE):
+                    brush = replace(brush, style=0)
+                self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
+
+    _apply_ellipse = _apply_rectangle
+    _apply_arc = _apply_rectangle
+    _apply_chord = _apply_rectangle
+    _apply_pie = _apply_rectangle
+    _apply_round_rect = _apply_rectangle
 
     def _prepare_device_transfer(self, args) -> SourceTransfer | TransferAction:
         """Realize a scan band without stretching its device-pixel geometry."""
@@ -743,7 +875,9 @@ class RasterContext(TraceContext):
         sw, sh = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         right, bottom = self._point(a["src_x"] + sw, a["src_y"] + sh)
         a = dict(a, src_x=sx, src_width=right - sx, src_height=bottom - sy)
-        return self._prepare_bitmap_transfer(a, bitmap, sy, depth=32, halftone=self._stretch_mode == 4, source_dc=True)
+        return self._prepare_bitmap_transfer(
+            a, bitmap, sy, depth=32, halftone=self._stretch_mode == HALFTONE, source_dc=True
+        )
 
     def _prepare_transfer(self, name, a) -> SourceTransfer | TransferAction:
         if pattern_rop2(a["rop"]) is not None:
@@ -773,7 +907,7 @@ class RasterContext(TraceContext):
         # The distinction is observable for RLE run phase and unwritten gaps.
         direct = (
             copy
-            and self._stretch_mode != 4
+            and self._stretch_mode != HALFTONE
             and self.mapping.translation_only
             and a["src_x"] == 0
             and a["src_y"] == 0
@@ -789,7 +923,7 @@ class RasterContext(TraceContext):
             bitmap = self._decode_device_rle(layout, horizontal, vertical)
             return SourceTransfer(bitmap, horizontal, vertical, a["rop"])
         bitmap = layout.decode(
-            replicate_channels=not (self._stretch_mode == 4 and copy),
+            replicate_channels=not (self._stretch_mode == HALFTONE and copy),
             palette=self._palette.colors(),
             # Ternary RLE blits realize a cleared RGB bitmap, not a cleared
             # indexed bitmap: unwritten source pixels are black, not index 0.
@@ -800,7 +934,7 @@ class RasterContext(TraceContext):
             bitmap,
             sy,
             depth=layout.depth,
-            halftone=self._stretch_mode == 4,
+            halftone=self._stretch_mode == HALFTONE,
             monochrome_bitblt=monochrome and name == "dib_bit_blt",
         )
 
@@ -868,7 +1002,7 @@ class RasterContext(TraceContext):
             horizontal = BlitAxis.unscaled(x, dw, a["src_x"], sw, bitmap.width, anchor_pixel=copy or mirrored)
             vertical = BlitAxis.unscaled(y, dh, sy, sh, bitmap.height, anchor_pixel=copy or mirrored)
         pad_bounds = None
-        if (scaled or mirrored) and (not copy or (scaled and self._stretch_mode == 4)):
+        if (scaled or mirrored) and (not copy or (scaled and self._stretch_mode == HALFTONE)):
             left, top = x + min(0, dw + 1), y + min(0, dh + 1)
             pad_bounds = (left, top, left + abs(dw), top + abs(dh))
         return SourceTransfer(bitmap, horizontal, vertical, a["rop"], pad_bounds)
@@ -878,7 +1012,7 @@ class RasterContext(TraceContext):
         table = (operation >> 16) & 255
         # EngStretchBltROP downgrades HALFTONE for ternary operations. Keep
         # this per-transfer; the saved DC stretch mode must remain unchanged.
-        mode = 3 if self._stretch_mode == 4 and table != 0xCC else self._stretch_mode
+        mode = COLORONCOLOR if self._stretch_mode == HALFTONE and table != 0xCC else self._stretch_mode
         needs_pattern = (table & 15) != (table >> 4)
         left, top, right, bottom = pad_bounds or (
             horizontal.destination,
@@ -902,7 +1036,8 @@ class RasterContext(TraceContext):
                 if source is not None:
                     for sample in samples:
                         source = tuple(
-                            a & b if self._stretch_mode == 1 else a | b for a, b in zip(source, sample, strict=True)
+                            a & b if self._stretch_mode == BLACKONWHITE else a | b
+                            for a, b in zip(source, sample, strict=True)
                         )
                 in_source = (
                     source is not None
@@ -936,7 +1071,7 @@ class RasterContext(TraceContext):
                     self._pixel(px, py, paint, operation=operation)
 
     def _flood_fill(self, seed, color, mode):
-        if self._brush.style == 1:
+        if self._brush.style == BS_NULL:
             return
         pixels = self.image.load()
 
@@ -954,7 +1089,7 @@ class RasterContext(TraceContext):
 
     def _prepare_text(self, args):
         options = args.get("options", 0)
-        if options & ~6:
+        if options & ~(ETO_OPAQUE | ETO_CLIPPED):
             raise UnsupportedOperation("Text output options")
         rectangle = args.get("rectangle")
         if options and rectangle is None:
@@ -974,7 +1109,7 @@ class RasterContext(TraceContext):
             request = replace(request, escapement=-request.escapement)
         if self._text_state.mapper_flags:
             raise UnsupportedOperation("Text mapper flags")
-        origin = self._position if self._text_state.alignment & 1 else (args["x"], args["y"])
+        origin = self._position if self._text_state.alignment & TA_UPDATECP else (args["x"], args["y"])
         origin = self._point(*origin)
         layout = layout_text(
             self.fonts.realize(request, face, (abs(sx), abs(sy))),
@@ -982,7 +1117,7 @@ class RasterContext(TraceContext):
             *origin,
             self._text_state.alignment,
             args.get("advances", ()),
-            opaque=self._background_mode == 2,
+            opaque=self._background_mode == OPAQUE,
             max_pixels=self.max_bitmap_pixels,
             scale=abs(sx),
             extra=self._text_state.character_extra,
@@ -1012,7 +1147,7 @@ class RasterContext(TraceContext):
         def paint_contour(contour, color):
             polygon = [(x * 16, y * 16) for x, y in contour]
             for x, y in self._contour_pixels((polygon,)):
-                if not options & 4 or rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]:
+                if not options & ETO_CLIPPED or rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]:
                     self._pixel(x, y, color, operation=13)
 
         def fill(bounds):
@@ -1022,7 +1157,7 @@ class RasterContext(TraceContext):
                     for x in range(max(0, left), min(self.image.width, right)):
                         self._pixel(x, y, self._background_color, operation=13)
 
-        if options & 2:
+        if options & ETO_OPAQUE:
             fill(rectangle)
         if layout.background is not None:
             paint_contour(layout.background, self._background_color)
@@ -1030,7 +1165,9 @@ class RasterContext(TraceContext):
             width, height = glyph.size
             for y in range(max(0, top), min(self.image.height, top + height)):
                 for x in range(max(0, left), min(self.image.width, left + width)):
-                    if options & 4 and not (rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]):
+                    if options & ETO_CLIPPED and not (
+                        rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]
+                    ):
                         continue
                     index = ((y - top) * width + x - left) * glyph.channels
                     if glyph.channels == 1:
@@ -1065,7 +1202,7 @@ class RasterContext(TraceContext):
         if self._realized_pen().cosmetic:
             # Opaque style gaps are painted beneath foreground marks, even
             # when the figure retraces itself. Keep multiplicity in each pass.
-            passes = (False, True) if self._pen.style in range(1, 5) and self._background_mode == 2 else (True,)
+            passes = (False, True) if self._pen.style in range(1, 5) and self._background_mode == OPAQUE else (True,)
             for foreground in passes:
                 for (x, y), mark in self._cosmetic_fragments((path,)):
                     if mark == foreground:
@@ -1081,7 +1218,7 @@ class RasterContext(TraceContext):
         return realize_pen(self._pen.width, *self.mapping.linear_scale)
 
     def _cosmetic_fragments(self, paths):
-        if self._pen.style == 5:
+        if self._pen.style == PS_NULL:
             return
         for path in paths:
             # A figure starts at phase zero on its first emitted GIQ pixel,
@@ -1098,12 +1235,12 @@ class RasterContext(TraceContext):
                     phase = position + span.step * (pixel[major] - span.start)
                     if self._pen.style in (0, 6) or dash_is_foreground(self._pen.style, phase):
                         yield pixel, True
-                    elif self._background_mode == 2:
+                    elif self._background_mode == OPAQUE:
                         yield pixel, False
                 position += len(span)
 
     def _stroke_fragments(self, paths: tuple[DevicePath, ...], *, miter=False):
-        if self._pen.style == 5:
+        if self._pen.style == PS_NULL:
             return set(), set()
         if not self._realized_pen().cosmetic:
             return self._stroke_pixels(paths, miter=miter), set()
@@ -1113,7 +1250,7 @@ class RasterContext(TraceContext):
         return foreground, gaps - foreground
 
     def _stroke_pixels(self, paths: tuple[DevicePath, ...], *, miter=False) -> set[tuple[int, int]]:
-        if self._pen.style == 5:
+        if self._pen.style == PS_NULL:
             return set()
         pen = self._realized_pen()
         pixels: set[tuple[int, int]] = set()
@@ -1143,7 +1280,7 @@ class RasterContext(TraceContext):
                         pixels.update(self._contour_pixels((join,)))
         return pixels
 
-    def _contour_pixels(self, contours: tuple[Polygon, ...], *, fill_mode=1):
+    def _contour_pixels(self, contours: tuple[Polygon, ...], *, fill_mode=ALTERNATE):
         if not contours:
             return
         left = max(0, min(p[0] for contour in contours for p in contour) // 16)
@@ -1161,7 +1298,7 @@ class RasterContext(TraceContext):
         contours = tuple(path.vertices for path in paths)
         # Native copy-mode combined fill/stroke consumes the flattened contour.
         # Other ROP2 modes and stroke-only paths retain cubic tangents.
-        if self._brush.style != 1 and self._rop2 == 13:
+        if self._brush.style != BS_NULL and self._rop2 == R2_COPYPEN:
             paths = tuple(path.flattened() for path in paths)
         fill_pixels = set(self._contour_pixels(contours, fill_mode=self._polygon_fill_mode))
         foreground, gaps = self._stroke_fragments(paths, miter=miter)
@@ -1189,9 +1326,9 @@ class RasterContext(TraceContext):
     ) -> tuple[int, int, int] | None:
         if brush is None:
             return None
-        if brush.style == 0:
+        if brush.style == BS_SOLID:
             return self._palette.colorref(brush.color)
-        if brush.style == 1 or not brush.realizable:
+        if brush.style == BS_NULL or not brush.realizable:
             return None
         if brush.pattern is not None:
             px, py = x % brush.pattern.width, y % brush.pattern.height
@@ -1211,4 +1348,4 @@ class RasterContext(TraceContext):
         mark = (horizontal, vertical, forward, backward, horizontal or vertical, forward or backward)[brush.hatch]
         if mark:
             return self._palette.colorref(brush.color)
-        return self._palette.colorref(self._background_color) if opaque or self._background_mode == 2 else None
+        return self._palette.colorref(self._background_color) if opaque or self._background_mode == OPAQUE else None

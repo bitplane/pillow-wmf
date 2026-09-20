@@ -317,6 +317,15 @@ def test_rejected_restore_keeps_backend_frames_accounted_for():
     assert backend._save_depth == 0
 
 
+def test_absolute_restore_is_relative_to_the_files_own_save_stack():
+    backend = TraceContext()
+    backend.save_dc()
+    file = Metafile.build([fixed.SaveDC(), fixed.RestoreDC(1)])
+    assert play(file, backend, strict=True) == ()
+    assert backend.calls[-1] == Call.make("restore_dc", saved_dc=2)
+    assert backend._save_depth == 1
+
+
 def test_malformed_bitmap_is_omitted_before_any_state_changes():
     from pillow_wmf import RasterContext
 
