@@ -25,6 +25,7 @@ text-rtl-fractional
 text-scaled-spacing
 text-codepages
 text-symbols
+text-symbol-ansi
 text-blank-controls
 mapping-translation-precision-0
 mapping-translation-precision-1

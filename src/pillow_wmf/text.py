@@ -21,6 +21,7 @@ from .gdi import InvalidOperation, UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import fixed, rounded
 from .numeric import float32
+from .symbol import WINDOWS_SYMBOL_BYTES
 from .wingdings import decode_wingdings
 from .wmf.objects import Font
 
@@ -252,6 +253,13 @@ class FontFace:
         """Load the prebuilt Unicode Wingdings fallback; selection stays explicit."""
         return cls(files("pillow_wmf").joinpath("fonts", "PillowWMFWingdingsFallback.ttf").read_bytes())
 
+    @classmethod
+    def bundled_symbol(cls):
+        """Wine's unmodified Symbol face, retaining its legacy symbol cmap."""
+        face = cls(files("pillow_wmf").joinpath("fonts", "symbol", "symbol.ttf").read_bytes())
+        face.cmap = {0xF000 | byte: face.cmap[0xF000 | byte] for byte in WINDOWS_SYMBOL_BYTES}
+        return face
+
     def realize(self, request, scale, *, missing_glyph="error"):
         """Classic compatible-mode realization; natural width follows height."""
         sx, sy = scale
@@ -411,6 +419,7 @@ class FontCollection:
         missing_glyph="error",
         synthesize_styles=False,
         wingdings_fallback=False,
+        symbol_fallback=False,
         default_font: Font | None = None,
     ):
         if ansi_codepage not in CODEPAGE_BITS:
@@ -421,8 +430,10 @@ class FontCollection:
         self.missing_glyph = missing_glyph
         self.synthesize_styles = synthesize_styles
         self.wingdings_fallback = wingdings_fallback
+        self.symbol_fallback = symbol_fallback
         self.default_font = default_font
         self._wingdings_face = None
+        self._symbol_face = None
         self.aliases = {name.casefold(): target.casefold() for name, target in (aliases or {}).items()}
         self.fallbacks = {name.casefold(): tuple(targets) for name, targets in (fallbacks or {}).items()}
         self._faces = {}
@@ -492,6 +503,15 @@ class FontCollection:
             if self._wingdings_face is None:
                 self._wingdings_face = FontFace.bundled_wingdings()
             face = self._wingdings_face
+        if (
+            face is None
+            and self.symbol_fallback
+            and family == "symbol"
+            and (key[1:] == (400, False) or self.synthesize_styles and key[1] in (400, 700))
+        ):
+            if self._symbol_face is None:
+                self._symbol_face = FontFace.bundled_symbol()
+            face = self._symbol_face
         if face is None:
             raise UnsupportedOperation(f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}")
         return face
@@ -508,7 +528,7 @@ class FontCollection:
                 raise UnsupportedOperation("Unsupported Wingdings fallback charset request")
             return decode_wingdings(data)
         if face.symbol:
-            if request.charset not in (1, 2):
+            if request.charset not in (0, 1, 2):
                 raise UnsupportedOperation("Unsupported symbol font charset request")
             return "".join(chr(0xF000 | byte) for byte in data)
         encoding = (

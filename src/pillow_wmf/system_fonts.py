@@ -119,7 +119,11 @@ class SystemFontCollection(FontCollection):
 
     def __init__(self, *, paths=None, ansi_codepage=1252, default_font=None):
         super().__init__(
-            ansi_codepage=ansi_codepage, synthesize_styles=True, wingdings_fallback=True, missing_glyph="notdef"
+            ansi_codepage=ansi_codepage,
+            synthesize_styles=True,
+            wingdings_fallback=True,
+            symbol_fallback=True,
+            missing_glyph="notdef",
         )
         self.default_font = default_font or Font(height=-16, face_name=b"Arial")
         self._paths = None if paths is None else tuple(paths)
@@ -186,9 +190,9 @@ class SystemFontCollection(FontCollection):
                 elif (face.weight, face.italic) != (request.weight or 400, bool(request.italic)):
                     self._report(request, face, "style")
                 return face
-        if name == "wingdings":
+        if name in {"wingdings", "symbol"}:
             face = super().resolve(request)
-            self._report(request, face, "symbol mapping")
+            self._report(request, face, "bundled symbol font" if name == "symbol" else "symbol mapping")
             return face
         raise UnsupportedOperation(f"No usable installed font for {self._name(request)!r}")
 
@@ -204,7 +208,7 @@ class SystemFontCollection(FontCollection):
 
     def layout_font(self, request, face, scale, *, characters=None):
         if characters is None:
-            if (face.family.casefold(), face.weight, face.italic) != (
+            if face is self._symbol_face or (face.family.casefold(), face.weight, face.italic) != (
                 self._name(request).casefold(),
                 request.weight or 400,
                 bool(request.italic),

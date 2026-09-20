@@ -25,6 +25,8 @@ font, including its size, for files that draw text without selecting one;
 For best-effort rendering with installed fonts, pass
 `fonts=SystemFontCollection()` (also exported from `pillow_wmf`). This opts into
 family and missing-glyph substitution, including the bundled Wingdings mapping.
+Symbol also has a bundled fallback; its font resources carry their own
+[LGPL licence and source](src/pillow_wmf/fonts/symbol/README.md).
 Inspect `image.info["wmf_font_substitutions"]` for the replacements used.
 This does not promise Windows font metrics or pixel parity.
 For partial output, use `play(metafile, context, strict=False)` and inspect the

@@ -98,7 +98,7 @@ def test_wingdings_works_without_system_fonts_but_other_symbols_do_not():
     face = fonts.resolve(req)
     assert fonts.decode(req, face, b"!") != "!"
     assert fonts.substitutions[0].reason == "symbol mapping"
-    for family in ("Webdings", "Wingdings 2", "Symbol"):
+    for family in ("Webdings", "Wingdings 2"):
         with pytest.raises(UnsupportedOperation):
             fonts.resolve(request(family, charset=2))
 

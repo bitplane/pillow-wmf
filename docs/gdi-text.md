@@ -18,8 +18,10 @@ Input bytes retain the requested Windows code page regardless of the substitute'
 advertised charset bits. If coverage is exhausted, `.notdef` is used and reported.
 
 Wingdings uses the bundled Unicode mapping when its original face is unavailable.
-Other missing symbol families fail rather than reinterpret their bytes as Latin
-text. Glyph-index runs require a matching family, weight and style; even matching
+Symbol uses the bundled Wine Symbol font and its legacy symbol cmap. Other
+specialist encodings require separate mappings; an ordinary family substitute
+does not establish correct symbol identity. Glyph-index runs require a matching
+family, weight and style and cannot use the bundled substitutes; even matching
 names cannot guarantee glyph-ID compatibility across different font versions.
 
 The initial font is a 16-pixel-em Arial request unless `default_font=Font(...)`
@@ -53,6 +55,25 @@ explicitly enabled style synthesis are implemented. Transformed real-font masks
 remain approximate; controlled geometry regressions retain exact comparisons.
 Other encodings remain unsupported by either font policy.
 An initial logical font can be supplied with `FontCollection(default_font=...)`.
+
+### Symbol fallback
+
+`FontCollection(symbol_fallback=True)` opts into Wine's Symbol font when no
+supplied Symbol face is available. `SystemFontCollection` enables it by default
+and reports its use as `bundled symbol font`. A supplied/installed Symbol face
+still takes precedence. The font is a separately licensed LGPL-2.1-or-later
+resource; its licence, editable source and build script ship alongside the TTF.
+See the [font resource notice](../src/pillow_wmf/fonts/symbol/README.md).
+
+Native WMF playback selects the Symbol charset for an explicit Symbol face
+requested with ANSI, DEFAULT or SYMBOL charset. Each input byte retains its
+legacy position (`U+F000 | byte`) in the symbol cmap. Greek letters, operators
+and extensible bracket/integral pieces are not decoded as Latin text or linked
+to unrelated Unicode glyphs. The fallback uses the defined Windows byte ranges
+0x20–0x7E, 0xA1–0xEF and 0xF1–0xFE. Other slots use the missing-glyph policy;
+notably 0xA0 is not a Euro mapping and 0xF0 is not an Apple logo in this encoding.
+Outlines/hinting differ from Microsoft's Symbol and require visual review.
+MT Extra, MT Symbol, Zapf Dingbats and other specialist fonts are not aliases.
 Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
 

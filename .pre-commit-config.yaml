@@ -9,6 +9,8 @@ repos:
     - id: check-shebang-scripts-are-executable
     - id: mixed-line-ending
     - id: trailing-whitespace
+      # Preserve the upstream licence verbatim, including its whitespace.
+      exclude: ^src/pillow_wmf/fonts/symbol/COPYING\.LIB$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
   rev: v0.16.7

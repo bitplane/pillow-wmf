@@ -43,7 +43,7 @@ def test_undefined_bytes_are_not_replaced_or_dropped(codepage, undefined):
     assert len(decode_single_byte(bytes(range(256)), codepage)) == 256
 
 
-@pytest.mark.parametrize("charset", [1, 2])
+@pytest.mark.parametrize("charset", [0, 1, 2])
 def test_symbol_mapping_uses_font_cmap_not_a_unicode_icon_table(charset):
     face = FontFace.from_path(FONTS / "symbols.ttf")
     fonts = FontCollection([face])
