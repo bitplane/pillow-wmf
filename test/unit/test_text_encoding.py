@@ -99,6 +99,40 @@ def test_invalid_environment_or_policy_is_rejected():
         FontCollection(missing_glyph="ignore")
 
 
+@pytest.mark.parametrize(
+    "charset,codepage,bit,text",
+    [
+        (238, 1250, 1, "Příliš žluťoučký kůň Łódź"),
+        (161, 1253, 3, "Καλημέρα κόσμε"),
+        (162, 1254, 4, "İstanbul ıİ şŞ ğĞ"),
+        (186, 1257, 7, "Ąžuolas Ėė Įį Ųų Ūū"),
+    ],
+)
+def test_european_charsets_and_explicit_ansi_environment(charset, codepage, bit, text):
+    face = FontFace.from_path(FONTS / "encoding.ttf")
+    data = text.encode(f"cp{codepage}")
+    assert decode_single_byte(data, codepage) == text
+    request = replace(REQUEST, charset=charset)
+    fonts = FontCollection([face], ansi_codepage=codepage)
+    with pytest.raises(UnsupportedOperation, match="advertise"):
+        fonts.decode(request, face, data)
+    face.codepages |= 1 << bit
+    assert fonts.decode(request, face, data) == text
+    assert fonts.decode(replace(request, charset=1), face, data) == text
+    assert len(fonts.decode(request, face, bytes(range(256)))) == 256
+    # ANSI_CHARSET is Windows-1252, not the caller's DEFAULT_CHARSET environment.
+    assert fonts.decode(replace(request, charset=0), face, b"\xe9") == "é"
+
+
+def test_european_byte_tables_match_native_windows_nls():
+    tables = Path(__file__).with_name("windows_sbcs.txt").read_text().splitlines()
+    for line in tables:
+        codepage, *codepoints = line.split()
+        expected = tuple(int(value, 16) for value in codepoints)
+        assert len(expected) == 256
+        assert tuple(map(ord, decode_single_byte(bytes(range(256)), int(codepage)))) == expected
+
+
 def test_fallback_fills_only_missing_glyphs_and_preserves_base_metrics(face):
     base = FontFace.from_path(FONTS / "layout.ttf")
     request = replace(REQUEST, face_name=base.family.encode())

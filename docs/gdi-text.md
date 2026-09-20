@@ -9,7 +9,8 @@ Font creation, selection and saved state retain the logical request. Text
 drawing resolves an exact family, weight and italic style from caller-supplied
 TrueType faces; it never searches host font directories or silently substitutes.
 
-The supported rendering slice is single-byte Western/Cyrillic and symbol text, with
+The supported rendering slice is single-byte Western, Central European,
+Cyrillic, Greek, Turkish, Baltic and symbol text, with
 positive or negative heights, zero-height realization, explicit average width,
 axis scaling and translation. It supports natural or signed explicit
 advances, character extra, justification, horizontal/vertical alignment,
@@ -18,8 +19,18 @@ Escapement, reflected axis mappings, underline/strikeout and explicitly enabled
 style synthesis are implemented, but transformed text remains experimental:
 rotated line/background bounds and reflected opaque extents still differ from
 Windows. These are layout discrepancies, not merely glyph-mask differences.
-RTL layout, default-font selection and other encodings remain unsupported. Missing glyphs raise by
+RTL layout, automatic font selection and other encodings remain unsupported.
+An initial logical font can be supplied with `FontCollection(default_font=...)`.
+Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
+
+Supported ANSI environments are Windows-1250, 1251, 1252, 1253, 1254 and 1257.
+DEFAULT_CHARSET uses that explicit environment; ANSI_CHARSET selects 1252.
+Decoding follows Windows NLS, including private-use mappings for otherwise
+undefined Greek and Baltic bytes. The native byte tables in
+[the encoding regression data](../test/unit/windows_sbcs.txt) cover all 256
+inputs for each newly supported code page. Font coverage bits must advertise
+the requested character set; a matching family name alone is insufficient.
 
 NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY, DRAFT_QUALITY and
 PROOF_QUALITY share the same outline-font rendering policy, currently a

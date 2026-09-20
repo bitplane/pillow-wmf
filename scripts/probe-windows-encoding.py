@@ -85,6 +85,8 @@ def main():
             render_wmf(source, *SIZE).save(args.output / f"{name}.png")
             if args.missing_only:
                 inspect_native_text(source)
+    if args.extended_only:
+        return
     if args.missing_only:
         import os
         import winreg
