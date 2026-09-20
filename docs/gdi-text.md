@@ -21,13 +21,21 @@ Windows. These are layout discrepancies, not merely glyph-mask differences.
 RTL layout, default-font selection and other encodings remain unsupported. Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
 
-NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY currently uses a
+NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY, DRAFT_QUALITY and
+PROOF_QUALITY share the same outline-font rendering policy, currently a
 fixed RGB-subpixel profile matching the oracle's smoothing mode; it does not
 inherit the Linux desktop configuration. Its FreeType filtering and direct RGB
 coverage composition are an approximation, not an implementation of Windows'
 ClearType contrast/filtering. Explicit smoothing modes are deferred. Real-font
 mapped ink placement also remains subject to visual comparison even when native
 glyph indices and device advances agree.
+
+Draft/proof are font-matching hints, not independent antialiasing algorithms.
+Their legacy bitmap-font scaling/nearest-strike distinction is outside the
+static TrueType outline backend. The original quality value remains in the WMF,
+selected font and realization cache. Use the named `text-quality` probe to
+compare default, draft, proof and explicit monochrome with identical native
+font inputs; it checks small text, cell sizing and width-scaled rotated text.
 
 Supply fonts explicitly, for example:
 

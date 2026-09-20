@@ -93,8 +93,8 @@ def gallery(
                 f"<figure><figcaption>{label}</figcaption>"
                 f'<img style="--width:{native.width}px" src="{escape(filename)}"></figure>'
             )
-        if context._text_state.font and context._text_state.font.quality == 0:
-            note = "Default quality: RGB subpixel coverage; filtering and contrast remain approximate."
+        if context._text_state.font and context._text_state.font.quality in (0, 1, 2):
+            note = "Default/draft/proof quality: RGB subpixel coverage; filtering and contrast remain approximate."
         else:
             note = "Monochrome: inspect ink shape and placement; differences are not automatically waived."
         request = context._text_state.font

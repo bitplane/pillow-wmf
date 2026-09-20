@@ -958,8 +958,6 @@ class RasterContext(TraceContext):
         face = self.fonts.resolve(request)
         if sx * sy < 0:
             request = replace(request, escapement=-request.escapement)
-        if request.quality not in (0, 3):
-            raise UnsupportedOperation("Unsupported font quality")
         if self._text_state.mapper_flags:
             raise UnsupportedOperation("Text mapper flags")
         origin = self._position if self._text_state.alignment & 1 else (args["x"], args["y"])
