@@ -3,7 +3,6 @@
 from dataclasses import replace
 from pathlib import Path
 from fractions import Fraction
-from importlib.resources import files
 from io import BytesIO
 
 import pytest
@@ -85,7 +84,7 @@ def test_fallback_preserves_source_design_metrics_for_every_available_symbol():
     assert (face.units_per_em, face.average_width, face.ascent, face.descent) == (2048, 1822, 1841, 432)
     with TTFont(BytesIO(face.data)) as font:
         cmap = font.getBestCmap()
-        lines = files("pillow_wmf").joinpath("fonts", "wingdings-metrics.txt").read_text().splitlines()
+        lines = (Path(__file__).resolve().parents[2] / "src/fonts/wingdings-metrics.txt").read_text().splitlines()
         checked = set()
         for line in lines:
             if line.startswith("#"):
@@ -126,5 +125,5 @@ def test_fallback_victory_hand_uses_design_metrics_not_canvas_fitting(size):
     assert abs(glyph.bearing[1] + 1604 * yscale) < 2
     assert abs(glyph.advance - 1203 * xscale) < 1
     # Loading the Unicode face directly never applies Wingdings metrics.
-    original = FontFace.bundled_symbols()
+    original = FontFace.from_path(Path(__file__).resolve().parents[2] / "src/fonts/NotoSansSymbols2-Regular.ttf")
     assert (original.units_per_em, original.average_width) == (1000, 830)

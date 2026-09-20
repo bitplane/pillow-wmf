@@ -113,14 +113,15 @@ uploads its input/output pairs without replacing committed references.
 
 ## Real-font visual comparisons
 
-The package includes the Unicode font Noto Sans Symbols 2 and its SIL Open Font
-License. `FontFace.bundled_symbols()` loads the packaged bytes without a download
+The package includes a prebuilt, metric-compatible Wingdings subset derived from
+Noto Sans Symbols 2, with its SIL Open Font License.
+`FontFace.bundled_wingdings()` loads the packaged bytes without a download
 or dependency on installed system fonts. Add the returned face to a
 `FontCollection` to make it available for explicit selection or Unicode fallback.
 It is not automatically substituted for Wingdings. Opt in explicitly with
 `FontCollection(wingdings_fallback=True)` (or `text-gallery.py --wingdings-fallback`).
 An available requested Wingdings face wins; otherwise this maps Wingdings bytes
-to Unicode and builds a metric-compatible derivative of the bundled face,
+to Unicode and selects the prebuilt derivative,
 named `Pillow WMF Wingdings Fallback` (not Microsoft Wingdings).
 This is not a Wingdings 2/3 or Webdings substitution, and it accepts only symbol
 or default charset requests. Bold/italic synthesis still requires its own opt-in.
@@ -134,8 +135,13 @@ width and line metrics. Each available Noto outline is affinely fitted to its
 mapped glyph's design bounds before ordinary GDI realization. This rule is
 independent of the input file, requested size and canvas. Native hinting and
 original artwork are not reproduced; glyph appearance remains approximate.
-The original bundled font is unchanged, and the in-memory derivative retains
-its OFL notice. The `wingdings` native probe verifies the selected Windows face
+The full source font and measured metrics live outside the package in `src/fonts/`.
+`make font` invokes `scripts/build-font.py` to regenerate the derivative when
+its inputs change; development, tests and distribution builds depend on it.
+The generated TTF is committed so direct package installs need no font compiler
+step. Both wheel and source distribution contain only the subset and licence;
+no font conversion runs at import or rendering time.
+The `wingdings` native probe verifies the selected Windows face
 and reports metrics without distributing its outlines.
 The bundled font does not cover every mapped character (including smileys,
 zodiac signs and some numbered circles). Normal strict missing-glyph handling

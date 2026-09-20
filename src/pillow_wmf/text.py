@@ -20,7 +20,7 @@ from .gdi import UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import rounded
 from .numeric import float32
-from .wingdings import decode_wingdings, metric_compatible_font
+from .wingdings import decode_wingdings
 
 C1_CONTROLS = "".join(map(chr, range(0x80, 0xA0)))
 
@@ -203,9 +203,9 @@ class FontFace:
         return cls(Path(path).read_bytes(), index=index)
 
     @classmethod
-    def bundled_symbols(cls):
-        """Load bundled Unicode Noto Sans Symbols 2, without font substitution."""
-        return cls(files("pillow_wmf").joinpath("fonts", "NotoSansSymbols2-Regular.ttf").read_bytes())
+    def bundled_wingdings(cls):
+        """Load the prebuilt Unicode Wingdings fallback; selection stays explicit."""
+        return cls(files("pillow_wmf").joinpath("fonts", "PillowWMFWingdingsFallback.ttf").read_bytes())
 
     def realize(self, request, scale, *, missing_glyph="error"):
         """Classic compatible-mode realization; natural width follows height."""
@@ -417,7 +417,7 @@ class FontCollection:
         if face is None and self.wingdings_fallback and family == "wingdings":
             if key[1:] == (400, False) or self.synthesize_styles and key[1] in (400, 700):
                 if self._wingdings_face is None:
-                    self._wingdings_face = FontFace(metric_compatible_font(FontFace.bundled_symbols().data))
+                    self._wingdings_face = FontFace.bundled_wingdings()
                 face = self._wingdings_face
         if face is None:
             raise UnsupportedOperation(f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}")

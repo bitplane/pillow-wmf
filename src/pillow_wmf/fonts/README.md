@@ -1,18 +1,16 @@
-# Noto Sans Symbols 2
+# Pillow WMF Wingdings Fallback
 
-`NotoSansSymbols2-Regular.ttf` is an unmodified static TrueType font from
-[Noto's font distribution](https://github.com/notofonts/noto-fonts/tree/main/hinted/ttf/NotoSansSymbols2).
-It is distributed under the SIL Open Font License 1.1; see [OFL.txt](OFL.txt)
-for the copyright notice and full terms. The font retains its own licence,
-independently of the surrounding Python code.
+`PillowWMFWingdingsFallback.ttf` is a subset of Noto Sans Symbols 2, renamed
+and adapted to measured Wingdings design metrics. It contains Noto-derived
+artwork, not Microsoft's outlines. Its licence remains the SIL Open Font
+License 1.1; see [OFL.txt](OFL.txt) for the copyright notice and full terms.
 
-Load it with `FontFace.bundled_symbols()`. Loading does not install it on the
-host, select it automatically, or reinterpret Wingdings bytes as Unicode.
-It provides Unicode symbol outlines, not Wingdings-compatible metrics or encoding.
+`FontFace.bundled_wingdings()` loads this prebuilt Unicode face offline.
+`FontCollection(wingdings_fallback=True)` enables the associated byte mapping
+when the requested Wingdings face is unavailable. Nothing is installed on the
+host or regenerated at runtime.
 
-The explicit Wingdings fallback builds a renamed OFL derivative in memory.
-`wingdings-metrics.txt` holds measured advances and bounding boxes in Wingdings'
-2048-unit design space; it contains no proprietary outlines. These metrics fit
-the mapped Noto outlines before ordinary font realization. The original TTF
-above is never modified. The native `wingdings` probe measures the source metrics
-and verifies that Windows selected the expected face.
+From a repository checkout, `make font` rebuilds this file using
+`scripts/build-font.py` and the source inputs in `src/fonts/`. Package
+distributions contain only this derivative, not the full source font or the
+build-time metrics table.
