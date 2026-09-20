@@ -15,6 +15,7 @@ from windows_wmf_render import render_wmf
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--visual", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     path = Path(os.environ["WINDIR"]) / "Fonts" / "wingding.ttf"
@@ -37,6 +38,23 @@ def main():
                 flush=True,
             )
     observe = runpy.run_path(str(Path(__file__).with_name("probe-windows-text.py")))["observe"]
+    if args.visual:
+        from wingdings_visual_cases import SIZE, SAMPLE, cases
+
+        for name, recorder in cases():
+            data = recorder.to_bytes()
+            print(f"\n[{name}]", flush=True)
+            observe(
+                data,
+                family="Wingdings",
+                sample=SAMPLE,
+                characters="".join(chr(0xF000 | byte) for byte in SAMPLE),
+                size=SIZE,
+                tables=tables,
+            )
+            (args.output / f"wingdings-visual-{name}.wmf").write_bytes(data)
+            render_wmf(data, *SIZE).save(args.output / f"wingdings-visual-{name}.png")
+        return
     for profile, height, width, angle in (
         ("natural", -48, 0, 0),
         ("cell", 48, 0, 0),

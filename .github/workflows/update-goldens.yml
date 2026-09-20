@@ -23,6 +23,7 @@ on:
           - text-decorations
           - text-quality
           - wingdings
+          - wingdings-visual
           - text-encoding
           - text-missing
           - text-fallback-sizing
@@ -145,13 +146,13 @@ jobs:
           mkdir -p text-decorations
           python scripts/probe-windows-text-decorations.py --output text-decorations | tee text-decorations/observations.txt
       - name: Measure Wingdings fallback metrics
-        if: inputs.probe == 'wingdings'
+        if: inputs.probe == 'wingdings' || inputs.probe == 'wingdings-visual'
         shell: bash
         run: |
           mkdir -p wingdings-probe
-          python scripts/probe-windows-wingdings.py --output wingdings-probe | tee wingdings-probe/observations.txt
+          python scripts/probe-windows-wingdings.py --output wingdings-probe ${{ inputs.probe == 'wingdings-visual' && '--visual' || '' }} | tee wingdings-probe/observations.txt
       - name: Upload Wingdings metrics
-        if: always() && inputs.probe == 'wingdings'
+        if: always() && (inputs.probe == 'wingdings' || inputs.probe == 'wingdings-visual')
         uses: actions/upload-artifact@v4
         with:
           name: wingdings-probe
