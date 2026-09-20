@@ -12,6 +12,7 @@ from .binary import FormatError, Limits, Reader, pack
 from .constants import RecordType
 
 RECORD_CLASSES: dict[RecordType, type["Record"]] = {}
+RECORD_TYPES_BY_LOW_BYTE = {int(kind) & 0xFF: kind for kind in RecordType}
 
 
 def register(cls):
@@ -57,7 +58,7 @@ class FixedRecord(Record):
     @classmethod
     def read(cls, reader: Reader, function: int, limits: Limits):
         values = reader.unpack(cls.wire_layout)
-        return cls(**dict(zip(cls.fields, values, strict=False)), wire_function=function, trailing=reader.rest())
+        return cls(**dict(zip(cls.fields, values, strict=True)), wire_function=function, trailing=reader.rest())
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class UnknownRecord:
 def decode_record(function: int, payload: bytes, limits: Limits) -> Record | UnknownRecord:
     # Most function high bytes are advisory. Bitmap variants inspect the actual
     # word and record size themselves. EOF is explicitly the full word 0x0000.
-    kind = next((kind for kind in RecordType if kind & 0xFF == function & 0xFF), None)
+    kind = RECORD_TYPES_BY_LOW_BYTE.get(function & 0xFF)
     if kind is None or (kind == RecordType.EOF and function != 0):
         return UnknownRecord(function, payload)
     cls = RECORD_CLASSES[kind]

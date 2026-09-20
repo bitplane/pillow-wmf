@@ -32,13 +32,11 @@ class PointsRecord(Record):
 @register
 class Polygon(PointsRecord):
     kind = RecordType.POLYGON
-    operation = "polygon"
 
 
 @register
 class Polyline(PointsRecord):
     kind = RecordType.POLYLINE
-    operation = "polyline"
 
 
 @register
@@ -168,19 +166,16 @@ class PaletteRecord(Record):
 @register
 class CreatePalette(PaletteRecord):
     kind = RecordType.CREATEPALETTE
-    operation = "create_palette"
 
 
 @register
 class AnimatePalette(PaletteRecord):
     kind = RecordType.ANIMATEPALETTE
-    operation = "animate_palette"
 
 
 @register
 class SetPalEntries(PaletteRecord):
     kind = RecordType.SETPALENTRIES
-    operation = "set_palette_entries"
 
 
 @register

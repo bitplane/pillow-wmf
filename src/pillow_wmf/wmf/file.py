@@ -150,10 +150,10 @@ class Metafile:
     @classmethod
     def from_bytes(cls, data: bytes, *, limits: Limits | None = None, validate_checksum: bool = True):
         limits = limits if limits is not None else Limits()
-        if len(data) > limits.max_bytes:
-            raise FormatError("File byte limit exceeded")
         if not isinstance(data, bytes):
             raise TypeError("Input must be immutable bytes")
+        if len(data) > limits.max_bytes:
+            raise FormatError("File byte limit exceeded")
         reader = Reader(data)
         placeable = PlaceableHeader.read(reader, validate_checksum) if data[:4] == b"\xd7\xcd\xc6\x9a" else None
         start = reader.position

@@ -72,14 +72,12 @@ class Blit(Record):
 @register
 class BitBlt(Blit):
     kind = RecordType.BITBLT
-    operation = "bit_blt"
     bitmap_format = "bitmap16"
 
 
 @register
 class DibBitBlt(Blit):
     kind = RecordType.DIBBITBLT
-    operation = "dib_bit_blt"
     bitmap_format = "dib"
 
 
@@ -93,14 +91,12 @@ class StretchBlit(Blit):
 @register
 class StretchBlt(StretchBlit):
     kind = RecordType.STRETCHBLT
-    operation = "stretch_blt"
     bitmap_format = "bitmap16"
 
 
 @register
 class DibStretchBlt(StretchBlit):
     kind = RecordType.DIBSTRETCHBLT
-    operation = "dib_stretch_blt"
     bitmap_format = "dib"
 
 

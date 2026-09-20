@@ -432,7 +432,10 @@ class FontCollection:
                 raise ValueError(f"Ambiguous font face: {face.family}")
             self._faces[key] = face
         if default_font is not None:
-            self.resolve(default_font)
+            try:
+                self.resolve(default_font)
+            except UnsupportedOperation as error:
+                raise ValueError(f"Invalid default font: {error}") from error
 
     def realize(self, request, face, scale):
         primary = face.realize(request, scale, missing_glyph=self.missing_glyph)

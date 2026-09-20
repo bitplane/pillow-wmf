@@ -43,5 +43,5 @@ def test_configured_default_is_equivalent_to_explicit_font_selection():
     )
     with pytest.raises(UnsupportedOperation, match="Default font"):
         render(implicit.to_bytes(), (60, 40), fonts=FontCollection([face]))
-    with pytest.raises(UnsupportedOperation, match="unavailable"):
+    with pytest.raises(ValueError, match="Invalid default font"):
         FontCollection(default_font=request)
