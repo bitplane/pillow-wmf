@@ -29,6 +29,7 @@ def cases(*, corpus=False):
 
 
 def all_cases():
+    yield from runpy.run_path(str(Path(__file__).with_name("pen_integration_fixtures.py")))["cases"]()
     short = Recorder()
     short.select_object(short.create_pen(0, 3, 0))
     short.polygon(((30, 30),))

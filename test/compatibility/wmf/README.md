@@ -19,8 +19,8 @@ old files or regenerates PNGs; review removed/renamed cases before a release.
 
 Imported real-world inputs are in `corpus/`. All Windows PNG references live in
 `128x128/` directories beside their inputs.
-For example, `corpus/128x128/corpus-penny.png`
-uses `corpus/corpus-penny.wmf`. Comparisons take their canvas dimensions from
+For example, `corpus/128x128/corpus-his99012.png`
+uses `corpus/corpus-his99012.wmf`. Comparisons take their canvas dimensions from
 the PNG itself, then replay the WMF; they never resize a rendered image.
 Every WMF here requires a 128×128 PNG.
 The job renders only cases without a PNG. To refresh a reference,
@@ -53,18 +53,12 @@ Unsupported WMF calls fail explicitly; differences report the number of pixels.
 `corpus-his99012.wmf` and `corpus-fdo39256-2.wmf` are unmodified imports from LibreOffice's
 [wmffuzzer seed corpus](https://dev-www.libreoffice.org/corpus/wmffuzzer_seed_corpus.zip).
 Their 128×128 Windows references cover a single-precision coordinate boundary
-and nonuniform pen discrepancy, respectively. `corpus-lady4.wmf` is from the
-[MS Office 97 clipart collection](https://archive.org/download/mso97clipart/Clipart.zip);
-its native PNG guards against regressions in minor-axis pen realization.
+and nonuniform pen discrepancy, respectively.
 
-`corpus-penny`, `corpus-quarter`, `corpus-nickel` and `corpus-dime` are unchanged
-WMF/PNG pairs from the same MS Office 97 collection. They cover fractional
-inside-frame ellipse rims; their lettering consists of polygons, not fonts.
-`corpus-switch` and `corpus-nopark` are unchanged pairs from the same corpus,
-covering anisotropic stroke-only ellipses.
-`corpus-screwdrv` is an unchanged pair from the same corpus, covering shallow
-polygon strokes with a highly anisotropic pen.
-
-The `pen-radius-probe-*` WMFs compare solid/inside-frame pens at the corpus
-scales, fractional-radius boundaries, axis collapse and fixed-point circularity.
-See [pen realization](../../../docs/gdi-strokes.md) for the native measurements.
+Original geometric cases in `scripts/pen_integration_fixtures.py` cover
+fractional inside-frame ellipse rims (`ellipse-fractional-rims-*`), anisotropic
+stroke-only ellipses (`ellipse-anisotropic-unfilled-*`), subpixel minor-axis
+pen realization (`pen-subpixel-minor-axis-paths`) and shallow polygon strokes
+with a collapsed pen axis (`pen-collapsed-shallow-polygons`). They contain no
+imported artwork. See [pen realization](../../../docs/gdi-strokes.md) for the
+underlying rules.

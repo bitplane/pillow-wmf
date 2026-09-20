@@ -49,6 +49,14 @@ stroke-octants-7-fractional
 
 # Arc construction, support ties, collapsed figures and independent fill/stroke.
 CURVES = """
+ellipse-fractional-rims-x-wide
+ellipse-fractional-rims-y-wide
+ellipse-fractional-rims-y-wider
+ellipse-fractional-rims-uniform
+ellipse-anisotropic-unfilled-wide
+ellipse-anisotropic-unfilled-narrow
+pen-subpixel-minor-axis-paths
+pen-collapsed-shallow-polygons
 arc-radials-and-position
 arc-edge-far-coincident-angles-width-1
 arc-edge-short-controls-width-1
