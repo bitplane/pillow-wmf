@@ -53,7 +53,7 @@ def font_bytes(*, symbol=False):
     return stream.getvalue()
 
 
-def cases(*, missing_only=False):
+def cases(*, missing_only=False, extended_only=False):
     profiles = (
         (
             "western",
@@ -92,6 +92,17 @@ def cases(*, missing_only=False):
                 ("control-runs", bytes(range(32)) + b"\x7f\x81\x8d"),
             )
         )
+    if extended_only:
+        profiles = tuple(
+            (f"{name}-{family.replace(' ', '-')}", family, charset, text.encode(encoding), encoding)
+            for name, charset, encoding, text in (
+                ("central", 238, "cp1250", "Příliš žluťoučký kůň — Łódź"),
+                ("greek", 161, "cp1253", "Καλημέρα κόσμε — Άέήίόύώ"),
+                ("turkish", 162, "cp1254", "İstanbul ıİ şŞ ğĞ çÇ öÖ üÜ"),
+                ("baltic", 186, "cp1257", "Ąžuolas Čč Ęę Ėė Įį Šš Ųų Ūū Žž"),
+            )
+            for family in ("Noto Sans", "Noto Serif")
+        )
     for name, family, charset, sample, encoding in profiles:
         recorder = Recorder()
         recorder.set_window_extent(*SIZE)
@@ -104,7 +115,14 @@ def cases(*, missing_only=False):
         recorder.set_background_mode(1)
         recorder.set_text_alignment(24)
         recorder.text_out(12, 40, sample)
-        recorder.ext_text_out(12, 80, sample, advances=tuple(22 + i % 3 for i in range(len(sample))))
+        spacing = 17 if extended_only else 22
+        recorder.ext_text_out(12, 80, sample, advances=tuple(spacing + i % 3 for i in range(len(sample))))
+        if extended_only:
+            recorder.select_object(
+                recorder.create_font(
+                    Font(height=-18, weight=400, quality=0, charset=charset, face_name=family.encode().ljust(32, b"\0"))
+                )
+            )
         recorder.set_text_alignment(25)
         recorder.move_to(12, 120)
         recorder.text_out(0, 0, sample)

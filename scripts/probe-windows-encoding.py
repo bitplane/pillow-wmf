@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--missing-only", action="store_true")
     parser.add_argument("--sizing-only", action="store_true")
+    parser.add_argument("--extended-only", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("text_probe", Path(__file__).with_name("probe-windows-text.py"))
@@ -41,10 +42,16 @@ def main():
         ctypes.c_int,
     )
     sample_bytes = bytes(range(256))
-    for codepage in (1252, 1251):
+    for codepage in (1250, 1253, 1254, 1257) if args.extended_only else (1252, 1251):
         decoded = ctypes.create_unicode_buffer(256)
         check(convert(codepage, 0, sample_bytes, 256, decoded, 256), "MultiByteToWideChar")
         print(f"codepage={codepage} unicode={[ord(c) for c in decoded]}", flush=True)
+        if args.extended_only:
+            # Persist the oracle's complete byte table for a local comparison;
+            # do not make Windows depend on our decoder's implementation.
+            (args.output / f"cp{codepage}.txt").write_text(
+                " ".join(f"{ord(c):04x}" for c in decoded[:256]) + "\n", encoding="ascii"
+            )
     paths = fetch_fonts(args.output / "fonts")
     for filename in ("encoding.ttf", "symbols.ttf"):
         path = args.output / "fonts" / filename
@@ -55,7 +62,9 @@ def main():
         with TTFont(path) as font:
             tables[family] = {tag: font.getTableData(tag) for tag in ("head", "hmtx", "glyf", "cmap")}
     with private_fonts(paths):
-        for name, family, sample, encoding, recorder in cases(missing_only=args.missing_only):
+        for name, family, sample, encoding, recorder in cases(
+            missing_only=args.missing_only, extended_only=args.extended_only
+        ):
             print(f"\n[{name}]", flush=True)
             if encoding == "symbol":
                 characters = "".join(chr(0xF000 | byte) for byte in sample)

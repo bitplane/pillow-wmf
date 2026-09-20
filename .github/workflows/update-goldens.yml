@@ -26,6 +26,7 @@ on:
           - wingdings-visual
           - wingdings-metrics
           - text-encoding
+          - text-encoding-extended
           - text-missing
           - text-fallback-sizing
           - layout
@@ -135,11 +136,14 @@ jobs:
           path: real-text-probe/
           retention-days: 7
       - name: Probe single-byte text encodings
-        if: inputs.probe == 'text-encoding' || inputs.probe == 'text-missing'
+        if: inputs.probe == 'text-encoding' || inputs.probe == 'text-missing' || inputs.probe == 'text-encoding-extended'
         shell: bash
         run: |
           mkdir -p text-encoding-probe
-          python scripts/probe-windows-encoding.py --output text-encoding-probe ${{ inputs.probe == 'text-missing' && '--missing-only' || '' }} | tee text-encoding-probe/observations.txt
+          args=()
+          if [[ "${{ inputs.probe }}" == text-missing ]]; then args+=(--missing-only); fi
+          if [[ "${{ inputs.probe }}" == text-encoding-extended ]]; then args+=(--extended-only); fi
+          python scripts/probe-windows-encoding.py --output text-encoding-probe "${args[@]}" | tee text-encoding-probe/observations.txt
       - name: Probe native decoration thickness
         if: inputs.probe == 'text-decorations'
         shell: bash
@@ -170,7 +174,7 @@ jobs:
           path: text-decorations/
           retention-days: 7
       - name: Upload encoding observations
-        if: always() && (inputs.probe == 'text-encoding' || inputs.probe == 'text-missing')
+        if: always() && (inputs.probe == 'text-encoding' || inputs.probe == 'text-missing' || inputs.probe == 'text-encoding-extended')
         uses: actions/upload-artifact@v4
         with:
           name: text-encoding-probe
