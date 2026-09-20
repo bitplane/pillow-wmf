@@ -20,7 +20,7 @@ from .gdi import UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import rounded
 from .numeric import float32
-from .wingdings import decode_wingdings
+from .wingdings import decode_wingdings, metric_compatible_font
 
 C1_CONTROLS = "".join(map(chr, range(0x80, 0xA0)))
 
@@ -417,7 +417,7 @@ class FontCollection:
         if face is None and self.wingdings_fallback and family == "wingdings":
             if key[1:] == (400, False) or self.synthesize_styles and key[1] in (400, 700):
                 if self._wingdings_face is None:
-                    self._wingdings_face = FontFace.bundled_symbols()
+                    self._wingdings_face = FontFace(metric_compatible_font(FontFace.bundled_symbols().data))
                 face = self._wingdings_face
         if face is None:
             raise UnsupportedOperation(f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}")

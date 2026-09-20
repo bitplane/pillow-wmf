@@ -122,7 +122,8 @@ figcaption{{padding:8px 0}}section{{margin:32px 0}}pre{{white-space:pre-wrap}}</
 <p>Missing-glyph policy: {escape(missing_glyph)} (notdef uses the supplied face's glyph zero, not font linking).</p>
 <p>Explicit fallback chains: {escape(str(fallbacks or {}))}</p>
 <p>Wingdings Unicode fallback: {wingdings_fallback}. When enabled and the requested face is unavailable,
-Noto Sans Symbols 2 supplies approximate shapes and metrics; missing glyphs remain subject to the stated policy.</p>
+Noto outlines are adapted to Wingdings design metrics; shapes remain approximate,
+and missing glyphs remain subject to the stated policy.</p>
 <label>Pixel zoom <select onchange="document.body.style.setProperty('--zoom',this.value)">
 <option>1</option><option>2</option><option>4</option></select></label>
 {"".join(entries)}<h2>Blocked cases</h2><pre>{escape(chr(10).join(blocked) or "None")}</pre>"""

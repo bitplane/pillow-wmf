@@ -9,3 +9,10 @@ independently of the surrounding Python code.
 Load it with `FontFace.bundled_symbols()`. Loading does not install it on the
 host, select it automatically, or reinterpret Wingdings bytes as Unicode.
 It provides Unicode symbol outlines, not Wingdings-compatible metrics or encoding.
+
+The explicit Wingdings fallback builds a renamed OFL derivative in memory.
+`wingdings-metrics.txt` holds measured advances and bounding boxes in Wingdings'
+2048-unit design space; it contains no proprietary outlines. These metrics fit
+the mapped Noto outlines before ordinary font realization. The original TTF
+above is never modified. The native `wingdings` probe measures the source metrics
+and verifies that Windows selected the expected face.

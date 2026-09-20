@@ -120,19 +120,28 @@ or dependency on installed system fonts. Add the returned face to a
 It is not automatically substituted for Wingdings. Opt in explicitly with
 `FontCollection(wingdings_fallback=True)` (or `text-gallery.py --wingdings-fallback`).
 An available requested Wingdings face wins; otherwise this maps Wingdings bytes
-to Unicode and uses the bundled face. The physical face keeps its Noto name.
+to Unicode and builds a metric-compatible derivative of the bundled face,
+named `Pillow WMF Wingdings Fallback` (not Microsoft Wingdings).
 This is not a Wingdings 2/3 or Webdings substitution, and it accepts only symbol
 or default charset requests. Bold/italic synthesis still requires its own opt-in.
 
 The mapping follows [Unicode's Wingdings mapping appendix](https://www.unicode.org/wg2/docs/n4363.pdf).
 Space is preserved; control bytes, DEL and the unencoded Windows-logo byte raise
 an error. Supplementary-plane symbols remain one character per input byte, so
-explicit WMF advance arrays retain their original indexing. Glyph shapes,
-natural advances and line metrics are Noto's, not Windows Wingdings'.
+explicit WMF advance arrays retain their original indexing. The fallback uses
+measured Wingdings design-space advances, side bearings, glyph bounds, average
+width and line metrics. Each available Noto outline is affinely fitted to its
+mapped glyph's design bounds before ordinary GDI realization. This rule is
+independent of the input file, requested size and canvas. Native hinting and
+original artwork are not reproduced; glyph appearance remains approximate.
+The original bundled font is unchanged, and the in-memory derivative retains
+its OFL notice. The `wingdings` native probe verifies the selected Windows face
+and reports metrics without distributing its outlines.
 The bundled font does not cover every mapped character (including smileys,
 zodiac signs and some numbered circles). Normal strict missing-glyph handling
-still applies; callers can supply explicit Unicode fallback faces using Noto's
-family name `Noto Sans Symbols2` as the fallback-chain key.
+still applies; callers can supply explicit Unicode fallback faces using
+`Pillow WMF Wingdings Fallback` as the fallback-chain key. Such additional faces
+retain their own metrics; they are not automatically made metric-compatible.
 
 The named `real-text` probe downloads checksum-pinned, SIL Open Font License
 Noto Sans and Noto Serif files and renders a small horizontal Latin size sweep.
