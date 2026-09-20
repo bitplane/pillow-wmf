@@ -104,6 +104,11 @@ def placement_cases():
         ("quarter-opaque", {"escapement": 900}, 25, 2),
         ("quarter-decorated", {"escapement": 900, "underline": 1, "strikeout": 1}, 25, 1),
         ("angle-opaque", {"escapement": 300}, 25, 2),
+        ("angle-background", {"escapement": 300}, 25, 2),
+        ("reverse-angle-background", {"escapement": -300, "height": -31}, 25, 2),
+        ("obtuse-background", {"escapement": 1200, "height": -19}, 25, 2),
+        ("half-opaque", {"escapement": 1800}, 25, 2),
+        ("three-quarter-opaque", {"escapement": 2700}, 25, 2),
     ):
         variants.append((f"pdy-{name}", b"ABA", 0x2000, (19, 7, 23, -5, 17, 11), changes, alignment, background))
     variants.append(("glyph-pdy", indexed, 0x2010, (19, 7, 23, -5, 17, 11) * 2, {}, 25, 1))
@@ -121,6 +126,9 @@ def placement_cases():
         dc.select_object(dc.create_font(replace(REQUEST, **changes)))
         dc.set_background_mode(background)
         dc.set_background_color(0x99CCFF)
+        if name.endswith("-background"):
+            # Isolate cell geometry from the outline rasterizer's mask.
+            dc.set_text_color(0x99CCFF)
         dc.set_text_alignment(alignment)
         dc.move_to(80, 80)
         dc.ext_text_out(80, 80, text, options=options, advances=advances)
