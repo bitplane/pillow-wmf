@@ -105,6 +105,13 @@ uploads its input/output pairs without replacing committed references.
 
 ## Real-font visual comparisons
 
+The package includes the Unicode font Noto Sans Symbols 2 and its SIL Open Font
+License. `FontFace.bundled_symbols()` loads the packaged bytes without a download
+or dependency on installed system fonts. Add the returned face to a
+`FontCollection` to make it available for explicit selection or Unicode fallback.
+It is not automatically substituted for Wingdings: byte-to-Unicode mapping is a
+separate requirement, and its glyph shapes and metrics are not Windows Wingdings.
+
 The named `real-text` probe downloads checksum-pinned, SIL Open Font License
 Noto Sans and Noto Serif files and renders a small horizontal Latin size sweep.
 It verifies the selected native face and its metric, outline and character-map

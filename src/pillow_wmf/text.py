@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from io import BytesIO
 from itertools import groupby
+from importlib.resources import files
 from math import ceil
 from pathlib import Path
 
@@ -199,6 +200,11 @@ class FontFace:
     @classmethod
     def from_path(cls, path, *, index=0):
         return cls(Path(path).read_bytes(), index=index)
+
+    @classmethod
+    def bundled_symbols(cls):
+        """Load bundled Unicode Noto Sans Symbols 2, without font substitution."""
+        return cls(files("pillow_wmf").joinpath("fonts", "NotoSansSymbols2-Regular.ttf").read_bytes())
 
     def realize(self, request, scale, *, missing_glyph="error"):
         """Classic compatible-mode realization; natural width follows height."""
