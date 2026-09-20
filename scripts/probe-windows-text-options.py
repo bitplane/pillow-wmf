@@ -21,6 +21,8 @@ def observe(source, tables):
         position = bind(gdi, "GetCurrentPositionEx", wintypes.BOOL, ptr, ctypes.POINTER(wintypes.POINT))
         face = bind(gdi, "GetTextFaceW", ctypes.c_int, ptr, ctypes.c_int, ctypes.c_wchar_p)
         font_data = bind(gdi, "GetFontData", wintypes.DWORD, ptr, wintypes.DWORD, wintypes.DWORD, ptr, wintypes.DWORD)
+        metrics = bind(gdi, "GetTextMetricsW", wintypes.BOOL, ptr, ptr)
+        abc = bind(gdi, "GetCharABCWidthsFloatW", wintypes.BOOL, ptr, wintypes.UINT, wintypes.UINT, ptr)
         errors = []
 
         @callback_type
@@ -33,6 +35,13 @@ def observe(source, tables):
                     check(face(hdc, 64, selected), "GetTextFaceW")
                     if selected.value != FAMILY:
                         raise RuntimeError(f"Unexpected substitution: {selected.value!r}")
+                    values = (ctypes.c_int32 * 32)()
+                    check(metrics(hdc, values), "GetTextMetricsW")
+                    print(f"cell-height/ascent/descent={list(values)[:3]}", flush=True)
+                    for character in "AB":
+                        widths = (ctypes.c_float * 3)()
+                        check(abc(hdc, ord(character), ord(character), widths), "GetCharABCWidthsFloatW")
+                        print(f"ABC-{character}={list(widths)}", flush=True)
                     for tag, expected in tables.items():
                         buffer = ctypes.create_string_buffer(len(expected))
                         size = font_data(hdc, int.from_bytes(tag.encode(), "little"), 0, buffer, len(expected))
