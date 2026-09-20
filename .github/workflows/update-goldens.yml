@@ -33,6 +33,7 @@ on:
           - layout
           - patblt
           - dib-brush
+          - dib-boundaries
           - paths
           - strokes
           - pen-support
@@ -135,6 +136,19 @@ jobs:
         with:
           name: real-text-probe
           path: real-text-probe/
+          retention-days: 7
+      - name: Probe extended DIB device acceptance
+        if: inputs.probe == 'dib-boundaries'
+        shell: bash
+        run: |
+          mkdir -p dib-boundaries
+          python scripts/probe-windows-dib-boundaries.py --output dib-boundaries | tee dib-boundaries/observations.txt
+      - name: Upload DIB boundary observations
+        if: always() && inputs.probe == 'dib-boundaries'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dib-boundaries
+          path: dib-boundaries/
           retention-days: 7
       - name: Probe WMF text options
         if: inputs.probe == 'text-options'
