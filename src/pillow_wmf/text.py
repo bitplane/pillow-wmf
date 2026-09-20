@@ -21,6 +21,7 @@ from .gdi_math import sincos_degrees
 from .mapping import rounded
 from .numeric import float32
 from .wingdings import decode_wingdings
+from .wmf.objects import Font
 
 C1_CONTROLS = "".join(map(chr, range(0x80, 0xA0)))
 
@@ -354,6 +355,7 @@ class FontCollection:
         missing_glyph="error",
         synthesize_styles=False,
         wingdings_fallback=False,
+        default_font: Font | None = None,
     ):
         if ansi_codepage not in (1252, 1251):
             raise ValueError("ANSI environment must be Windows-1252 or Windows-1251")
@@ -363,6 +365,7 @@ class FontCollection:
         self.missing_glyph = missing_glyph
         self.synthesize_styles = synthesize_styles
         self.wingdings_fallback = wingdings_fallback
+        self.default_font = default_font
         self._wingdings_face = None
         self.aliases = {name.casefold(): target.casefold() for name, target in (aliases or {}).items()}
         self.fallbacks = {name.casefold(): tuple(targets) for name, targets in (fallbacks or {}).items()}
@@ -372,6 +375,8 @@ class FontCollection:
             if key in self._faces:
                 raise ValueError(f"Ambiguous font face: {face.family}")
             self._faces[key] = face
+        if default_font is not None:
+            self.resolve(default_font)
 
     def realize(self, request, face, scale):
         primary = face.realize(request, scale, missing_glyph=self.missing_glyph)
@@ -408,6 +413,7 @@ class FontCollection:
         return FontRun(primary, linked, control_fallback)
 
     def resolve(self, request):
+        request = self.default_font if request is None else request
         if request is None:
             raise UnsupportedOperation("Default font resolution")
         family = decode_single_byte(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).casefold()

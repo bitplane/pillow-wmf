@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from pillow_wmf import Metafile, RasterContext, play
+from pillow_wmf import render
 
 
 @dataclass(frozen=True)
@@ -23,14 +23,11 @@ def compare_reference(source_path, png_path, *, fonts=None):
     png_path = Path(png_path)
     with Image.open(png_path) as reference:
         expected = reference.convert("RGB")
-    context = RasterContext(expected.width, expected.height, fonts=fonts)
-    issues = play(Metafile.from_bytes(source_path.read_bytes()), context, strict=True)
-    if issues:
-        raise RuntimeError(f"Incomplete playback of {source_path.name}: {issues}")
+    actual_image = render(source_path.read_bytes(), expected.size, fonts=fonts)
     differing_pixels = differing_channels = largest = 0
     first = None
     for index, (actual, native) in enumerate(
-        zip(context.image.get_flattened_data(), expected.get_flattened_data(), strict=True)
+        zip(actual_image.get_flattened_data(), expected.get_flattened_data(), strict=True)
     ):
         if actual == native:
             continue

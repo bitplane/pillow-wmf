@@ -2,6 +2,7 @@
 
 from .gdi import GDI, Call, Handle, UnsupportedOperation
 from .raster import RasterContext
+from .render import render
 from .text import FontCollection, FontFace
 from .trace import TraceContext
 from .wmf import FormatError, Limits, Metafile, PlaceableHeader
@@ -24,4 +25,5 @@ __all__ = [
     "TraceContext",
     "UnsupportedOperation",
     "play",
+    "render",
 ]

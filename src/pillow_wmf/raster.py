@@ -968,7 +968,7 @@ class RasterContext(TraceContext):
             rectangle = min(left, right), min(top, bottom), max(left, right), max(top, bottom)
         if not args["text"]:
             return TextLayout(), rectangle
-        request = self._text_state.font
+        request = self._text_state.font or self.fonts.default_font
         face = self.fonts.resolve(request)
         if sx * sy < 0:
             request = replace(request, escapement=-request.escapement)
