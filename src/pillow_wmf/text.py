@@ -17,7 +17,7 @@ import freetype as ft
 from fontTools.ttLib import TTFont
 
 from .constants import TA_RTLREADING
-from .gdi import UnsupportedOperation
+from .gdi import InvalidOperation, UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import fixed, rounded
 from .numeric import float32
@@ -677,9 +677,9 @@ def layout_text(
         raise UnsupportedOperation("Text alignment")
     count = len(text) if glyph_indices is None else len(glyph_indices)
     if advances and len(advances) != count:
-        raise ValueError("Text advance count must match the byte count")
+        raise InvalidOperation("Text advance count must match the byte count")
     if vertical_advances and len(vertical_advances) != count:
-        raise ValueError("Vertical advance count must match the glyph count")
+        raise InvalidOperation("Vertical advance count must match the glyph count")
     glyphs = (
         font.shape(characters, max_pixels)
         if glyph_indices is None

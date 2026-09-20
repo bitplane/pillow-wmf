@@ -19,6 +19,10 @@ class UnsupportedOperation(NotImplementedError):
     """A backend does not implement this operation."""
 
 
+class InvalidOperation(ValueError):
+    """Invalid call data rejected before the backend changes drawing state."""
+
+
 @dataclass(frozen=True)
 class Handle:
     serial: int

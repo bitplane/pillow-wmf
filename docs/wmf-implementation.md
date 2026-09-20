@@ -133,6 +133,17 @@ commands. Deletion makes a file slot reusable; backend handle identities remain
 distinct. Saving/restoring does not rewind object allocation. Both recorder and
 trace context have configurable live-object and saved-state limits.
 
+Backends reject invalid call data with `InvalidOperation` during preparation,
+before changing drawing state. Tolerant playback records an omission; strict
+playback raises `PlaybackError`. Unsupported features use `UnsupportedOperation`.
+Resource limits and unexpected implementation errors remain fatal.
+
+Raster handlers apply prepared work before the trace and handle table are
+committed. An unexpected application failure invalidates the context: its image
+may be partially drawn and must not be reused. This avoids copying the entire
+image for every operation while preventing tolerant playback from continuing
+after a partial effect. New input validation belongs in preparation, not handlers.
+
 `play` accepts a fresh backend context; its saved-DC numbering assumes the file's
 stack begins empty. It reports unsupported records/operations as `Omission`
 values, or raises in strict mode. SETRELABS is always ignored. Unsupported object

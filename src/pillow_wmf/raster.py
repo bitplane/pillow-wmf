@@ -49,7 +49,7 @@ from .constants import (
 )
 from .ellipse import arc_figure, box_corners, ellipse_cubics, round_rect_figure
 from .flood import flood_spans
-from .gdi import Call, Handle, UnsupportedOperation
+from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DevicePath, Polygon, contains
 from .halftone import (
     HalftoneExpansion,
@@ -254,6 +254,7 @@ class RasterContext(TraceContext):
         self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height), surface_width=width)
         self._clip = ClipRegion()
         self._saved: list[SavedDC] = []
+        self._failed = False
 
     def _point(self, x: int, y: int) -> tuple[int, int]:
         return self.mapping.device_point(x, y)
@@ -399,6 +400,8 @@ class RasterContext(TraceContext):
         return PreparedEffect(text_layout, text_rectangle, transfer, pattern, region_mask, layout)
 
     def invoke(self, call: Call) -> Handle | int | None:
+        if self._failed:
+            raise RuntimeError("Raster context is unusable after a failed drawing effect")
         call = self._prepare(call)
         handler = getattr(self, f"_apply_{call.name}", None)
         if handler is None:
@@ -409,8 +412,15 @@ class RasterContext(TraceContext):
             raise
         except FormatError as error:
             raise UnsupportedOperation(f"{call.name}: malformed input: {error}") from error
-        result = self._commit(call)
-        handler(call, prepared, result)
+        result = self._result(call)
+        try:
+            # Handlers only apply prepared work. Input rejection belongs in
+            # preparation, where tolerant playback can safely omit the record.
+            handler(call, prepared, result)
+        except Exception as error:
+            self._failed = True
+            raise RuntimeError(f"Failed drawing effect: {call.name}") from error
+        self._commit(call)
         if isinstance(result, Handle) and self.is_null_object(result):
             # Intern failed creations so file-slot reuse cannot leak handles.
             del self._live[result.serial]
@@ -620,7 +630,7 @@ class RasterContext(TraceContext):
         # PolyPolygon validates the entire contour list before painting.
         # Dropping short contours would incorrectly draw the valid ones.
         if name == "poly_polygon" and any(len(points) < 2 for points in polygons):
-            return result
+            return
         paths = tuple(self._mapped_path(points) for points in polygons)
         self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))
 
@@ -771,7 +781,7 @@ class RasterContext(TraceContext):
                 covered = self._pen.width > min(abs(a["right"] - a["left"]), abs(a["bottom"] - a["top"]))
                 if covered:
                     if name in {"arc", "chord", "pie"}:
-                        return result
+                        return
                     drawing_bounds = left * 16, top * 16, right * 16, bottom * 16
                 else:
                     # Preserve the native signed half-width rounding.
@@ -1157,7 +1167,7 @@ class RasterContext(TraceContext):
             raise UnsupportedOperation("Text output options")
         rectangle = args.get("rectangle")
         if options & (ETO_OPAQUE | ETO_CLIPPED) and rectangle is None:
-            raise ValueError("Text output options require a rectangle")
+            raise InvalidOperation("Text output options require a rectangle")
         sx, sy = self.mapping.linear_scale
         if rectangle is not None:
             rectangle = (*self._point(*rectangle[:2]), *self._point(*rectangle[2:]))

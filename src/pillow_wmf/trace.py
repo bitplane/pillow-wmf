@@ -6,7 +6,7 @@ deletion quirks, clipping, palette realization or any pixel effects.
 
 import inspect
 
-from .gdi import GDI, OPERATION_NAMES, Call, Handle, UnsupportedOperation
+from .gdi import GDI, OPERATION_NAMES, Call, Handle, InvalidOperation, UnsupportedOperation
 
 CREATED_KINDS = {
     "create_pen": "pen",
@@ -58,9 +58,9 @@ class TraceContext(GDI):
                 or handle.owner is not self
                 or (self._live.get(handle.serial) != handle and not self.is_null_object(handle))
             ):
-                raise ValueError(f"Invalid or deleted handle: {name}")
+                raise InvalidOperation(f"Invalid or deleted handle: {name}")
             if handle.kind not in kinds:
-                raise ValueError(f"Wrong object type for {call.name}.{name}")
+                raise InvalidOperation(f"Wrong object type for {call.name}.{name}")
         if call.name in CREATED_KINDS and len(self._live) >= self.max_objects:
             raise ValueError("Object limit exceeded")
         if call.name == "save_dc" and self._save_depth >= self.max_saved_states:
@@ -69,13 +69,20 @@ class TraceContext(GDI):
             level = arguments["saved_dc"]
             target = level if level > 0 else self._save_depth + level + 1
             if level == 0 or target < 1 or target > self._save_depth:
-                raise ValueError("Invalid saved DC reference")
+                raise InvalidOperation("Invalid saved DC reference")
         return Call.make(call.name, **arguments)
 
-    def _commit(self, call: Call) -> Handle | int | None:
-        result = None
+    def _result(self, call: Call) -> Handle | int | None:
+        """Reserve a result value without publishing handles or save levels."""
         if call.name in CREATED_KINDS:
-            result = Handle(self._next_handle, CREATED_KINDS[call.name], self)
+            return Handle(self._next_handle, CREATED_KINDS[call.name], self)
+        if call.name == "save_dc":
+            return self._save_depth + 1
+        return None
+
+    def _commit(self, call: Call) -> Handle | int | None:
+        result = self._result(call)
+        if call.name in CREATED_KINDS:
             self._live[result.serial] = result
             self._next_handle += 1
         elif call.name == "delete_object":
@@ -84,7 +91,6 @@ class TraceContext(GDI):
                 del self._live[handle.serial]
         elif call.name == "save_dc":
             self._save_depth += 1
-            result = self._save_depth
         elif call.name == "restore_dc":
             level = call.kwargs["saved_dc"]
             self._save_depth = level - 1 if level > 0 else self._save_depth + level

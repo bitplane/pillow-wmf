@@ -3,7 +3,7 @@
 import heapq
 from dataclasses import dataclass
 
-from ..gdi import GDI, Call, Handle, UnsupportedOperation
+from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from .binary import Limits
 from .bindings import BY_KIND
 from .constants import RecordType
@@ -124,7 +124,9 @@ def play(
             continue
         try:
             result = backend.invoke(Call.make(name, **arguments))
-        except UnsupportedOperation as error:
+        except (UnsupportedOperation, InvalidOperation) as error:
+            if strict and isinstance(error, InvalidOperation):
+                raise PlaybackError(f"Record {index}: {error}") from error
             omit(index, record.function(), str(error))
             # File-slot lifetime is independent of backend resource cleanup.
             if record.kind == RecordType.DELETEOBJECT:
