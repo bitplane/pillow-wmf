@@ -20,6 +20,7 @@ from .gdi import UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import rounded
 from .numeric import float32
+from .wingdings import decode_wingdings
 
 C1_CONTROLS = "".join(map(chr, range(0x80, 0xA0)))
 
@@ -347,6 +348,7 @@ class FontCollection:
         fallbacks=None,
         missing_glyph="error",
         synthesize_styles=False,
+        wingdings_fallback=False,
     ):
         if ansi_codepage not in (1252, 1251):
             raise ValueError("ANSI environment must be Windows-1252 or Windows-1251")
@@ -355,6 +357,8 @@ class FontCollection:
         self.ansi_codepage = ansi_codepage
         self.missing_glyph = missing_glyph
         self.synthesize_styles = synthesize_styles
+        self.wingdings_fallback = wingdings_fallback
+        self._wingdings_face = None
         self.aliases = {name.casefold(): target.casefold() for name, target in (aliases or {}).items()}
         self.fallbacks = {name.casefold(): tuple(targets) for name, targets in (fallbacks or {}).items()}
         self._faces = {}
@@ -405,6 +409,11 @@ class FontCollection:
         family = self.aliases.get(family, family)
         key = family, request.weight or 400, bool(request.italic)
         face = self._select_face(key)
+        if face is None and self.wingdings_fallback and family == "wingdings":
+            if key[1:] == (400, False) or self.synthesize_styles and key[1] in (400, 700):
+                if self._wingdings_face is None:
+                    self._wingdings_face = FontFace.bundled_symbols()
+                face = self._wingdings_face
         if face is None:
             raise UnsupportedOperation(f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}")
         return face
@@ -416,6 +425,10 @@ class FontCollection:
         return face
 
     def decode(self, request, face, data):
+        if face is self._wingdings_face:
+            if request.charset not in (1, 2):
+                raise UnsupportedOperation("Unsupported Wingdings fallback charset request")
+            return decode_wingdings(data)
         if face.symbol:
             if request.charset not in (1, 2):
                 raise UnsupportedOperation("Unsupported symbol font charset request")

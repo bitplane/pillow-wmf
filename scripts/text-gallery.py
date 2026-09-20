@@ -38,6 +38,7 @@ def gallery(
     font_paths=(),
     fallbacks=None,
     synthesize_styles=False,
+    wingdings_fallback=False,
     pairs=None,
     limit=None,
     text_only=False,
@@ -51,6 +52,7 @@ def gallery(
         missing_glyph=missing_glyph,
         fallbacks=fallbacks,
         synthesize_styles=synthesize_styles,
+        wingdings_fallback=wingdings_fallback,
     )
     entries, blocked = [], []
     exact = 0
@@ -119,6 +121,8 @@ figcaption{{padding:8px 0}}section{{margin:32px 0}}pre{{white-space:pre-wrap}}</
 {escape(font_note)} Unsupported cases are listed separately; their non-font drawing is not validated.</p>
 <p>Missing-glyph policy: {escape(missing_glyph)} (notdef uses the supplied face's glyph zero, not font linking).</p>
 <p>Explicit fallback chains: {escape(str(fallbacks or {}))}</p>
+<p>Wingdings Unicode fallback: {wingdings_fallback}. When enabled and the requested face is unavailable,
+Noto Sans Symbols 2 supplies approximate shapes and metrics; missing glyphs remain subject to the stated policy.</p>
 <label>Pixel zoom <select onchange="document.body.style.setProperty('--zoom',this.value)">
 <option>1</option><option>2</option><option>4</option></select></label>
 {"".join(entries)}<h2>Blocked cases</h2><pre>{escape(chr(10).join(blocked) or "None")}</pre>"""
@@ -133,6 +137,9 @@ def main():
     parser.add_argument("source", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--title", default="Real-font mismatches")
+    parser.add_argument(
+        "--wingdings-fallback", action="store_true", help="Explicitly map missing Wingdings to bundled Noto"
+    )
     parser.add_argument("--reference-root", type=Path, help="Parallel release PNG tree; select text-bearing WMFs")
     parser.add_argument("--limit", type=int, help="Maximum mismatches displayed; all inputs are still compared")
     parser.add_argument("--missing-glyph", choices=("error", "notdef"), default="error")
@@ -166,6 +173,7 @@ def main():
         font_paths=args.font,
         fallbacks=fallbacks,
         synthesize_styles=args.synthesize_styles,
+        wingdings_fallback=args.wingdings_fallback,
         limit=args.limit,
         **options,
     )

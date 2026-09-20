@@ -109,8 +109,22 @@ The package includes the Unicode font Noto Sans Symbols 2 and its SIL Open Font
 License. `FontFace.bundled_symbols()` loads the packaged bytes without a download
 or dependency on installed system fonts. Add the returned face to a
 `FontCollection` to make it available for explicit selection or Unicode fallback.
-It is not automatically substituted for Wingdings: byte-to-Unicode mapping is a
-separate requirement, and its glyph shapes and metrics are not Windows Wingdings.
+It is not automatically substituted for Wingdings. Opt in explicitly with
+`FontCollection(wingdings_fallback=True)` (or `text-gallery.py --wingdings-fallback`).
+An available requested Wingdings face wins; otherwise this maps Wingdings bytes
+to Unicode and uses the bundled face. The physical face keeps its Noto name.
+This is not a Wingdings 2/3 or Webdings substitution, and it accepts only symbol
+or default charset requests. Bold/italic synthesis still requires its own opt-in.
+
+The mapping follows [Unicode's Wingdings mapping appendix](https://www.unicode.org/wg2/docs/n4363.pdf).
+Space is preserved; control bytes, DEL and the unencoded Windows-logo byte raise
+an error. Supplementary-plane symbols remain one character per input byte, so
+explicit WMF advance arrays retain their original indexing. Glyph shapes,
+natural advances and line metrics are Noto's, not Windows Wingdings'.
+The bundled font does not cover every mapped character (including smileys,
+zodiac signs and some numbered circles). Normal strict missing-glyph handling
+still applies; callers can supply explicit Unicode fallback faces using Noto's
+family name `Noto Sans Symbols2` as the fallback-chain key.
 
 The named `real-text` probe downloads checksum-pinned, SIL Open Font License
 Noto Sans and Noto Serif files and renders a small horizontal Latin size sweep.
