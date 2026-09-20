@@ -1,7 +1,9 @@
 """Isolate WMF text option, mapper and font-request semantics."""
 
 from dataclasses import replace
+from struct import pack
 
+from fontTools.ttLib import TTFont
 from test_font import FAMILY, FONT_PATH
 
 from pillow_wmf import Recorder
@@ -38,3 +40,39 @@ def cases():
 
 
 __all__ = ["FAMILY", "FONT_PATH", "SIZE", "cases"]
+
+
+def placement_cases():
+    """Distinguish byte decoding, glyph indexing and two-dimensional spacing."""
+    with TTFont(FONT_PATH) as font:
+        cmap = font.getBestCmap()
+        indices = tuple(font.getGlyphID(cmap[ord(c)]) for c in "ABA")
+    indexed = pack("<3H", *indices)
+    variants = [
+        ("glyph-natural", indexed, 0x10, (), {}, 25, 1),
+        ("glyph-explicit", indexed, 0x10, (19, 23, 17, 31, 37, 41), {}, 25, 1),
+        ("glyph-odd", indexed + b"Z", 0x10, (), {}, 25, 1),
+        ("glyph-invalid", pack("<3H", 0, 0xFFFF, indices[0]), 0x10, (), {}, 25, 1),
+    ]
+    for name, changes, alignment, background in (
+        ("baseline", {}, 25, 1),
+        ("right", {}, 27, 1),
+        ("center", {}, 30, 1),
+        ("opaque", {}, 25, 2),
+        ("quarter", {"escapement": 900}, 25, 1),
+        ("angle", {"escapement": 300}, 25, 1),
+        ("decorated", {"underline": 1, "strikeout": 1}, 25, 1),
+    ):
+        variants.append((f"pdy-{name}", b"ABA", 0x2000, (19, 7, 23, -5, 17, 11), changes, alignment, background))
+    variants.append(("glyph-pdy", indexed, 0x2010, (19, 7, 23, -5, 17, 11) * 2, {}, 25, 1))
+    for name, text, options, advances, changes, alignment, background in variants:
+        dc = Recorder()
+        dc.select_object(dc.create_font(replace(REQUEST, **changes)))
+        dc.set_background_mode(background)
+        dc.set_background_color(0x99CCFF)
+        dc.set_text_alignment(alignment)
+        dc.move_to(80, 80)
+        dc.ext_text_out(80, 80, text, options=options, advances=advances)
+        dc.line_to(165, 100)
+        dc.set_pixel(180, 115, 255)
+        yield name, dc
