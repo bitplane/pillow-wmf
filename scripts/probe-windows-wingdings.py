@@ -16,17 +16,32 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--visual", action="store_true")
+    parser.add_argument("--metadata-only", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     path = Path(os.environ["WINDIR"]) / "Fonts" / "wingding.ttf"
     with TTFont(path) as font:
-        tables = {tag: font.getTableData(tag) for tag in ("head", "OS/2", "hhea", "hmtx", "glyf", "cmap")}
+        if font["name"].getBestFamilyName() != "Wingdings":
+            raise ValueError("Unexpected native font family")
+        tables = {tag: font.getTableData(tag) for tag in ("head", "OS/2", "post", "hhea", "hmtx", "glyf", "cmap")}
         for tag, fields in {
             "head": ("unitsPerEm", "xMin", "yMin", "xMax", "yMax"),
-            "OS/2": ("xAvgCharWidth", "usWinAscent", "usWinDescent", "sTypoAscender", "sTypoDescender", "sCapHeight"),
+            "OS/2": (
+                "xAvgCharWidth",
+                "usWinAscent",
+                "usWinDescent",
+                "sTypoAscender",
+                "sTypoDescender",
+                "sCapHeight",
+                "yStrikeoutPosition",
+                "yStrikeoutSize",
+            ),
+            "post": ("underlinePosition", "underlineThickness"),
             "hhea": ("ascent", "descent", "lineGap"),
         }.items():
             print(tag, {f: getattr(font[tag], f, None) for f in fields}, flush=True)
+        if args.metadata_only:
+            return
         cmap = next(t.cmap for t in font["cmap"].tables if t.platformID == 3 and t.platEncID == 0)
         for codepoint, name in sorted(cmap.items()):
             glyph = font["glyf"][name]
