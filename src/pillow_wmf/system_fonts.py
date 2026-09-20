@@ -177,10 +177,13 @@ class SystemFontCollection(FontCollection):
     def resolve(self, request):
         request = request or self.default_font
         name = self._name(request).casefold()
+        charset = self._charset(request)
         for entry in self._ranked(request):
             # Symbol encodings have font-specific byte meanings, not ordinary
-            # Unicode coverage. Only an exact family or our Wingdings map works.
-            if (entry.symbol or request.charset == 2 or name in {"wingdings", "symbol", "webdings"}) and (
+            # Unicode coverage. Only an exact family or a bundled fallback works.
+            if entry.symbol and charset not in (1, 2):
+                continue
+            if (entry.symbol or charset == 2 or name in {"wingdings", "symbol", "webdings"}) and (
                 entry.family.casefold() != name
             ):
                 continue

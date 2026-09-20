@@ -4,8 +4,8 @@ import argparse
 import runpy
 from pathlib import Path
 
-from symbol_cases import SIZE, cases
-from windows_wmf_render import render_wmf
+from symbol_cases import SIZE, cases, custom_selection_case
+from windows_wmf_render import private_fonts, render_wmf
 
 
 def main():
@@ -28,6 +28,15 @@ def main():
         )
         (args.output / f"{name}.wmf").write_bytes(source)
         render_wmf(source, *SIZE).save(args.output / f"{name}.png")
+
+    # The ANSI row selects a host Latin face: this is a mapper probe, not an
+    # exact controlled-font compatibility fixture. Always report the real face.
+    with private_fonts([Path(__file__).resolve().parents[1] / "test/fonts/symbols.ttf"]):
+        source = custom_selection_case().to_bytes()
+        print("\n[custom-symbol-selection]", flush=True)
+        observe(source, family=None, sample=b"AB \x80\xe9\xff")
+        (args.output / "custom-symbol-selection.wmf").write_bytes(source)
+        render_wmf(source, 128, 128).save(args.output / "custom-symbol-selection.png")
 
 
 if __name__ == "__main__":

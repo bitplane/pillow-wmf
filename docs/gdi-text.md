@@ -65,8 +65,11 @@ still takes precedence. The font is a separately licensed LGPL-2.1-or-later
 resource; its licence, editable source and build script ship alongside the TTF.
 See the [font resource notice](../src/pillow_wmf/fonts/symbol/README.md).
 
-Native WMF playback selects the Symbol charset for an explicit Symbol face
-requested with ANSI, DEFAULT or SYMBOL charset. Each input byte retains its
+GDI forces SYMBOL_CHARSET when the requested family is named `Symbol`,
+regardless of the requested charset. This is a legacy font-selection rule,
+not a property of every symbol-cmap font: an ANSI request for a custom symbol
+face may instead select a Latin font. Explicit collections reject that
+incompatible request rather than silently substitute. Each Symbol byte retains its
 legacy position (`U+F000 | byte`) in the symbol cmap. Greek letters, operators
 and extensible bracket/integral pieces are not decoded as Latin text or linked
 to unrelated Unicode glyphs. The fallback uses the defined Windows byte ranges

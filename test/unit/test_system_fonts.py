@@ -72,6 +72,17 @@ def test_pitch_family_guides_unknown_names(installed):
     assert fonts.resolve(request("Unavailable", pitch_and_family=1)).family == "Liberation Mono"
 
 
+def test_ansi_request_skips_custom_symbol_face_but_default_selects_it(installed):
+    fonts = SystemFontCollection(paths=[SOURCE.with_name("symbols.ttf"), installed("Liberation Sans")])
+    req = request("Pillow WMF Symbols", charset=0)
+    selected = fonts.resolve(req)
+    assert selected.family == "Liberation Sans"
+    assert fonts.decode(req, selected, b"AB\x80") == "AB\u20ac"
+    for charset in (1, 2):
+        selected = fonts.resolve(replace(req, charset=charset))
+        assert selected.family == "Pillow WMF Symbols" and selected.symbol
+
+
 def test_coverage_fallback_preserves_primary_and_reports_holes(installed):
     fonts = SystemFontCollection(paths=[installed("Arial", keep={65}), installed("Other", keep={66})])
     req = request()

@@ -8,23 +8,6 @@ from pillow_wmf.wmf.objects import Font
 
 
 def cases():
-    recorder = Recorder()
-    recorder.set_background_mode(1)
-    recorder.set_text_alignment(24)
-    for row, charset in enumerate((0, 1, 2)):
-        recorder.select_object(
-            recorder.create_font(
-                Font(
-                    height=-16,
-                    weight=400,
-                    quality=3,
-                    charset=charset,
-                    face_name=b"Pillow WMF Symbols".ljust(32, b"\0"),
-                )
-            )
-        )
-        recorder.ext_text_out(5, 24 + row * 40, b"AB \x80\xe9\xff", advances=(15,) * 6)
-    yield "text-symbol-ansi", recorder
     # Keep the original native probe input unchanged when promoting it.
     namespace = runpy.run_path(str(Path(__file__).with_name("text_probe_cases.py")))
     yield "text-em-height", next(namespace["cases"]())[1]

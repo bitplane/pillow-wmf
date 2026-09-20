@@ -43,7 +43,7 @@ def test_undefined_bytes_are_not_replaced_or_dropped(codepage, undefined):
     assert len(decode_single_byte(bytes(range(256)), codepage)) == 256
 
 
-@pytest.mark.parametrize("charset", [0, 1, 2])
+@pytest.mark.parametrize("charset", [1, 2])
 def test_symbol_mapping_uses_font_cmap_not_a_unicode_icon_table(charset):
     face = FontFace.from_path(FONTS / "symbols.ttf")
     fonts = FontCollection([face])
@@ -52,6 +52,14 @@ def test_symbol_mapping_uses_font_cmap_not_a_unicode_icon_table(charset):
     assert tuple(map(ord, characters)) == (0xF041, 0xF042, 0xF020, 0xF080, 0xF0E9, 0xF0FF)
     raster = face.realize(request, (1, 1))
     assert tuple(raster.glyph(c, 10000).index for c in characters) == (2, 3, 1, 2, 3, 2)
+
+
+def test_ansi_request_does_not_force_an_arbitrary_symbol_face():
+    face = FontFace.from_path(FONTS / "symbols.ttf")
+    fonts = FontCollection([face])
+    request = replace(REQUEST, face_name=face.family.encode(), charset=0)
+    with pytest.raises(UnsupportedOperation, match="symbol font charset"):
+        fonts.decode(request, face, b"AB")
 
 
 def test_missing_glyph_policy_is_explicit_and_cache_isolation_is_preserved(face):

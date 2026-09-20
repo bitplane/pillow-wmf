@@ -44,17 +44,19 @@ def gallery(
     limit=None,
     text_only=False,
     font_note="Primary fonts use identical files. Extra fallback fonts may differ from Windows.",
+    fonts=None,
 ):
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     paths = [*sorted((source / "fonts").glob("*.ttf")), *font_paths]
-    fonts = FontCollection(
-        (face for path in paths for face in load_faces(path)),
-        missing_glyph=missing_glyph,
-        fallbacks=fallbacks,
-        synthesize_styles=synthesize_styles,
-        wingdings_fallback=wingdings_fallback,
-    )
+    if fonts is None:
+        fonts = FontCollection(
+            (face for path in paths for face in load_faces(path)),
+            missing_glyph=missing_glyph,
+            fallbacks=fallbacks,
+            synthesize_styles=synthesize_styles,
+            wingdings_fallback=wingdings_fallback,
+        )
     entries, blocked = [], []
     exact = 0
     omitted = 0

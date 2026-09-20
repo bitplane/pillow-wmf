@@ -34,7 +34,7 @@ def test_repertoire_matches_native_defined_slots_not_postscript_extensions(symbo
         assert font.glyph(chr(0xF000 | byte), 10000).index == 0
 
 
-@pytest.mark.parametrize("charset", (0, 1, 2))
+@pytest.mark.parametrize("charset", (0, 1, 2, 204, 255))
 def test_symbol_byte_positions_identify_greek_and_equation_pieces(symbol, charset):
     fonts = FontCollection([symbol])
     request = Font(face_name=b"Symbol", charset=charset)

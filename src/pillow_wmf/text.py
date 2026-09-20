@@ -522,19 +522,26 @@ class FontCollection:
             face = self._faces.get((key[0], 400, False))
         return face
 
+    def _charset(self, request):
+        # GDI forces SYMBOL_CHARSET for the legacy family named Symbol, not
+        # for arbitrary symbol-cmap fonts (including Wingdings).
+        family = decode_single_byte(request.face_name.split(b"\0", 1)[0], self.ansi_codepage)
+        return 2 if family.casefold() == "symbol" else request.charset
+
     def decode(self, request, face, data):
+        charset = self._charset(request)
         if face is self._wingdings_face:
-            if request.charset not in (1, 2):
+            if charset not in (1, 2):
                 raise UnsupportedOperation("Unsupported Wingdings fallback charset request")
             return decode_wingdings(data)
         if face.symbol:
-            if request.charset not in (0, 1, 2):
+            if charset not in (1, 2):
                 raise UnsupportedOperation("Unsupported symbol font charset request")
             return "".join(chr(0xF000 | byte) for byte in data)
         encoding = (
             (self.ansi_codepage, CODEPAGE_BITS[self.ansi_codepage])
-            if request.charset == 1
-            else SINGLE_BYTE_CHARSETS.get(request.charset)
+            if charset == 1
+            else SINGLE_BYTE_CHARSETS.get(charset)
         )
         if encoding is None:
             raise UnsupportedOperation(f"Unsupported text charset: {request.charset}")
