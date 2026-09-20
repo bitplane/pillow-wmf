@@ -33,7 +33,14 @@ def all_cases():
     yield "escape-rgb-device", escape["drawing"]((code, data) for _, code, data in escape["escapes"]())
     placement = runpy.run_path(str(Path(__file__).with_name("text_option_cases.py")))["placement_cases"]
     for name, recorder in placement():
-        if name in {"glyph-explicit", "pdy-overlap", "pdy-quarter-decorated"}:
+        if name in {
+            "glyph-explicit",
+            "pdy-overlap",
+            "pdy-quarter-decorated",
+            "pdy-quarter-opaque",
+            "pdy-reverse-angle-background",
+            "pdy-obtuse-background",
+        }:
             yield f"text-{name}", recorder
     rtl = runpy.run_path(str(Path(__file__).with_name("text_option_cases.py")))["rtl_cases"]
     for name, recorder in rtl():

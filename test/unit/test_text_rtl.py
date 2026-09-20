@@ -37,3 +37,19 @@ def test_native_rtl_current_position(name, position):
     # GetCurrentPositionEx exposes integer logical coordinates. The renderer
     # retains the fractional inverse mapping for subsequent device placement.
     assert tuple(int(value) for value in dc._position) == position
+
+
+@pytest.mark.parametrize("width,last_glyph_x", [(128, 23), (192, 87)])
+def test_fractional_right_alignment_rounds_after_subtracting_run_width(width, last_glyph_x):
+    recorder = dict(PROBE["rtl_cases"]())["rtl-fractional"]
+    metafile = Metafile.from_bytes(recorder.to_bytes())
+    fonts = FontCollection([FontFace.from_path(PROBE["FONT_PATH"])])
+    dc = RasterContext(width, 128, fonts=fonts)
+    assert play(replace(metafile, records=metafile.records[:-4]), dc, strict=True) == ()
+    record = metafile.records[-4]
+    layout, _ = dc._prepare_text(
+        dict(x=record.x, y=record.y, text=record.text, options=record.options, advances=record.advances)
+    )
+    # The 88.5-pixel run is aligned at different fractional reference points.
+    # These ink origins are measured in the native PNGs at both canvas widths.
+    assert layout.glyphs[-1][:2] == (last_glyph_x, 63)

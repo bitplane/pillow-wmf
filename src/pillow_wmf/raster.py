@@ -1174,6 +1174,7 @@ class RasterContext(TraceContext):
         # Mapper flags constrain physical-font selection, not drawing with an
         # already explicitly supplied TrueType face. Retain them in DC state.
         origin = self._position if self._text_state.alignment & TA_UPDATECP else (args["x"], args["y"])
+        precise_origin = tuple(Fraction(value, 16) for value in self.mapping.fixed_point(*origin))
         origin = self._point(*origin)
         alignment = self._text_state.alignment
         # RTL layout swaps reference edges, not glyph masks or byte order.
@@ -1194,8 +1195,6 @@ class RasterContext(TraceContext):
         if options & ETO_PDY and advances:
             vertical_advances = advances[1::2]
             advances = advances[::2]
-            if self._background_mode == OPAQUE and request.escapement % 3600:
-                raise UnsupportedOperation("Rotated opaque text with paired advances")
         layout = layout_text(
             self.fonts.realize(request, face, (abs(sx), abs(sy))),
             args["text"],
@@ -1213,6 +1212,7 @@ class RasterContext(TraceContext):
             vertical_advances=vertical_advances,
             vertical_scale=abs(sy),
             mirrored_layout=self.mapping.rtl,
+            precise_origin=precise_origin,
         )
         if layout.position is not None:
             logical_origin = self._position
@@ -1234,7 +1234,7 @@ class RasterContext(TraceContext):
 
     def _draw_text(self, layout, rectangle, options):
         def paint_contour(contour, color):
-            polygon = [(x * 16, y * 16) for x, y in contour]
+            polygon = [(int(x * 16), int(y * 16)) for x, y in contour]
             for x, y in self._contour_pixels((polygon,)):
                 if not options & ETO_CLIPPED or rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]:
                     self._pixel(x, y, color, operation=13)

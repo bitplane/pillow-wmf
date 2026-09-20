@@ -19,7 +19,7 @@ from fontTools.ttLib import TTFont
 from .constants import TA_RTLREADING
 from .gdi import UnsupportedOperation
 from .gdi_math import sincos_degrees
-from .mapping import rounded
+from .mapping import fixed, rounded
 from .numeric import float32
 from .wingdings import decode_wingdings
 from .wmf.objects import Font
@@ -73,6 +73,7 @@ class Glyph:
     index: int = 0
     channels: int = 1
     ink_span: tuple[int, int] = (0, 0)
+    background_ink_span: tuple[int, int] = (0, 0)
 
 
 @dataclass
@@ -95,6 +96,7 @@ class RasterFont:
     synthetic_bold: bool = False
     synthetic_italic: bool = False
     decorations: tuple[tuple[int, int], ...] = ()
+    background_cell: tuple[int, int] = (0, 0)
     _glyphs: dict[int, Glyph] = field(default_factory=dict)
 
     def shape(self, characters, max_pixels):
@@ -168,6 +170,12 @@ class RasterFont:
                 )
             else:
                 pixels = bytes(packed[y * bitmap.pitch + x] for y in range(bitmap.rows) for x in range(bitmap.width))
+            ink_span = rounded(Fraction(ink_bounds.xMin, 64)), rounded(Fraction(ink_bounds.xMax, 64))
+            # Unhinted oblique realization encloses ink in whole pixels;
+            # decoration placement retains its separate nearest-pixel span.
+            background_ink_span = (
+                (ink_bounds.xMin // 64, ceil(Fraction(ink_bounds.xMax, 64))) if self.escapement % 900 else ink_span
+            )
             self._glyphs[index] = Glyph(
                 (bitmap.width // channels, bitmap.rows),
                 (slot.bitmap_left, -slot.bitmap_top),
@@ -175,7 +183,8 @@ class RasterFont:
                 advance,
                 index,
                 channels,
-                (rounded(Fraction(ink_bounds.xMin, 64)), rounded(Fraction(ink_bounds.xMax, 64))),
+                ink_span=ink_span,
+                background_ink_span=background_ink_span,
             )
         glyph = self._glyphs[index]
         if glyph.size[0] * glyph.size[1] > max_pixels:
@@ -196,6 +205,7 @@ class FontFace:
             self.weight = font["OS/2"].usWeightClass
             self.italic = bool(font["OS/2"].fsSelection & 1)
             self.units_per_em = font["head"].unitsPerEm
+            self.outline_cell = font["head"].yMax, -font["head"].yMin
             self.ascent = font["OS/2"].usWinAscent
             self.descent = font["OS/2"].usWinDescent
             if not self.ascent + self.descent:
@@ -342,6 +352,17 @@ class FontFace:
                 return (units * size * 2 + self.units_per_em) // (2 * self.units_per_em)
 
             ascent, bottom = self.device_metrics.get(rounded(size), (metric(self.ascent), -metric(self.descent)))
+            background_cell = ascent, -bottom
+            if escapement % 1800:
+                # General transforms bound the font's ink with an em/64
+                # safety margin. Quarter turns retain the Windows cell;
+                # oblique transforms use the font-wide outline bounding box.
+                cell = self.outline_cell if escapement % 900 else (self.ascent, self.descent)
+                margin = self.units_per_em // 64
+                background_cell = tuple(
+                    ceil(Fraction(fixed(float32((units + margin) * float32(size / self.units_per_em))), 16))
+                    for units in cell
+                )
             self._sizes[key] = RasterFont(
                 font,
                 ascent,
@@ -356,6 +377,7 @@ class FontFace:
                 missing_glyph,
                 em_width=width,
                 escapement=escapement,
+                background_cell=background_cell,
                 synthetic_bold=synthetic_bold,
                 synthetic_italic=synthetic_italic,
                 decorations=tuple(
@@ -519,6 +541,10 @@ class FontRun:
     def decorations(self):
         return self.primary.decorations
 
+    @property
+    def background_cell(self):
+        return self.primary.background_cell
+
     def glyph(self, character, max_pixels):
         return self.shape(character, max_pixels)[0]
 
@@ -603,7 +629,7 @@ def _blank_control(character):
 @dataclass(frozen=True)
 class TextLayout:
     glyphs: tuple[tuple[int, int, Glyph], ...] = ()
-    background: tuple[tuple[int, int], ...] | None = None
+    background: tuple[tuple[int | Fraction, int | Fraction], ...] | None = None
     position: tuple[int | Fraction | float, int | Fraction | float] | None = None
     decorations: tuple[tuple[tuple[int, int], ...], ...] = ()
 
@@ -627,6 +653,7 @@ def layout_text(
     vertical_advances=(),
     vertical_scale=1,
     mirrored_layout=False,
+    precise_origin=None,
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if characters is None and glyph_indices is None:
@@ -690,6 +717,9 @@ def layout_text(
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
     center_offset = (width + (not mirrored_layout)) // 2
     origin_x = x - (width if horizontal == 2 else center_offset if horizontal == 6 else 0)
+    if horizontal == 2 and precise_origin is not None:
+        # Subtract the advance before rounding the aligned reference point.
+        origin_x = rounded(precise_origin[0] - run_width)
     baseline = y + (font.ascent if vertical == 0 else -font.descent if vertical == 8 else 0)
     run_height = vertical_offsets[-1]
     if mirrored_layout:
@@ -743,6 +773,18 @@ def layout_text(
         if opaque
         else None
     )
+    if opaque and vertical_advances and escapement % 3600:
+        background = paired_background(
+            glyphs,
+            mapped_offsets[:-1],
+            vertical_offsets[:-1],
+            origin_x,
+            baseline,
+            font.background_cell,
+            x,
+            y,
+            escapement,
+        )
     decoration_spans = (
         tuple(
             (origin_x + dx + glyph.ink_span[0], baseline + rounded(dy), glyph.ink_span[1] - glyph.ink_span[0])
@@ -765,3 +807,36 @@ def layout_text(
         for span_x, span_y, span_width in decoration_spans
     )
     return TextLayout(tuple(positioned), background, position, decorations)
+
+
+def paired_background(glyphs, offsets, vertical_offsets, origin_x, baseline, cell, x, y, escapement):
+    """Bound positioned glyph cells in font space, then realize their corners."""
+    left = min(
+        origin_x + dx + glyph.background_ink_span[0] - Fraction(1, 4) for glyph, dx in zip(glyphs, offsets, strict=True)
+    )
+    right = max(
+        origin_x + dx + glyph.background_ink_span[1] + Fraction(1, 4) for glyph, dx in zip(glyphs, offsets, strict=True)
+    )
+    top = baseline + min(vertical_offsets) - cell[0]
+    bottom = baseline + max(vertical_offsets) + cell[1]
+    sine, cosine = text_rotation(escapement)
+
+    def contribution(distance, coefficient):
+        return fixed(float32(float32(distance) * coefficient))
+
+    corners = tuple(
+        (
+            Fraction(x * 16 + contribution(px - x, cosine) + contribution(py - y, sine), 16),
+            Fraction(y * 16 + contribution(py - y, cosine) - contribution(px - x, sine), 16),
+        )
+        for px, py in ((left, top), (right, top), (right, bottom), (left, bottom))
+    )
+    if escapement % 900 == 0:
+        left, top = (min(p[i] for p in corners) // 1 for i in range(2))
+        right, bottom = (ceil(max(p[i] for p in corners)) for i in range(2))
+        if escapement % 1800:
+            bottom += 1
+        else:
+            right += 1
+        return ((left, top), (right, top), (right, bottom), (left, bottom))
+    return corners

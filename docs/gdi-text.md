@@ -15,11 +15,10 @@ positive or negative heights, zero-height realization, explicit average width,
 axis scaling and translation. It supports natural or signed explicit
 advances, character extra, justification, horizontal/vertical alignment,
 TA_UPDATECP, opaque backgrounds, ETO_OPAQUE, ETO_CLIPPED and the DC clip.
-Escapement, reflected axis mappings, underline/strikeout and explicitly enabled
-style synthesis are implemented, but transformed text remains experimental:
-rotated line/background bounds and reflected opaque extents still differ from
-Windows. These are layout discrepancies, not merely glyph-mask differences.
-RTL layout, automatic font selection and other encodings remain unsupported.
+Escapement, reflected axis mappings, RTL device layout, underline/strikeout and
+explicitly enabled style synthesis are implemented. Transformed real-font masks
+remain approximate; controlled geometry regressions retain exact comparisons.
+Automatic host-font selection and other encodings remain unsupported.
 An initial logical font can be supplied with `FontCollection(default_font=...)`.
 Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
@@ -71,9 +70,14 @@ vertical component. Decorations use each glyph's unrotated ink span. A record
 with PDY but no advance array does not draw or change the current position.
 
 Unrotated opaque PDY output bounds the positioned glyph cells, including ink
-overhangs. Rotated opaque PDY output remains explicitly unsupported: its native
-background geometry is not established. Transparent rotated glyph masks remain
-subject to the font-rendering approximation described above. The named
+overhangs and the final advance. Rotated output bounds the positioned ink spans
+with a quarter-pixel horizontal margin, excluding the final advance. Horizontal
+cell metrics use the ordinary font realization. Quarter turns use Windows cell
+bounds and oblique transforms use the font-wide outline bounds, each expanded
+by an em/64 safety margin and rounded outwards. Rotation combines separately
+quantized 28.4 corner contributions; axis-aligned output includes the terminal
+baseline column or row. Oblique ink spans are outward-rounded before placement.
+Glyph masks remain subject to the approximation described above. The named
 `text-placement` probe checks glyph IDs, spacing, alignment, background bounds
 and decorations; `text-glyph-*` and `text-pdy-*` retain compact exact regressions.
 
@@ -84,6 +88,9 @@ advances, the alignment displacement has both horizontal and vertical components
 current-position updates are converted back to logical coordinates. The named
 `text-rtl` probe covers alignment, rectangles, rotation, fractional mapping and
 paired advances. These rules do not implement bidirectional script shaping.
+Right alignment subtracts the fractional run width from the fixed-point device
+reference before pixel rounding; rounding the two independently shifts text at
+half-pixel boundaries.
 
 Supply fonts explicitly, for example:
 

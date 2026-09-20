@@ -16,6 +16,9 @@ escape-rgb-device
 text-glyph-explicit
 text-pdy-overlap
 text-pdy-quarter-decorated
+text-pdy-quarter-opaque
+text-pdy-reverse-angle-background
+text-pdy-obtuse-background
 text-rtl-opaque
 text-rtl-pdy-center
 text-rtl-fractional

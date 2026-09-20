@@ -138,11 +138,15 @@ class Mapping:
         fixed-point conversion; retaining Python doubles can miss a tie.
         ``point`` retains the separate LPtoDP-style integer conversion.
         """
+        return tuple((coordinate + 8) // 16 for coordinate in self.fixed_point(x, y))
+
+    def fixed_point(self, x, y):
+        """Map a point without discarding its device-space sixteenths."""
         result = []
         for value, (viewport, window, origin) in zip((x, y), self._axes(), strict=True):
             product = float32(value * float32(viewport / window))
             coordinate = fixed(product) + fixed(origin)
-            result.append((coordinate + 8) // 16)
+            result.append(coordinate)
         return tuple(result)
 
     def clip_displacement(self, x: int, y: int) -> tuple[int, int]:
