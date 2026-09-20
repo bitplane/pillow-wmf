@@ -62,6 +62,9 @@ def placement_cases():
         ("quarter", {"escapement": 900}, 25, 1),
         ("angle", {"escapement": 300}, 25, 1),
         ("decorated", {"underline": 1, "strikeout": 1}, 25, 1),
+        ("quarter-opaque", {"escapement": 900}, 25, 2),
+        ("quarter-decorated", {"escapement": 900, "underline": 1, "strikeout": 1}, 25, 1),
+        ("angle-opaque", {"escapement": 300}, 25, 2),
     ):
         variants.append((f"pdy-{name}", b"ABA", 0x2000, (19, 7, 23, -5, 17, 11), changes, alignment, background))
     variants.append(("glyph-pdy", indexed, 0x2010, (19, 7, 23, -5, 17, 11) * 2, {}, 25, 1))
