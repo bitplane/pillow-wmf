@@ -29,6 +29,7 @@ on:
           - text-encoding-extended
           - text-options
           - text-placement
+          - escapes
           - text-missing
           - text-fallback-sizing
           - layout
@@ -165,6 +166,19 @@ jobs:
         with:
           name: text-options
           path: text-options/
+          retention-days: 7
+      - name: Probe printer escapes on the RGB device
+        if: inputs.probe == 'escapes'
+        shell: bash
+        run: |
+          mkdir -p escapes
+          python scripts/probe-windows-escapes.py --output escapes | tee escapes/observations.txt
+      - name: Upload escape observations
+        if: always() && inputs.probe == 'escapes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: escapes
+          path: escapes/
           retention-days: 7
       - name: Probe single-byte text encodings
         if: inputs.probe == 'text-encoding' || inputs.probe == 'text-missing' || inputs.probe == 'text-encoding-extended'
