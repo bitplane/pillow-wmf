@@ -29,6 +29,8 @@ def cases(*, corpus=False):
 
 
 def all_cases():
+    escape = runpy.run_path(str(Path(__file__).with_name("escape_cases.py")))
+    yield "escape-rgb-device", escape["drawing"]((code, data) for _, code, data in escape["escapes"]())
     placement = runpy.run_path(str(Path(__file__).with_name("text_option_cases.py")))["placement_cases"]
     for name, recorder in placement():
         if name in {"glyph-explicit", "pdy-overlap", "pdy-quarter-decorated"}:

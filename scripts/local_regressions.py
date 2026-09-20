@@ -12,6 +12,7 @@ dib-extended-linked-brush
 text-em-height
 text-layout-and-clip
 text-cell-height
+escape-rgb-device
 text-glyph-explicit
 text-pdy-overlap
 text-pdy-quarter-decorated

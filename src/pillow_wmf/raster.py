@@ -163,11 +163,56 @@ class SavedDC:
     text_state: TextState
 
 
-# MFCOMMENT, POSTSCRIPT_IGNORE, BEGIN_PATH, CLIP_TO_PATH, END_PATH.
-# These are metadata or printer-driver operations, not bitmap GDI paths.
-# This RGB memory device has no PostScript channel. Unknown escapes remain
-# unsupported rather than being silently treated as harmless comments.
-BITMAP_NOOP_ESCAPES = frozenset({0x000F, 0x0026, 0x1000, 0x1001, 0x1002})
+# MS-WMF's defined escape records are printer operations or embedded metadata.
+# They do not affect the native RGB memory device. Keep the verified set
+# explicit: other escape numbers, including callbacks and XPS, are unsupported.
+BITMAP_NOOP_ESCAPES = frozenset(
+    {
+        0x0001,  # NEWFRAME
+        0x0002,  # ABORTDOC
+        0x0003,  # NEXTBAND
+        0x0004,  # SETCOLORTABLE
+        0x0005,  # GETCOLORTABLE
+        0x0008,  # QUERYESCSUPPORT
+        0x000A,  # STARTDOC
+        0x000B,  # ENDDOC
+        0x000C,  # GETPHYSPAGESIZE
+        0x000D,  # GETPRINTINGOFFSET
+        0x000E,  # GETSCALINGFACTOR
+        0x000F,  # META_ESCAPE_ENHANCED_METAFILE
+        0x0011,  # SETCOPYCOUNT
+        0x0013,  # PASSTHROUGH
+        0x0015,  # SETLINECAP
+        0x0016,  # SETLINEJOIN
+        0x0017,  # SETMITERLIMIT
+        0x0019,  # DRAWPATTERNRECT
+        0x0021,  # EPSPRINTING
+        0x0025,  # POSTSCRIPT_DATA
+        0x0026,  # POSTSCRIPT_IGNORE
+        0x002A,  # GETDEVICEUNITS
+        0x0100,  # GETEXTENDEDTEXTMETRICS
+        0x0102,  # GETPAIRKERNTABLE
+        0x0200,  # EXTTEXTOUT (escape, not META_EXTTEXTOUT)
+        0x0201,  # GETFACENAME
+        0x0202,  # DOWNLOADFACE
+        0x0801,  # METAFILE_DRIVER
+        0x0C01,  # QUERYDIBSUPPORT
+        0x1000,  # BEGIN_PATH
+        0x1001,  # CLIP_TO_PATH
+        0x1002,  # END_PATH
+        0x100E,  # OPENCHANNEL
+        0x100F,  # DOWNLOADHEADER
+        0x1010,  # CLOSECHANNEL
+        0x1013,  # POSTSCRIPT_PASSTHROUGH
+        0x1014,  # ENCAPSULATED_POSTSCRIPT
+        0x1015,  # POSTSCRIPT_IDENTIFY
+        0x1016,  # POSTSCRIPT_INJECTION
+        0x1017,  # CHECKJPEGFORMAT
+        0x1018,  # CHECKPNGFORMAT
+        0x1019,  # GET_PS_FEATURESETTING
+        0x11D8,  # SPCLPASSTHROUGH2
+    }
+)
 
 
 class RasterContext(TraceContext):
