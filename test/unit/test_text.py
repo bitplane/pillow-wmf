@@ -15,11 +15,6 @@ FONT_PATH = Path(__file__).resolve().parents[2] / "test/fonts/layout.ttf"
 REQUEST = Font(height=-20, weight=400, quality=3, face_name=b"Pillow WMF Test".ljust(32, b"\0"))
 
 
-@pytest.fixture(scope="module")
-def face():
-    return FontFace.from_path(FONT_PATH)
-
-
 @pytest.fixture
 def dc(face):
     context = RasterContext(80, 60, fonts=FontCollection([face]))

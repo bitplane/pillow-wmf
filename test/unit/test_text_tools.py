@@ -1,17 +1,12 @@
-import runpy
-from pathlib import Path
-
 import pytest
 from PIL import Image
 
 from pillow_wmf import Metafile, Recorder, TraceContext, play
 from pillow_wmf.wmf.objects import Font
 
-SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
-
-def test_real_font_cases_are_small_deterministic_and_lossless():
-    cases = runpy.run_path(str(SCRIPTS / "real_text_cases.py"))["cases"]
+def test_real_font_cases_are_small_deterministic_and_lossless(load_script):
+    cases = load_script("real_text_cases.py")["cases"]
     first = [(name, family, recorder.to_bytes()) for name, family, recorder in cases()]
     assert first == [(name, family, recorder.to_bytes()) for name, family, recorder in cases()]
     assert len(first) == len({name for name, _, _ in first}) == 12
@@ -21,15 +16,15 @@ def test_real_font_cases_are_small_deterministic_and_lossless():
         assert play(metafile, TraceContext(), strict=True) == ()
 
 
-def test_cached_font_bytes_are_verified_before_use(tmp_path):
-    fetch = runpy.run_path(str(SCRIPTS / "real_text_cases.py"))["fetch_fonts"]
+def test_cached_font_bytes_are_verified_before_use(tmp_path, load_script):
+    fetch = load_script("real_text_cases.py")["fetch_fonts"]
     (tmp_path / "NotoSans-Regular.ttf").write_bytes(b"wrong version")
     with pytest.raises(ValueError, match="checksum mismatch"):
         fetch(tmp_path)
 
 
-def test_layout_probe_records_signed_spacing_and_round_trips():
-    cases = runpy.run_path(str(SCRIPTS / "text_layout_cases.py"))["cases"]
+def test_layout_probe_records_signed_spacing_and_round_trips(load_script):
+    cases = load_script("text_layout_cases.py")["cases"]
     for _, _, recorder in cases():
         source = recorder.to_bytes()
         metafile = Metafile.from_bytes(source)
@@ -39,8 +34,8 @@ def test_layout_probe_records_signed_spacing_and_round_trips():
         assert trace.calls == recorder.calls
 
 
-def test_encoding_probe_inputs_are_lossless_and_fonts_are_reproducible():
-    factory = runpy.run_path(str(SCRIPTS / "text_encoding_cases.py"))
+def test_encoding_probe_inputs_are_lossless_and_fonts_are_reproducible(load_script):
+    factory = load_script("text_encoding_cases.py")
     for symbol, filename in ((False, "encoding.ttf"), (True, "symbols.ttf")):
         assert factory["font_bytes"](symbol=symbol) == (factory["FONT_ROOT"] / filename).read_bytes()
     for _, _, _, _, recorder in factory["cases"]():
@@ -52,8 +47,8 @@ def test_encoding_probe_inputs_are_lossless_and_fonts_are_reproducible():
         assert trace.calls == recorder.calls
 
 
-def test_gallery_omits_exact_cases_keeps_single_channel_differences_and_reports_blocked(tmp_path):
-    gallery = runpy.run_path(str(SCRIPTS / "text-gallery.py"))["gallery"]
+def test_gallery_omits_exact_cases_keeps_single_channel_differences_and_reports_blocked(tmp_path, load_script):
+    gallery = load_script("text-gallery.py")["gallery"]
     source, output = tmp_path / "source", tmp_path / "gallery"
     source.mkdir()
     for name in ("exact", "different", "blocked"):

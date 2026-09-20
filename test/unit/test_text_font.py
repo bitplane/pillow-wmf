@@ -1,19 +1,15 @@
 """The oracle and local experiments must use the same controlled font."""
 
-import runpy
 from io import BytesIO
-from pathlib import Path
 
 from fontTools.ttLib import TTFont
 from PIL import ImageFont
 
 from pillow_wmf import Metafile, TraceContext, play
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts/test_font.py"
 
-
-def test_committed_font_is_reproducible_and_loadable():
-    factory = runpy.run_path(str(SCRIPT))
+def test_committed_font_is_reproducible_and_loadable(load_script):
+    factory = load_script("test_font.py")
     data = factory["font_bytes"]()
     assert data == factory["font_bytes"]() == factory["FONT_PATH"].read_bytes()
     font = ImageFont.truetype(BytesIO(data), 40)
@@ -21,8 +17,8 @@ def test_committed_font_is_reproducible_and_loadable():
     assert font.getlength("A B") == 54
 
 
-def test_font_metrics_distinguish_layout_from_ink_bounds():
-    factory = runpy.run_path(str(SCRIPT))
+def test_font_metrics_distinguish_layout_from_ink_bounds(load_script):
+    factory = load_script("test_font.py")
     with TTFont(BytesIO(factory["font_bytes"]())) as font:
         assert font.getBestCmap() == {32: "space", 65: "A", 66: "B"}
         assert font["head"].unitsPerEm == 1000
@@ -32,9 +28,8 @@ def test_font_metrics_distinguish_layout_from_ink_bounds():
         assert not font["glyf"]["A"].program.getBytecode()
 
 
-def test_text_probe_uses_roundtrippable_wmfs_and_the_controlled_font(monkeypatch):
-    monkeypatch.syspath_prepend(str(SCRIPT.parent))
-    factory = runpy.run_path(str(SCRIPT.parent / "text_probe_cases.py"))
+def test_text_probe_uses_roundtrippable_wmfs_and_the_controlled_font(load_script):
+    factory = load_script("text_probe_cases.py")
     probes = list(factory["cases"]())
     assert len(probes) == 5
     for _, recorder in probes:

@@ -26,14 +26,13 @@ def test_bundled_wingdings_font_and_license():
     assert any(font.glyph(chr(0x1F322), 10000).pixels)
 
 
-def test_font_build_matches_packaged_bytes():
-    import runpy
+def test_font_build_matches_packaged_bytes(load_script):
     from pathlib import Path
 
     from pillow_wmf import FontFace
 
     root = Path(__file__).resolve().parents[2]
-    build = runpy.run_path(str(root / "scripts/build-font.py"))["build_font"]
+    build = load_script("build-font.py")["build_font"]
     source = (root / "src/fonts/NotoSansSymbols2-Regular.ttf").read_bytes()
     metrics = (root / "src/fonts/wingdings-metrics.txt").read_text()
     assert build(source, metrics) == FontFace.bundled_wingdings().data

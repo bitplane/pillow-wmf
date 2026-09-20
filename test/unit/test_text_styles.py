@@ -12,11 +12,6 @@ from pillow_wmf.wmf.objects import Font
 REQUEST = Font(height=-24, weight=400, quality=3, face_name=b"Pillow WMF Test")
 
 
-@pytest.fixture
-def face():
-    return FontFace.from_path(Path(__file__).resolve().parents[1] / "fonts/layout.ttf")
-
-
 @pytest.mark.parametrize("bold,italic", [(True, False), (False, True), (True, True)])
 def test_synthetic_glyph_matches_native_controlled_rows(face, bold, italic):
     request = replace(REQUEST, weight=700 if bold else 400, italic=int(italic))
