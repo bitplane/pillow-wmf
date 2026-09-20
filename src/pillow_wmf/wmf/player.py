@@ -35,9 +35,8 @@ def play(
     if metafile.header.object_count > limits.max_objects or len(metafile.records) > limits.max_records:
         raise PlaybackError("Playback resource limit exceeded")
     empty = object()
-    unallocated = object()
     unavailable = object()
-    slots = [unallocated] * metafile.header.object_count
+    slots = [empty] * metafile.header.object_count
     free = list(range(len(slots)))
     free_slots = set(free)
     omissions = []
@@ -86,10 +85,10 @@ def play(
                 if name == "select_clip_region" and value == 0:
                     arguments[parameter] = None
                     continue
-                if value >= len(slots) or value < 0 or slots[value] is empty:
+                if value >= len(slots) or value < 0:
                     raise PlaybackError(f"Record {index}: invalid object index {value}")
-                if slots[value] is unallocated:
-                    if name not in {"select_clip_region", "select_object", "select_palette"}:
+                if slots[value] is empty:
+                    if name not in {"select_clip_region", "select_object", "select_palette", "delete_object"}:
                         raise PlaybackError(f"Record {index}: invalid object index {value}")
                     arguments[parameter] = None
                     continue
@@ -122,6 +121,8 @@ def play(
                 slots[record.object_index] = empty
                 release(record.object_index)
             continue
+        if name == "delete_object" and arguments["handle"] is None:
+            continue  # An empty slot has no backend resource to delete.
         try:
             result = backend.invoke(Call.make(name, **arguments))
         except (UnsupportedOperation, InvalidOperation) as error:

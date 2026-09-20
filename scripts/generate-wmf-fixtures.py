@@ -29,6 +29,11 @@ def cases(*, corpus=False):
 
 
 def all_cases():
+    short = Recorder()
+    short.select_object(short.create_pen(0, 3, 0))
+    short.polygon(((30, 30),))
+    short.set_pixel(120, 120, 255)
+    yield "polygon-short-contour", short
     escape = runpy.run_path(str(Path(__file__).with_name("escape_cases.py")))
     yield "escape-rgb-device", escape["drawing"]((code, data) for _, code, data in escape["escapes"]())
     placement = runpy.run_path(str(Path(__file__).with_name("text_option_cases.py")))["placement_cases"]

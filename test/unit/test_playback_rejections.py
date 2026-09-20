@@ -1,5 +1,6 @@
 """Input rejection is recoverable; failures while applying effects are not."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -65,3 +66,27 @@ def test_apply_failure_is_fatal_and_does_not_publish_a_handle(monkeypatch):
     assert dc._next_handle == 1
     with pytest.raises(RuntimeError, match="unusable"):
         dc.set_pixel(1, 1, 0)
+
+
+@pytest.mark.parametrize("allocated", [False, True])
+def test_empty_slot_deletion_and_selection_are_native_noops(allocated):
+    records = [fixed.CreatePenIndirect(0, 3, 0, 0)] if allocated else []
+    metafile = Metafile.build(
+        [*records, fixed.DeleteObject(0), fixed.DeleteObject(0), fixed.SelectObject(0), fixed.SetPixel(255, 2, 3)]
+    )
+    metafile = replace(metafile, header=replace(metafile.header, object_count=1))
+    dc = RasterContext(16, 16)
+    assert play(metafile, dc, strict=True) == ()
+    assert dc.image.getpixel((3, 2)) == (255, 0, 0)
+    assert not dc._live
+
+
+@pytest.mark.parametrize("width", [0, 3])
+@pytest.mark.parametrize("count", [0, 1, 2])
+def test_native_short_polygon_boundary(width, count):
+    dc = RasterContext(128, 128)
+    dc.select_object(dc.create_pen(0, width, 0))
+    dc.polygon(((30, 30), (60, 50))[:count])
+    ink = sum(pixel != (255, 255, 255) for pixel in dc.image.get_flattened_data())
+    expected = (31 if width == 0 else 115) if count == 2 else 0
+    assert ink == expected

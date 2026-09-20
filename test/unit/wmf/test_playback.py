@@ -207,7 +207,6 @@ def test_unsupported_creation_does_not_shift_later_handles():
     "file",
     [
         Metafile.build([fixed.SelectObject(0)]),
-        Metafile.build([fixed.CreatePenIndirect(0, 1, 0, 0), fixed.DeleteObject(0), fixed.SelectObject(0)]),
     ],
 )
 def test_invalid_handle_references(file):

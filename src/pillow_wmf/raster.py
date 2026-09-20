@@ -627,9 +627,10 @@ class RasterContext(TraceContext):
         name = call.name
         a = call.kwargs
         polygons = (a["points"],) if name == "polygon" else a["polygons"]
+        # Polygon and PolyPolygon reject contours with fewer than two points.
         # PolyPolygon validates the entire contour list before painting.
         # Dropping short contours would incorrectly draw the valid ones.
-        if name == "poly_polygon" and any(len(points) < 2 for points in polygons):
+        if any(len(points) < 2 for points in polygons):
             return
         paths = tuple(self._mapped_path(points) for points in polygons)
         self._paint_polygons(tuple(DevicePath.polyline(path, closed=True) for path in paths))

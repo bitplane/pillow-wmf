@@ -72,6 +72,7 @@ roundrect-corners-xor-wide
 
 # Winding, closure, dash phase, clipping and object/state lifetime.
 STATE = """
+polygon-short-contour
 polypolygon-count-boundaries-1
 polypolygon-count-boundaries-2
 stroke-reversal-seams-fractional

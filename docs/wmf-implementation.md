@@ -149,7 +149,10 @@ stack begins empty. It reports unsupported records/operations as `Omission`
 values, or raises in strict mode. SETRELABS is always ignored. Unsupported object
 creations still occupy file slots, so subsequent objects cannot acquire the wrong
 index. References to those unavailable objects are reported and skipped; invalid
-or deleted file references raise `PlaybackError`.
+file references outside the declared object table raise `PlaybackError`.
+Selecting or deleting an in-range empty slot is a native no-op, whether that
+slot has never been allocated or has been deleted. Deletion leaves the slot
+available for the next creation.
 
 The RGB raster backend retains text alignment, character spacing, justification
 requests, mapper flags and selected logical fonts in saved DC state. Font
