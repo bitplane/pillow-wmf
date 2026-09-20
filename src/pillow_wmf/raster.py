@@ -1159,12 +1159,12 @@ class RasterContext(TraceContext):
         if options & (ETO_OPAQUE | ETO_CLIPPED) and rectangle is None:
             raise ValueError("Text output options require a rectangle")
         sx, sy = self.mapping.linear_scale
-        if self.mapping.rtl:
-            raise UnsupportedOperation("Reflected text mapping")
         if rectangle is not None:
             rectangle = (*self._point(*rectangle[:2]), *self._point(*rectangle[2:]))
             left, top, right, bottom = rectangle
             rectangle = min(left, right), min(top, bottom), max(left, right), max(top, bottom)
+            if self.mapping.rtl:
+                rectangle = rectangle[0] + 1, rectangle[1], rectangle[2] + 1, rectangle[3]
         if not args["text"]:
             return TextLayout(), rectangle
         request = self._text_state.font or self.fonts.default_font
@@ -1175,6 +1175,10 @@ class RasterContext(TraceContext):
         # already explicitly supplied TrueType face. Retain them in DC state.
         origin = self._position if self._text_state.alignment & TA_UPDATECP else (args["x"], args["y"])
         origin = self._point(*origin)
+        alignment = self._text_state.alignment
+        # RTL layout swaps reference edges, not glyph masks or byte order.
+        if self.mapping.rtl and alignment & 6 != 6:
+            alignment ^= 2
         glyph_indices = None
         advances = args.get("advances", ())
         if options & ETO_GLYPH_INDEX:
@@ -1196,7 +1200,7 @@ class RasterContext(TraceContext):
             self.fonts.realize(request, face, (abs(sx), abs(sy))),
             args["text"],
             *origin,
-            self._text_state.alignment,
+            alignment,
             advances,
             opaque=self._background_mode == OPAQUE,
             max_pixels=self.max_bitmap_pixels,
@@ -1208,6 +1212,7 @@ class RasterContext(TraceContext):
             glyph_indices=glyph_indices,
             vertical_advances=vertical_advances,
             vertical_scale=abs(sy),
+            mirrored_layout=self.mapping.rtl,
         )
         if layout.position is not None:
             logical_origin = self._position

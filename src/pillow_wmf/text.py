@@ -626,6 +626,7 @@ def layout_text(
     glyph_indices=None,
     vertical_advances=(),
     vertical_scale=1,
+    mirrored_layout=False,
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if characters is None and glyph_indices is None:
@@ -687,10 +688,19 @@ def layout_text(
     width = rounded(run_width)
     # Monochrome GDI places cached glyphs at integer origins. Centering an
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
-    origin_x = x - (width if horizontal == 2 else (width + 1) // 2 if horizontal == 6 else 0)
+    center_offset = (width + (not mirrored_layout)) // 2
+    origin_x = x - (width if horizontal == 2 else center_offset if horizontal == 6 else 0)
     baseline = y + (font.ascent if vertical == 0 else -font.descent if vertical == 8 else 0)
+    run_height = vertical_offsets[-1]
+    if mirrored_layout:
+        # Mirroring the run's reference edge translates both components of
+        # paired spacing, while glyph order and individual offsets stay LTR.
+        baseline -= rounded(run_height) if horizontal == 2 else rounded(run_height) // 2 if horizontal == 6 else 0
     position = (
-        (x + (run_width if horizontal == 0 else -run_width), y + vertical_offsets[-1])
+        (
+            x + (run_width if horizontal == 0 else -run_width),
+            y + (-run_height if mirrored_layout and horizontal == 2 else run_height),
+        )
         if alignment & 1 and horizontal != 6
         else None
     )

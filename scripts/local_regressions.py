@@ -16,6 +16,9 @@ escape-rgb-device
 text-glyph-explicit
 text-pdy-overlap
 text-pdy-quarter-decorated
+text-rtl-opaque
+text-rtl-pdy-center
+text-rtl-fractional
 text-scaled-spacing
 text-codepages
 text-symbols

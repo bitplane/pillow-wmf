@@ -35,6 +35,10 @@ def all_cases():
     for name, recorder in placement():
         if name in {"glyph-explicit", "pdy-overlap", "pdy-quarter-decorated"}:
             yield f"text-{name}", recorder
+    rtl = runpy.run_path(str(Path(__file__).with_name("text_option_cases.py")))["rtl_cases"]
+    for name, recorder in rtl():
+        if name in {"rtl-opaque", "rtl-pdy-center", "rtl-fractional"}:
+            yield f"text-{name}", recorder
     boundaries = runpy.run_path(str(Path(__file__).with_name("dib_boundary_cases.py")))["cases"]
     for name, recorder in boundaries():
         if name in {"png-stretch", "linked-brush"}:

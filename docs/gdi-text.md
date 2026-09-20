@@ -53,7 +53,7 @@ font inputs; it checks small text, cell sizing and width-scaled rotated text.
 With an explicitly supplied static TrueType face, mapper flags and the tested
 output/clip precision hints do not change rendering. Reading-order and numeric
 substitution flags are accepted for the supported left-to-right code pages;
-this does not provide Hebrew/Arabic shaping or RTL layout. The named
+this does not provide Hebrew/Arabic shaping. The named
 `text-options` probe checks these distinctions, current-position updates and
 smoothing modes using the controlled test font.
 
@@ -76,6 +76,14 @@ background geometry is not established. Transparent rotated glyph masks remain
 subject to the font-rendering approximation described above. The named
 `text-placement` probe checks glyph IDs, spacing, alignment, background bounds
 and decorations; `text-glyph-*` and `text-pdy-*` retain compact exact regressions.
+
+RTL device layout mirrors reference points and swaps left/right alignment, not
+the glyph masks or the byte sequence. Centre alignment uses the reflected
+rounding direction. Mirrored rectangles retain pixel-edge ownership. With paired
+advances, the alignment displacement has both horizontal and vertical components;
+current-position updates are converted back to logical coordinates. The named
+`text-rtl` probe covers alignment, rectangles, rotation, fractional mapping and
+paired advances. These rules do not implement bidirectional script shaping.
 
 Supply fonts explicitly, for example:
 
