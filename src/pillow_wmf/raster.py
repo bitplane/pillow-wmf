@@ -1,4 +1,4 @@
-"""WMF rasterization into a Pillow RGB image."""
+"""GDI rasterization into a Pillow RGB image."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from math import floor
 
 from PIL import Image
 
+from .binary import FormatError, ResourceLimitError
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, DIBLayout, RGBBitmap, read_dib
 from .bitmap16 import Bitmap16Layout, read_bitmap16
 from .blit import BlitAxis, StretchAxis
@@ -61,6 +62,7 @@ from .halftone import (
 )
 from .halftone_fixup import fixup_bitmap
 from .mapping import Mapping
+from .objects import FontRequest, GlyphIndices
 from .paint import pattern_rop2, rop2, rop3
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
 from .stroke import (
@@ -74,8 +76,6 @@ from .stroke import (
 )
 from .text import FontCollection, TextLayout, layout_text
 from .trace import TraceContext
-from .wmf.binary import FormatError, ResourceLimitError
-from .wmf.objects import Font
 
 
 def rgb(colorref: int) -> tuple[int, int, int]:
@@ -139,7 +139,7 @@ class TextState:
     character_extra: int = 0
     justification: tuple[int, int] = (0, 0)
     mapper_flags: int = 0
-    font: Font | None = None  # None uses the caller's configured default, if any.
+    font: FontRequest | None = None  # None uses the caller's configured default, if any.
 
 
 @dataclass(frozen=True)
@@ -241,7 +241,7 @@ class RasterContext(TraceContext):
         self.max_bitmap_pixels = max_bitmap_pixels
         self.fonts = fonts if fonts is not None else FontCollection()
         self.image = Image.new("RGB", (width, height), background)
-        self._objects: dict[Handle, Pen | Brush | Font | RegionMask | LogicalPalette | None] = {}
+        self._objects: dict[Handle, Pen | Brush | FontRequest | RegionMask | LogicalPalette | None] = {}
         self._palette = LogicalPalette.default()
         self._pen = Pen((0, 0, 0), width=0)
         self._brush = Brush((255, 255, 255))
@@ -299,10 +299,6 @@ class RasterContext(TraceContext):
                 text_layout, text_rectangle = self._prepare_text(a)
             except UnsupportedOperation as error:
                 raise UnsupportedOperation(f"{name}: {error}") from error
-        elif name in ("create_palette", "set_palette_entries", "animate_palette"):
-            a["palette"].to_bytes()
-            if name == "create_palette" and a["palette"].start != 0x300:
-                raise ValueError("New palettes require version 0x0300")
         elif name == "resize_palette":
             if not 0 <= a["count"] <= 65535:
                 raise ValueError("Palette size outside WORD range")
@@ -372,27 +368,11 @@ class RasterContext(TraceContext):
                 pattern = None if layout.top_down else pattern.monochrome()
         elif name == "set_dib_to_device":
             transfer = self._prepare_device_transfer(a)
-        elif name == "create_font":
-            a["font"].to_bytes()
         elif name == "select_object":
             if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region", "font"}:
                 raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
         elif name == "create_region":
-
-            def signed(value):
-                return (value + 32768) % 65536 - 32768
-
-            # Zero-scan WMF creation fails, leaving a null object in its slot.
-            # A nonzero scan count with zero area is a valid empty region.
-            region_mask = (
-                RegionMask.from_rectangles(
-                    (signed(left), signed(scan.top), signed(right), signed(scan.bottom))
-                    for scan in a["region"].scans
-                    for left, right in zip(scan.endpoints[::2], scan.endpoints[1::2], strict=True)
-                )
-                if a["region"].scans
-                else None
-            )
+            region_mask = RegionMask.from_rectangles(a["region"].rectangles) if a["region"] is not None else None
         return PreparedEffect(text_layout, text_rectangle, transfer, pattern, region_mask, layout)
 
     def invoke(self, call: Call) -> Handle | int | None:
@@ -439,7 +419,7 @@ class RasterContext(TraceContext):
     def _apply_create_palette(self, call, prepared, result):
         a = call.kwargs
         palette = a["palette"]
-        self._objects[result] = LogicalPalette(palette.entries) if palette.entries and palette.complete else None
+        self._objects[result] = LogicalPalette(palette.entries) if palette is not None and palette.entries else None
 
     def _apply_select_palette(self, call, prepared, result):
         a = call.kwargs
@@ -593,7 +573,7 @@ class RasterContext(TraceContext):
         obj = self._objects[a["handle"]] if a["handle"] is not None else None
         if isinstance(obj, Pen):
             self._pen = obj
-        elif isinstance(obj, Font):
+        elif isinstance(obj, FontRequest):
             self._text_state = replace(self._text_state, font=obj)
         elif isinstance(obj, RegionMask):
             self._clip = ClipRegion(mask=self._clip_mask(obj))
@@ -867,14 +847,10 @@ class RasterContext(TraceContext):
     def _prepare_device_transfer(self, args) -> SourceTransfer | TransferAction:
         """Realize a scan band without stretching its device-pixel geometry."""
         layout = read_dib(args["source"], color_usage=args["color_usage"], max_pixels=self.max_bitmap_pixels)
-        # WMF stores WORDs here but playback sign-extends coordinates and
-        # extents. Scan indexes/counts remain unsigned.
-        x, y, width, height, source_x, source_y = (
-            (args[key] + 32768) % 65536 - 32768 for key in ("x", "y", "width", "height", "src_x", "src_y")
-        )
+        x, y, width, height, source_x, source_y = (args[key] for key in ("x", "y", "width", "height", "src_x", "src_y"))
         start, count = args["start_scan"], args["scan_count"]
-        # WMF requires a complete packed DIB even when only cLines rows
-        # are consumed. Short buffers are rejected regardless of SizeImage.
+        # This operation accepts a complete packed DIB, even for a scan band.
+        # Short buffers are rejected regardless of SizeImage.
         if (
             not self._accepts_dib(layout)
             or not layout.complete
@@ -1188,26 +1164,22 @@ class RasterContext(TraceContext):
         # RTL layout swaps reference edges, not glyph masks or byte order.
         if self.mapping.rtl and alignment & 6 != 6:
             alignment ^= 2
-        glyph_indices = None
+        text = args["text"]
+        glyph_indices = text.indices if isinstance(text, GlyphIndices) else None
+        data = text.data if glyph_indices is None else b""
         advances = args.get("advances", ())
-        if options & ETO_GLYPH_INDEX:
-            # WMF counts bytes even when the payload contains WORD glyph IDs.
-            # A trailing odd byte and excess spacing entries are not consumed.
-            text = args["text"]
-            glyph_indices = tuple(int.from_bytes(text[i : i + 2], "little") for i in range(0, len(text) - 1, 2))
-            advances = advances[: len(glyph_indices) * (2 if options & ETO_PDY else 1)]
         vertical_advances = ()
         if options & ETO_PDY and not advances:
-            # Native WMF playback rejects this record without changing the DC.
+            # Paired displacement output requires explicit advances.
             return TextLayout(), None
         if options & ETO_PDY and advances:
             vertical_advances = advances[1::2]
             advances = advances[::2]
-        decoded = self.fonts.decode_run(request, face, args["text"]) if glyph_indices is None else None
+        decoded = self.fonts.decode_run(request, face, data) if glyph_indices is None else None
         characters = decoded.text if decoded is not None else None
         layout = layout_text(
             self.fonts.layout_font(request, face, (abs(sx), abs(sy)), characters=characters),
-            args["text"],
+            data,
             *origin,
             alignment,
             advances,

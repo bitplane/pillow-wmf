@@ -434,6 +434,7 @@ BINDINGS = {
             "source",
         ),
         (),
+        signed_words=("x", "y", "width", "height", "src_x", "src_y"),
     ),
     "stretch_dib": Binding(
         bitmaps.StretchDib,

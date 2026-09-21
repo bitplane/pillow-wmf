@@ -4,6 +4,7 @@ import heapq
 
 from ..gdi import Call, Handle
 from ..trace import CREATED_KINDS, TraceContext
+from .adapters import wire_arguments
 from .bindings import BINDINGS
 from .file import Metafile, PlaceableHeader
 from .records import Record
@@ -26,7 +27,7 @@ class Recorder(TraceContext):
     def invoke(self, call: Call) -> Handle | int | None:
         call = self._prepare(call)
         binding = BINDINGS[call.name]
-        arguments = call.kwargs
+        arguments = wire_arguments(call.name, call.kwargs)
         for parameter in binding.signed_words:
             value = arguments[parameter]
             if not -32768 <= value <= 32767:

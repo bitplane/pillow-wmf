@@ -92,7 +92,7 @@ def test_logical_fonts_are_selected_lazily_and_saved_independently_of_brushes():
     selected = context.save_dc()
     context.select_object(context.create_font(Font(height=20)))
     context.restore_dc(selected)
-    assert context._text_state.font is requested
+    assert context._text_state.font == requested.to_gdi("create_font")
     assert context._brush is brush
     context.restore_dc(default)
     assert context._text_state.font is None

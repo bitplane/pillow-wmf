@@ -6,6 +6,7 @@ from struct import pack
 import pytest
 
 from pillow_wmf import FontCollection, FontFace, RasterContext
+from pillow_wmf.objects import EncodedText
 from pillow_wmf.wmf.objects import Font
 
 
@@ -73,7 +74,7 @@ def test_rotated_opaque_paired_output_bounds_positioned_cells():
     dc = context()
     dc.select_object(dc.create_font(Font(height=-24, quality=3, escapement=900, face_name=b"Pillow WMF Test")))
     dc.set_background_mode(2)
-    args = dict(x=0, y=0, text=b"ABA", options=0x2000, advances=(19, 7, 23, -5, 17, 11))
+    args = dict(x=0, y=0, text=EncodedText(b"ABA"), options=0x2000, advances=(19, 7, 23, -5, 17, 11))
     layout, _ = dc._prepare_text(args)
     assert layout.background == ((51, 24), (88, 24), (88, 81), (51, 81))
     dc.ext_text_out(**args)

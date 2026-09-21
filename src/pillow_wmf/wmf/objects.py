@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 
 from .._values import freeze_fields
+from ..objects import BitmapData, FontRequest, PaletteEntries, PaletteUpdate, RegionGeometry
 from .binary import FormatError, Limits, Reader, pack
 
 
@@ -32,6 +33,10 @@ class Font:
         values = tuple(getattr(self, name) for name in self.__dataclass_fields__ if name != "face_name")
         return pack("5h8B", *values) + self.face_name
 
+    def to_gdi(self, operation):
+        self.to_bytes()
+        return FontRequest(**vars(self))
+
     @classmethod
     def read(cls, reader: Reader):
         values = reader.unpack("5h8B")
@@ -54,6 +59,14 @@ class Palette:
     def to_bytes(self) -> bytes:
         count = len(self.entries) if self.declared_count is None else self.declared_count
         return pack("HH", self.start, count) + b"".join(pack("4B", *entry) for entry in self.entries)
+
+    def to_gdi(self, operation):
+        self.to_bytes()
+        if operation == "create_palette":
+            if self.start != 0x300:
+                raise ValueError("New palettes require version 0x0300")
+            return PaletteEntries(self.entries) if self.complete and self.entries else None
+        return PaletteUpdate(self.start, self.entries)
 
     @classmethod
     def read(cls, reader: Reader, limits: Limits, *, allow_incomplete=False):
@@ -105,6 +118,22 @@ class Region:
     def __post_init__(self):
         freeze_fields(self)
 
+    def to_gdi(self, operation):
+        # A zero scan count fails native creation; a zero-area scan succeeds.
+        if not self.scans:
+            return None
+
+        def signed(value):
+            return (value + 32768) % 65536 - 32768
+
+        return RegionGeometry(
+            tuple(
+                (signed(left), signed(scan.top), signed(right), signed(scan.bottom))
+                for scan in self.scans
+                for left, right in zip(scan.endpoints[::2], scan.endpoints[1::2], strict=True)
+            )
+        )
+
     def to_bytes(self) -> bytes:
         scans = b"".join(scan.to_bytes() for scan in self.scans)
         size = self.declared_size if self.declared_size is not None else 22 + len(scans)
@@ -139,21 +168,5 @@ class Region:
         return cls(tuple(bounds), tuple(scans), chain, kind, objects, size, maximum)
 
 
-@dataclass(frozen=True)
-class BitmapData:
-    """An encoded Bitmap16 or DIB, not decoded or certified as renderable.
-
-    Keeping this explicit prevents opaque preservation from being mistaken for
-    bitmap codec support. The separate bitmap module decodes a bounded subset;
-    constructing this envelope alone does not validate its header or pixels.
-    """
-
-    format: str
-    data: bytes
-
-    def __post_init__(self):
-        freeze_fields(self)
-        if self.format not in ("dib", "bitmap16", "pattern16"):
-            raise ValueError("Unknown bitmap representation")
-        if not isinstance(self.data, bytes):
-            raise TypeError("Bitmap data must be immutable bytes")
+# BitmapData remains importable here for existing codec callers.
+__all__ = ["BitmapData", "Font", "Palette", "Region", "Scan"]

@@ -3,9 +3,9 @@
 from dataclasses import dataclass, replace
 from struct import pack, pack_into, unpack_from
 
+from .binary import FormatError, ResourceLimitError
 from .gdi import UnsupportedOperation
-from .wmf.binary import FormatError, ResourceLimitError
-from .wmf.objects import BitmapData
+from .objects import BitmapData
 
 DEFAULT_MAX_BITMAP_PIXELS = 16_777_216
 

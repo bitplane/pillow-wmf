@@ -8,6 +8,7 @@ from fontTools.ttLib import TTFont
 
 from pillow_wmf import Recorder
 from pillow_wmf.wmf.objects import Font
+from pillow_wmf.wmf.variable import ExtTextOut
 
 SIZE = (192, 128)
 FONT_PATH = Path(__file__).resolve().parents[1] / "test/fonts/layout.ttf"
@@ -132,6 +133,10 @@ def placement_cases():
         dc.set_text_alignment(alignment)
         dc.move_to(80, 80)
         dc.ext_text_out(80, 80, text, options=options, advances=advances)
+        if options & 0x10:
+            # These probes exercise unused spacing and odd payload bytes.
+            # Preserve those wire details rather than canonical recorder output.
+            dc.records[-1] = ExtTextOut(80, 80, text, options=options, advances=advances)
         dc.line_to(165, 100)
         dc.set_pixel(180, 115, 255)
         yield name, dc

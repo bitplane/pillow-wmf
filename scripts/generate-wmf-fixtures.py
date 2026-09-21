@@ -1357,7 +1357,10 @@ def region_paint_probe_case(operation, style, mode, extent, size, scans, index):
     other = r.create_brush(2, 0x002194EF, 4)
     r.select_object(other if operation in ("fill_region", "frame_region") else brush)
     # Allocate brushes before a possibly failed region, avoiding slot reuse.
-    region = r.create_region(Region((0, 0, 1, 1), scans))
+    wire_region = Region((0, 0, 1, 1), scans)
+    region = r.create_region(wire_region)
+    # Deliberately inconsistent bounds test that playback uses the scan data.
+    r.records[-1] = replace(r.records[-1], region=wire_region)
     r.set_viewport_extent(*extent)
     r.set_window_origin(index % 5 - 2, index % 7 - 3)
     r.set_viewport_origin(96 if extent[0] < 0 else 7, 96 if extent[1] < 0 else 9)
@@ -1643,7 +1646,7 @@ def dib_transfer_cases():
                 if operation == "blt":
                     r.dib_bit_blt(x, y, 9, 7, sx, sy, 0xCC0020, source)
                 else:
-                    r.set_dib_to_device(x, y, 9, 7, sx & 65535, sy & 65535, 0, 9, 0, source)
+                    r.set_dib_to_device(x, y, 9, 7, sx, sy, 0, 9, 0, source)
             yield f"dib-{operation}-crop-{int(top_down)}-{setup}", r
 
         r = mapped()
@@ -1652,7 +1655,7 @@ def dib_transfer_cases():
             if operation == "blt":
                 r.dib_bit_blt(x, y, w, h, 8, 7, 0xCC0020, source)
             else:
-                r.set_dib_to_device(x, y, w & 65535, h & 65535, 2, 1, 0, 9, 0, source)
+                r.set_dib_to_device(x, y, w, h, 2, 1, 0, 9, 0, source)
         yield f"dib-{operation}-extents-{int(top_down)}", r
 
     for top_down in (False, True):
@@ -1724,7 +1727,7 @@ def dib_transfer_cases():
             source = BitmapData("dib", source.data[: 40 + 36 * 3])
         r = mapped()
         for i, (start, sy, height) in enumerate(product((0, 2, 6), (-2, 0, 2, 8), (3, 7))):
-            r.set_dib_to_device(4 + i % 5 * 24, 4 + i // 5 * 24, 9, height, 2, sy & 65535, start, 3, 0, source)
+            r.set_dib_to_device(4 + i % 5 * 24, 4 + i // 5 * 24, 9, height, 2, sy, start, 3, 0, source)
         yield f"dib-device-band-crops-{int(top_down)}-{int(partial)}", r
 
     for mirrored, top_down in product((False, True), repeat=2):

@@ -8,6 +8,7 @@ import pytest
 
 from pillow_wmf import Font, FontCollection, FontFace, InvalidOperation, SystemFontCollection, UnsupportedOperation
 from pillow_wmf.dbcs import collapse_advances, decode_cp932, decode_dbcs
+from pillow_wmf.objects import EncodedText
 from pillow_wmf.text import decode_codepage
 
 FONT = Path(__file__).parents[1] / "fonts/cp932.ttf"
@@ -210,7 +211,7 @@ def test_hangul_run_end_justification_preserves_logical_advance(first, second, l
     if pdy:
         advances = tuple(v for dx in advances for v in (dx, 0))
     layout, _ = dc._prepare_text(
-        dict(x=0, y=0, text="A가가B".encode("cp949"), advances=advances, options=0x2000 if pdy else 0)
+        dict(x=0, y=0, text=EncodedText("A가가B".encode("cp949")), advances=advances, options=0x2000 if pdy else 0)
     )
     origins = tuple(x - glyph.bearing[0] for x, _, glyph in layout.glyphs)
     last = 9 + first + second if pdy else last_offset

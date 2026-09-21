@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from pillow_wmf import FontCollection, FontFace, RasterContext, UnsupportedOperation
+from pillow_wmf.objects import EncodedText
 from pillow_wmf.wmf.objects import Font
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,7 +21,7 @@ def test_outline_default_draft_and_proof_share_layout(face, height, width, angle
         dc.select_object(dc.create_font(request))
         dc.set_text_alignment(25)
         dc.move_to(4, 24)
-        layout, _ = dc._prepare_text(dict(x=0, y=0, text=b"AB", advances=(20, 20)))
+        layout, _ = dc._prepare_text(dict(x=0, y=0, text=EncodedText(b"AB"), advances=(20, 20)))
         assert dc._text_state.font.quality == quality
         layouts.append(layout)
     assert layouts[0] == layouts[1] == layouts[2]

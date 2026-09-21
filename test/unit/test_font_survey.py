@@ -22,7 +22,7 @@ def test_survey_tracks_selected_fonts_save_restore_and_deletion(load_script):
 
     survey = survey_type()
     assert not play(Metafile.from_bytes(r.to_bytes()), survey, strict=True)
-    assert [font for font, _, _ in survey.runs] == [None, second, first]
+    assert [font for font, _, _ in survey.runs] == [None, second.to_gdi("create_font"), first.to_gdi("create_font")]
 
 
 def test_survey_reports_malformed_input_separately(load_script, tmp_path):

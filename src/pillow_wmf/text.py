@@ -24,9 +24,9 @@ from .gdi_math import sincos_degrees
 from .mac_dbcs import CODECS as MAC_DBCS_CODECS
 from .mapping import fixed, rounded
 from .numeric import float32
+from .objects import EncodedFaceName, FontRequest
 from .symbol import WINDOWS_SYMBOL_BYTES
 from .wingdings import decode_wingdings
-from .wmf.objects import Font
 
 C1_CONTROLS = "".join(map(chr, range(0x80, 0xA0)))
 
@@ -461,7 +461,7 @@ class FontCollection:
         synthesize_styles=False,
         wingdings_fallback=False,
         symbol_fallback=False,
-        default_font: Font | None = None,
+        default_font: FontRequest | None = None,
     ):
         if ansi_codepage not in CODEPAGE_BITS:
             raise ValueError(f"Unsupported ANSI environment: {ansi_codepage}")
@@ -478,7 +478,7 @@ class FontCollection:
         self.synthesize_styles = synthesize_styles
         self.wingdings_fallback = wingdings_fallback
         self.symbol_fallback = symbol_fallback
-        self.default_font = default_font
+        self.default_font = default_font.to_gdi("create_font") if hasattr(default_font, "to_gdi") else default_font
         self._wingdings_face = None
         self._symbol_face = None
         self.aliases = {name.casefold(): target.casefold() for name, target in (aliases or {}).items()}
@@ -537,7 +537,7 @@ class FontCollection:
         request = self.default_font if request is None else request
         if request is None:
             raise UnsupportedOperation("Default font resolution")
-        family = decode_codepage(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).text.casefold()
+        family = self.face_name(request).casefold()
         family = self.aliases.get(family, family)
         key = family, request.weight or 400, bool(request.italic)
         face = self._select_face(key)
@@ -572,8 +572,16 @@ class FontCollection:
     def _charset(self, request):
         # GDI forces SYMBOL_CHARSET for the legacy family named Symbol, not
         # for arbitrary symbol-cmap fonts (including Wingdings).
-        family = decode_codepage(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).text
+        family = self.face_name(request)
         return 2 if family.casefold() == "symbol" and request.charset != 254 else request.charset
+
+    def face_name(self, request):
+        """Resolve a logical name, or a legacy name in this ANSI environment."""
+        name = request.face_name
+        if isinstance(name, str):
+            return name.split("\0", 1)[0]
+        data = name.data if isinstance(name, EncodedFaceName) else name
+        return decode_codepage(data.split(b"\0", 1)[0], self.ansi_codepage).text
 
     def _encoding(self, request):
         charset = self._charset(request)

@@ -15,6 +15,7 @@ from PIL import Image, ImageChops
 
 from pillow_wmf import Font, Metafile, SystemFontCollection, TraceContext, play, render
 from pillow_wmf.constants import ETO_GLYPH_INDEX
+from pillow_wmf.objects import EncodedFaceName, GlyphIndices
 from pillow_wmf.text import _blank_control, decode_single_byte
 from pillow_wmf.wmf.variable import ExtTextOut, TextOut
 
@@ -46,12 +47,24 @@ class TextSurvey(TraceContext):
             self.font = self.saved_fonts[index]
             del self.saved_fonts[index:]
         elif call.name in {"text_out", "ext_text_out"} and args["text"]:
-            self.runs.append((self.font, args["text"], args.get("options", 0)))
+            text = args["text"]
+            data = (
+                b"".join(index.to_bytes(2, "little") for index in text.indices)
+                if isinstance(text, GlyphIndices)
+                else text.data
+            )
+            self.runs.append((self.font, data, args.get("options", 0)))
         return result
 
 
 def family(font):
-    return decode_single_byte(font.face_name.split(b"\0", 1)[0], 1252) if font else "<default>"
+    if font is None:
+        return "<default>"
+    name = font.face_name
+    if isinstance(name, str):
+        return name.split("\0", 1)[0]
+    data = name.data if isinstance(name, EncodedFaceName) else name
+    return decode_single_byte(data.split(b"\0", 1)[0], 1252)
 
 
 def scan(root):

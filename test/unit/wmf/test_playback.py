@@ -16,8 +16,8 @@ def test_utf8_extension_is_normalized_only_at_wmf_playback():
     assert metafile.to_bytes() == data
     trace = TraceContext()
     play(metafile, trace, strict=True)
-    assert trace.calls[0].kwargs["font"] == replace(request, charset=1)
-    assert source.calls[0].kwargs["font"] == request
+    assert trace.calls[0].kwargs["font"] == replace(request, charset=1).to_gdi("create_font")
+    assert source.calls[0].kwargs["font"] == request.to_gdi("create_font")
 
 
 def draw_program(dc):

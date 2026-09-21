@@ -10,9 +10,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ._values import freeze
+from .constants import ETO_GLYPH_INDEX, ETO_PDY
+from .objects import EncodedText, GlyphIndices
 
 if TYPE_CHECKING:
-    from .wmf.objects import BitmapData, Font, Palette, Region
+    from .objects import BitmapData, FontRequest, PaletteEntries, PaletteUpdate, RegionGeometry
 
 
 class UnsupportedOperation(NotImplementedError):
@@ -37,6 +39,30 @@ class Call:
 
     @classmethod
     def make(cls, name: str, **arguments):
+        # Legacy wire objects adapt themselves; backends only see GDI values.
+        arguments = {key: value.to_gdi(name) if hasattr(value, "to_gdi") else value for key, value in arguments.items()}
+        if name in ("text_out", "ext_text_out"):
+            text = arguments["text"]
+            if isinstance(text, (bytes, bytearray, memoryview)):
+                text = bytes(text)
+                if arguments.get("options", 0) & ETO_GLYPH_INDEX:
+                    # Compatibility with the original byte-oriented API.
+                    text = GlyphIndices(
+                        tuple(int.from_bytes(text[i : i + 2], "little") for i in range(0, len(text) - 1, 2))
+                    )
+                    stride = 2 if arguments.get("options", 0) & ETO_PDY else 1
+                    arguments["advances"] = arguments.get("advances", ())[: len(text.indices) * stride]
+                else:
+                    text = EncodedText(text)
+                arguments["text"] = text
+            if isinstance(text, GlyphIndices):
+                if name != "ext_text_out":
+                    raise InvalidOperation("Glyph indices require ext_text_out")
+                arguments["options"] = arguments.get("options", 0) | ETO_GLYPH_INDEX
+            elif not isinstance(text, EncodedText):
+                raise TypeError("Text must be EncodedText or GlyphIndices")
+            elif arguments.get("options", 0) & ETO_GLYPH_INDEX:
+                raise InvalidOperation("EncodedText cannot be used with ETO_GLYPH_INDEX; use GlyphIndices")
         return cls(name, tuple(sorted((name, freeze(value)) for name, value in arguments.items())))
 
     @property
@@ -284,14 +310,14 @@ class GDI:
     def poly_polygon(self, polygons: tuple[tuple[tuple[int, int], ...], ...]) -> None:
         return self.invoke(Call.make("poly_polygon", polygons=polygons))
 
-    def text_out(self, x: int, y: int, text: bytes) -> None:
+    def text_out(self, x: int, y: int, text: EncodedText | bytes) -> None:
         return self.invoke(Call.make("text_out", x=x, y=y, text=text))
 
     def ext_text_out(
         self,
         x: int,
         y: int,
-        text: bytes,
+        text: EncodedText | GlyphIndices | bytes,
         options: int = 0,
         rectangle: tuple[int, int, int, int] | None = None,
         advances: tuple[int, ...] = (),
@@ -300,19 +326,19 @@ class GDI:
             Call.make("ext_text_out", x=x, y=y, text=text, options=options, rectangle=rectangle, advances=advances)
         )
 
-    def create_font(self, font: Font) -> Handle:
+    def create_font(self, font: FontRequest) -> Handle:
         return self.invoke(Call.make("create_font", font=font))
 
-    def create_palette(self, palette: Palette) -> Handle:
+    def create_palette(self, palette: PaletteEntries | None) -> Handle:
         return self.invoke(Call.make("create_palette", palette=palette))
 
-    def animate_palette(self, palette: Palette) -> None:
+    def animate_palette(self, palette: PaletteUpdate) -> None:
         return self.invoke(Call.make("animate_palette", palette=palette))
 
-    def set_palette_entries(self, palette: Palette) -> None:
+    def set_palette_entries(self, palette: PaletteUpdate) -> None:
         return self.invoke(Call.make("set_palette_entries", palette=palette))
 
-    def create_region(self, region: Region) -> Handle:
+    def create_region(self, region: RegionGeometry | None) -> Handle:
         return self.invoke(Call.make("create_region", region=region))
 
     def create_pattern_brush(self, bitmap: BitmapData) -> Handle:
@@ -427,7 +453,7 @@ class GDI:
         color_usage: int,
         source: BitmapData,
     ) -> None:
-        """Transfer a band from a complete packed DIB (the WMF buffer contract)."""
+        """Transfer a band from a complete packed DIB using logical coordinates."""
         return self.invoke(
             Call.make(
                 "set_dib_to_device",

@@ -3,6 +3,7 @@
 import pytest
 
 from pillow_wmf import Font, FontCollection, RasterContext
+from pillow_wmf.objects import EncodedText
 
 
 def rtl_context(face, *, width=192, alignment=25, angle=0, extent=(128, 128)):
@@ -24,7 +25,7 @@ def text_arguments(options=0):
     return dict(
         x=80,
         y=80,
-        text=b"ABA",
+        text=EncodedText(b"ABA"),
         options=options,
         advances=(19, 7, 23, -5, 17, 11) if options & 0x2000 else (19, 23, 17),
         rectangle=(35, 40, 105, 90) if options & 6 else None,

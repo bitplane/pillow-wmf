@@ -3,10 +3,10 @@
 from dataclasses import dataclass
 from struct import pack, unpack_from
 
+from .binary import FormatError, ResourceLimitError
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, RGBBitmap, field_color, validate_masks
 from .gdi import UnsupportedOperation
-from .wmf.binary import FormatError, ResourceLimitError
-from .wmf.objects import BitmapData
+from .objects import BitmapData
 
 
 @dataclass(frozen=True)

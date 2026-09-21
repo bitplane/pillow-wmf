@@ -10,8 +10,8 @@ from pathlib import Path
 from fontTools.ttLib import TTCollection, TTFont, TTLibError
 
 from .gdi import UnsupportedOperation
+from .objects import FontRequest
 from .text import TEXT_CHARSETS, FontCollection, FontFace, FontRun, decode_codepage
-from .wmf.objects import Font
 
 
 def font_paths():
@@ -140,7 +140,9 @@ class SystemFontCollection(FontCollection):
             symbol_fallback=True,
             missing_glyph="notdef",
         )
-        self.default_font = default_font or Font(height=-16, face_name=b"Arial")
+        self.default_font = default_font or FontRequest(height=-16, face_name="Arial")
+        if hasattr(self.default_font, "to_gdi"):
+            self.default_font = self.default_font.to_gdi("create_font")
         self._paths = None if paths is None else tuple(paths)
         self._loaded = {}
         self.substitutions: list[FontSubstitution] = []
@@ -162,7 +164,7 @@ class SystemFontCollection(FontCollection):
         _catalogue_snapshot.cache_clear()
 
     def _name(self, request):
-        return decode_codepage(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).text
+        return self.face_name(request)
 
     def _ranked(self, request):
         family = self._name(request).casefold()

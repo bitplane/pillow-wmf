@@ -39,6 +39,6 @@ def test_text_probe_uses_roundtrippable_wmfs_and_the_controlled_font(load_script
         context = TraceContext()
         assert play(metafile, context, strict=True) == ()
         font = next(call.kwargs["font"] for call in context.calls if call.name == "create_font")
-        assert font.face_name.rstrip(b"\0") == b"Pillow WMF Test"
+        assert font.face_name.data.rstrip(b"\0") == b"Pillow WMF Test"
         assert font.quality == 3  # NONANTIALIASED_QUALITY
         assert sum(call.name in {"text_out", "ext_text_out"} for call in context.calls) == 4
