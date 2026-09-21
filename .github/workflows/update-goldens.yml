@@ -24,6 +24,7 @@ on:
           - dbcs-extended
           - dbcs-spacing
           - codepages
+          - text-environments
           - real-text
           - text-layout
           - text-styles
@@ -198,6 +199,19 @@ jobs:
         with:
           name: dbcs-probe
           path: dbcs-probe/
+          retention-days: 7
+      - name: Probe OEM/Mac and unknown charsets
+        if: inputs.probe == 'text-environments'
+        shell: bash
+        run: |
+          mkdir -p environments-probe
+          python scripts/probe-windows-environments.py --output environments-probe | tee environments-probe/observations.txt
+      - name: Upload environment observations
+        if: always() && inputs.probe == 'text-environments'
+        uses: actions/upload-artifact@v4
+        with:
+          name: environments-probe
+          path: environments-probe/
           retention-days: 7
       - name: Probe remaining single-byte code pages
         if: inputs.probe == 'codepages'
