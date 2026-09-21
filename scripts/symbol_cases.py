@@ -43,6 +43,12 @@ def cases():
             (b"Missing Symbol Family", 64),
             (b"Missing Symbol Family", 80),
             (b"", 18),
+            (b"Missing Symbol Family", 1),
+            (b"Missing Symbol Family", 33),
+            (b"Missing Symbol Family", 48),
+            (b"Missing Symbol Family", 50),
+            (b"Missing Symbol Family", 65),
+            (b"Missing Symbol Family", 81),
         )
     ):
         r = Recorder()
