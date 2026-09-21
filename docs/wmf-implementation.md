@@ -8,18 +8,19 @@ metrics and rounding boundaries.
 
 ## Current coverage
 
-| Surface | Implemented | Still needed |
+| Surface | Implemented | Boundary |
 | --- | --- | --- |
-| File framing | Standard/placeable headers, checksum, EOF, original metadata and file trailer preservation | Native compatibility probes for unusual headers |
+| File framing | Standard/placeable headers, checksum, EOF, original metadata and file trailer preservation; bounded playback with advisory mtSize | Structural truncation and resource limits remain fatal |
 | Fixed records | 51 record classes with explicit field widths, signedness and wire order | See operation-specific rendering limits |
-| Variable records | 19 record classes, including all six bitmap transfer envelopes | Native probes for ambiguous layouts |
-| Text | Lossless raw records; explicit-font Western/Cyrillic and symbol layout, sizing, positive mapping scales, spacing, alignment, signed advances and clipping; monochrome and approximate default-quality masks | Other encodings, automatic font mapping/linking, rotation/reflection and styles |
-| Objects | Pen/brush record fields, font, palette, region/scan structures; raster object realization and retained selections | General font realization |
+| Variable records | 19 record classes, including all six bitmap transfer envelopes | Nested payload support is separate from record decoding |
+| Text | Windows single-byte and DBCS encodings, configured OEM/Mac environments; sizing, spacing, alignment, clipping, rotation/reflection, decorations, glyph-index runs and installed-font linking | Approximate masks and substitutions; no general complex-script shaping or UTF-8 ANSI environment |
+| Objects | Pen/brush record fields, font, palette, region/scan structures; raster object realization and retained selections | Static TrueType font outlines; no CFF or variable fonts |
 | Bitmap payloads | Explicit `BitmapData` values; Core/Info/V4/V5 DIB codecs, RGB and logical-palette tables, 1/4/8/16/24/32-bit RGB, bitfields and RLE4/RLE8; Bitmap16 device-sample codecs and deterministic writers | Colour management, embedded image codecs, other historical device formats |
-| Escapes | Function code, length-delimited payload, padding and trailing data | Typed payload interpretation and device capability policy |
-| GDI | 68 named operations, backend handles, tracing and recording; raster mapping, rectangular and region clipping/painting/framing, pens/brushes including DIB and legacy patterns, logical palettes, monochrome ASCII text, ROP2/ROP3, PatBlt, indexed/direct-colour DIB transfers including integer stretching and HALFTONE, modern Bitmap16 playback, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | Historical/hardware-palette devices, advanced text drawing and remaining pen/state behavior |
+| Escapes | Lossless opaque payloads and explicit RGB-device no-op policy for defined WMF printer escapes | No printer, PostScript or embedded EMF execution; unknown escape codes fail explicitly |
+| GDI | 68 named operations, backend handles, tracing and recording; mapping, clipping, regions, pens/brushes, logical palettes, text, ROP2/ROP3, PatBlt, DIB and Bitmap16 transfers, integer stretching and HALFTONE, lines, polygons, Rectangle, Ellipse, Arc, Chord, Pie, RoundRect and flood fills | RGB memory device, not historical palette hardware or printer emulation |
 | Playback | File-slot mapping, lowest-free allocation, references, failed creations, retained DC selections and unsupported-operation diagnostics | Unsupported backend operations remain explicit |
-| Recording | GDI calls to WMF, independent handle indexes, header accounting | Native acceptance tests and platform-specific normalization findings |
+| Recording | GDI calls to WMF, independent handle indexes, header accounting and lossless round trips | Not a Pillow image-to-WMF encoder |
+| Pillow | Import-time registration, lazy rasterization, placeable sizing and explicit canvas/DPI, automatic font fallback | EMF is delegated to Pillow; loading unsupported drawing raises |
 
 The 70 opcode total includes EOF and the required-ignore SETRELABS record, so
 there are 68 callable operations. All 70 have structural round-trip tests.
@@ -169,13 +170,14 @@ legacy values, paint opaquely and participate normally in SaveDC/RestoreDC.
 
 The RGB raster backend retains text alignment, character spacing, justification
 requests, mapper flags and selected logical fonts in saved DC state. Font
-creation does not resolve a physical face. Horizontal Western/Cyrillic and symbol text uses explicitly
-supplied TrueType faces, with sizing, positive mapping scales, spacing,
-alignment, signed advances, clipping and current-position updates. Monochrome
-masks and an approximate RGB-subpixel default-quality profile are available.
-Aliases and missing-glyph fallback are explicit caller policies. Other encodings
-and automatic font linking remain unsupported; transformed text
-and explicitly enabled style synthesis remain experimental. See
+creation does not resolve a physical face. Text supports the Windows single-byte
+and DBCS charsets, configured OEM/Mac environments, sizing, signed mapping scales,
+spacing, alignment, advances, clipping and current-position updates. Monochrome
+masks and an approximate RGB-subpixel default-quality profile are available,
+including transformed text and decorations. Explicit font collections remain
+deterministic; the Pillow loader defaults to installed-font substitution and
+linking. Neither policy promises Windows glyph masks or general complex-script
+shaping. See
 [text support](gdi-text.md) for the exact boundary.
 
 Pen creation follows `CreatePenIndirect`/`CreatePen`, not `ExtCreatePen`:
@@ -184,13 +186,10 @@ flags. Requested styles remain intact in records and the call trace. This follow
 [Wine's creation normalization](https://github.com/wine-mirror/wine/blob/master/dlls/gdi32/objects.c)
 and the shared diameter-first fixed-point [pen realization](gdi-strokes.md).
 
-For this bitmap device, MFCOMMENT (`0x000F`) is opaque metadata, including WMFC
-payloads; it does not switch playback to an embedded metafile. POSTSCRIPT_IGNORE
-(`0x0026`) and the printer path escapes (`0x1000`–`0x1002`) have no pixel effect.
-These are not GDI bitmap path operations. Unknown escapes still raise. This
-device-specific boundary follows the [Escape driver contract](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-escape)
-and [PostScript escape definitions](https://learn.microsoft.com/en-us/windows-hardware/drivers/print/pscript-supported-escapes),
-with pixel comparisons against the corpus's native RGB references.
+For this bitmap device, the accepted printer escapes are no-ops and embedded
+metafile payloads stay opaque. They do not switch playback devices or execute
+PostScript. Unknown escapes still raise; see [the escape policy](gdi-escapes.md)
+for the supported boundary.
 
 The caller owns the supplied backend. Playback inserts no implicit reset or
 cleanup calls into the command trace. A backend owning native resources needs a

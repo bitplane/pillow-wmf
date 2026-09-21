@@ -2,8 +2,8 @@
 
 ## Installed-font policy
 
-`SystemFontCollection()` is an opt-in alternative to controlled `FontCollection`
-inputs. Discovery happens on first text use, using Fontconfig's installed-file
+`SystemFontCollection()` is the Pillow loader's default and an opt-in alternative
+to controlled `FontCollection` inputs for `render()`. Discovery happens on first text use, using Fontconfig's installed-file
 inventory when available, otherwise conventional system/user font directories.
 Only static TrueType faces supported by the renderer are eligible; CFF and
 variable fonts are ignored. `paths=[...]` supplies an application-owned inventory
@@ -45,7 +45,8 @@ controlled `FontCollection`, drawing resolves an exact family, weight and italic
 TrueType faces; it never searches host font directories or silently substitutes.
 
 The supported rendering slice includes single-byte Western, Central European,
-Cyrillic, Greek, Turkish, Baltic and symbol text, and mixed-width CP932 text, with
+Cyrillic, Greek, Turkish, Baltic, Hebrew, Arabic, Vietnamese, Thai and symbol text,
+the five Windows DBCS pages, and configured OEM/Mac environments, with
 positive or negative heights, zero-height realization, explicit average width,
 axis scaling and translation. It supports natural or signed explicit
 advances, character extra, justification, horizontal/vertical alignment,
@@ -53,7 +54,8 @@ TA_UPDATECP, opaque backgrounds, ETO_OPAQUE, ETO_CLIPPED and the DC clip.
 Escapement, reflected axis mappings, RTL device layout, underline/strikeout and
 explicitly enabled style synthesis are implemented. Transformed real-font masks
 remain approximate; controlled geometry regressions retain exact comparisons.
-Other encodings remain unsupported by either font policy.
+Decoding coverage is separate from complex-script shaping and installed glyph
+coverage; the encoding sections below state those limitations.
 An initial logical font can be supplied with `FontCollection(default_font=...)`.
 
 ### Symbol fallback
