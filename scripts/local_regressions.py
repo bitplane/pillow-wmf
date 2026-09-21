@@ -25,6 +25,9 @@ text-rtl-fractional
 text-scaled-spacing
 text-codepages
 text-symbols
+cp932-natural
+cp932-split
+cp932-pdy
 text-blank-controls
 mapping-translation-precision-0
 mapping-translation-precision-1

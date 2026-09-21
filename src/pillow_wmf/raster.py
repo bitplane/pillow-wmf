@@ -1206,7 +1206,8 @@ class RasterContext(TraceContext):
         if options & ETO_PDY and advances:
             vertical_advances = advances[1::2]
             advances = advances[::2]
-        characters = self.fonts.decode(request, face, args["text"]) if glyph_indices is None else None
+        decoded = self.fonts.decode_run(request, face, args["text"]) if glyph_indices is None else None
+        characters = decoded.text if decoded is not None else None
         layout = layout_text(
             self.fonts.layout_font(request, face, (abs(sx), abs(sy)), characters=characters),
             args["text"],
@@ -1219,6 +1220,7 @@ class RasterContext(TraceContext):
             extra=self._text_state.character_extra,
             justification=self._text_state.justification,
             characters=characters,
+            byte_lengths=decoded.byte_lengths if decoded is not None else (),
             escapement=request.escapement,
             glyph_indices=glyph_indices,
             vertical_advances=vertical_advances,

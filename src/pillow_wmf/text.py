@@ -17,6 +17,7 @@ import freetype as ft
 from fontTools.ttLib import TTFont
 
 from .constants import TA_RTLREADING
+from .dbcs import DecodedText, collapse_advances, decode_cp932
 from .gdi import InvalidOperation, UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import fixed, rounded
@@ -37,7 +38,8 @@ SINGLE_BYTE_CHARSETS = {
     162: (1254, 4),
     186: (1257, 7),
 }
-CODEPAGE_BITS = dict(SINGLE_BYTE_CHARSETS.values())
+TEXT_CHARSETS = SINGLE_BYTE_CHARSETS | {128: (932, 17)}
+CODEPAGE_BITS = dict(TEXT_CHARSETS.values())
 
 # Windows NLS retains vendor mappings absent from Python's codec tables.
 # Other undefined bytes map to the same-valued Unicode character.
@@ -56,13 +58,20 @@ def text_rotation(escapement):
 
 def decode_single_byte(data, codepage):
     """Decode using Windows NLS mappings, including undefined/vendor bytes."""
-    if codepage not in CODEPAGE_BITS:
+    if codepage not in CODEPAGE_BITS or codepage == 932:
         raise UnsupportedOperation(f"Unsupported text code page: {codepage}")
     decoded = data.decode(f"cp{codepage}", errors="surrogateescape")
     overrides = UNDEFINED_BYTE_MAPPINGS.get(codepage, {})
     return "".join(
         chr(overrides.get(ord(c) - 0xDC00, ord(c) - 0xDC00)) if 0xDC80 <= ord(c) <= 0xDCFF else c for c in decoded
     )
+
+
+def decode_codepage(data, codepage):
+    """Decode characters and their source spans through one code-page policy."""
+    if codepage == 932:
+        return decode_cp932(data)
+    return DecodedText.single_byte(decode_single_byte(data, codepage))
 
 
 @dataclass(frozen=True)
@@ -490,7 +499,7 @@ class FontCollection:
         request = self.default_font if request is None else request
         if request is None:
             raise UnsupportedOperation("Default font resolution")
-        family = decode_single_byte(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).casefold()
+        family = decode_codepage(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).text.casefold()
         family = self.aliases.get(family, family)
         key = family, request.weight or 400, bool(request.italic)
         face = self._select_face(key)
@@ -525,30 +534,31 @@ class FontCollection:
     def _charset(self, request):
         # GDI forces SYMBOL_CHARSET for the legacy family named Symbol, not
         # for arbitrary symbol-cmap fonts (including Wingdings).
-        family = decode_single_byte(request.face_name.split(b"\0", 1)[0], self.ansi_codepage)
+        family = decode_codepage(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).text
         return 2 if family.casefold() == "symbol" else request.charset
 
     def decode(self, request, face, data):
+        return self.decode_run(request, face, data).text
+
+    def decode_run(self, request, face, data):
         charset = self._charset(request)
         if face is self._wingdings_face:
             if charset not in (1, 2):
                 raise UnsupportedOperation("Unsupported Wingdings fallback charset request")
-            return decode_wingdings(data)
+            return DecodedText.single_byte(decode_wingdings(data))
         if face.symbol:
             if charset not in (1, 2):
                 raise UnsupportedOperation("Unsupported symbol font charset request")
-            return "".join(chr(0xF000 | byte) for byte in data)
+            return DecodedText.single_byte("".join(chr(0xF000 | byte) for byte in data))
         encoding = (
-            (self.ansi_codepage, CODEPAGE_BITS[self.ansi_codepage])
-            if charset == 1
-            else SINGLE_BYTE_CHARSETS.get(charset)
+            (self.ansi_codepage, CODEPAGE_BITS[self.ansi_codepage]) if charset == 1 else TEXT_CHARSETS.get(charset)
         )
         if encoding is None:
             raise UnsupportedOperation(f"Unsupported text charset: {request.charset}")
         codepage, bit = encoding
         if not face.codepages & (1 << bit):
             raise UnsupportedOperation("Font does not advertise the requested charset; explicit selection is required")
-        return decode_single_byte(data, codepage)
+        return decode_codepage(data, codepage)
 
 
 @dataclass(frozen=True)
@@ -688,12 +698,17 @@ def layout_text(
     vertical_scale=1,
     mirrored_layout=False,
     precise_origin=None,
+    byte_lengths=(),
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if characters is None and glyph_indices is None:
         characters = decode_single_byte(text, 1252)
-    if glyph_indices is None and len(characters) != len(text):
-        raise UnsupportedOperation("Multibyte text layout is not implemented")
+    if glyph_indices is None:
+        byte_lengths = byte_lengths or (1,) * len(characters)
+        if len(byte_lengths) != len(characters) or sum(byte_lengths) != len(text):
+            raise InvalidOperation("Decoded character spans must cover the text bytes")
+        advances = collapse_advances(advances, byte_lengths)
+        vertical_advances = collapse_advances(vertical_advances, byte_lengths)
     sine, cosine = text_rotation(escapement)
 
     def project(px, py, *, snap=True):
@@ -709,7 +724,7 @@ def layout_text(
     horizontal, vertical = alignment & 6, alignment & 24
     if alignment & ~(31 | TA_RTLREADING) or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
         raise UnsupportedOperation("Text alignment")
-    count = len(text) if glyph_indices is None else len(glyph_indices)
+    count = len(characters) if glyph_indices is None else len(glyph_indices)
     if advances and len(advances) != count:
         raise InvalidOperation("Text advance count must match the byte count")
     if vertical_advances and len(vertical_advances) != count:

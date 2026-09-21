@@ -10,7 +10,7 @@ from pathlib import Path
 from fontTools.ttLib import TTCollection, TTFont, TTLibError
 
 from .gdi import UnsupportedOperation
-from .text import SINGLE_BYTE_CHARSETS, FontCollection, FontFace, FontRun, decode_single_byte
+from .text import TEXT_CHARSETS, FontCollection, FontFace, FontRun, decode_codepage
 from .wmf.objects import Font
 
 
@@ -135,7 +135,7 @@ class SystemFontCollection(FontCollection):
         return tuple(catalogue(font_paths() if self._paths is None else self._paths))
 
     def _name(self, request):
-        return decode_single_byte(request.face_name.split(b"\0", 1)[0], self.ansi_codepage)
+        return decode_codepage(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).text
 
     def _ranked(self, request):
         family = self._name(request).casefold()
@@ -214,15 +214,15 @@ class SystemFontCollection(FontCollection):
             return face
         raise UnsupportedOperation(f"No usable installed font for {self._name(request)!r}")
 
-    def decode(self, request, face, data):
+    def decode_run(self, request, face, data):
         if face.symbol or face is self._wingdings_face:
-            return super().decode(request, face, data)
-        codepage = self.ansi_codepage if request.charset == 1 else SINGLE_BYTE_CHARSETS.get(request.charset, (None,))[0]
+            return super().decode_run(request, face, data)
+        codepage = self.ansi_codepage if request.charset == 1 else TEXT_CHARSETS.get(request.charset, (None,))[0]
         if codepage is None:
             raise UnsupportedOperation(f"Unsupported text charset: {request.charset}")
         # Decode the requested encoding before testing actual glyph coverage;
         # a substitute's OS/2 charset flags must not reinterpret the input.
-        return decode_single_byte(data, codepage)
+        return decode_codepage(data, codepage)
 
     def layout_font(self, request, face, scale, *, characters=None):
         if characters is None:

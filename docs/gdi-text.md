@@ -44,8 +44,8 @@ Font creation, selection and saved state retain the logical request. With the
 controlled `FontCollection`, drawing resolves an exact family, weight and italic style from caller-supplied
 TrueType faces; it never searches host font directories or silently substitutes.
 
-The supported rendering slice is single-byte Western, Central European,
-Cyrillic, Greek, Turkish, Baltic and symbol text, with
+The supported rendering slice includes single-byte Western, Central European,
+Cyrillic, Greek, Turkish, Baltic and symbol text, and mixed-width CP932 text, with
 positive or negative heights, zero-height realization, explicit average width,
 axis scaling and translation. It supports natural or signed explicit
 advances, character extra, justification, horizontal/vertical alignment,
@@ -105,13 +105,29 @@ packaged, or included in probe artifacts.
 Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
 
-Supported ANSI environments are Windows-1250, 1251, 1252, 1253, 1254 and 1257.
+Supported ANSI environments are Windows-1250, 1251, 1252, 1253, 1254, 1257 and 932.
 DEFAULT_CHARSET uses that explicit environment; ANSI_CHARSET selects 1252.
 Decoding follows Windows NLS, including private-use mappings for otherwise
 undefined Greek and Baltic bytes. The native byte tables in
 [the encoding regression data](../test/unit/windows_sbcs.txt) cover all 256
 inputs for each newly supported code page. Font coverage bits must advertise
 the requested character set; a matching family name alone is insufficient.
+
+SHIFTJIS_CHARSET (128) selects Windows CP932, including its vendor extensions,
+not the narrower Shift-JIS codec. Decoding retains each character's source-byte
+span. ExtTextOut advances are byte-indexed: entries for a two-byte character
+are summed, for both horizontal and `ETO_PDY` vertical displacements. Character
+extra, alignment and current-position updates then operate on the decoded run.
+Glyph-index records bypass this conversion and retain their separate WORD-ID
+spacing contract. See [ExtTextOutA](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-exttextouta).
+
+Malformed CP932 pairs become U+30FB (KATAKANA MIDDLE DOT), consuming the pair;
+a dangling lead byte consumes one byte. A NUL after a lead byte is retained as
+a separate character. The complete native single-byte and lead/trail-pair
+conversion fingerprint is checked in [the decoder tests](../test/unit/test_dbcs.py).
+The `dbcs` probe checks NLS conversion and uses an original controlled font for
+exact spacing comparisons. CP932 decoding does not itself provide Japanese
+glyphs: the supplied or discovered font inventory must contain them.
 
 NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY, DRAFT_QUALITY and
 PROOF_QUALITY share the same outline-font rendering policy, currently a
@@ -355,11 +371,14 @@ and font smoothing, rather than inheriting the host's locale or desktop settings
 
 The WMF specification ties text decoding to the playback font. ANSI_CHARSET
 uses Windows-1252; RUSSIAN_CHARSET uses Windows-1251. DEFAULT_CHARSET uses the
-collection's `ansi_codepage` (1252 by default, or explicitly 1251). Face names
+collection's `ansi_codepage` (1252 by default). Face names
 always use that environment code page, independently of the text charset.
 Undefined single-byte values retain their same-valued control code points;
 embedded NULs and tabs are not stripped or expanded. Explicit advances remain
-byte-indexed. Other code pages, including OEM and DBCS, are not implemented.
+byte-indexed. CP932 is supported as described above; other DBCS and OEM code
+pages are not implemented. Use `ansi_codepage=932` for a Japanese source
+environment when its face-name bytes or DEFAULT_CHARSET text require CP932;
+charset-128 text does not require that environment setting.
 
 A supplied face with a Microsoft symbol cmap uses that cmap under SYMBOL_CHARSET
 or DEFAULT_CHARSET: bytes select U+F000–U+F0FF, not Unicode lookalike icons.

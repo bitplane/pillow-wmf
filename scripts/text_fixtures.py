@@ -8,6 +8,10 @@ from pillow_wmf.wmf.objects import Font
 
 
 def cases():
+    dbcs = runpy.run_path(str(Path(__file__).with_name("dbcs_cases.py")))
+    for name, recorder in dbcs["cases"]():
+        if name in {"cp932-natural", "cp932-split", "cp932-pdy"}:
+            yield name, recorder
     # Keep the original native probe input unchanged when promoting it.
     namespace = runpy.run_path(str(Path(__file__).with_name("text_probe_cases.py")))
     yield "text-em-height", next(namespace["cases"]())[1]
