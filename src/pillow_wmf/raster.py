@@ -83,7 +83,9 @@ def rgb(colorref: int) -> tuple[int, int, int]:
 
 
 def logical_color(colorref):
-    return PaletteIndex(colorref & 65535) if colorref >> 24 == 1 else rgb(colorref)
+    # PALETTEINDEX is a flag, not an exclusive high-byte value. Other high
+    # bits do not cancel it, including sign-extended colours in legacy files.
+    return PaletteIndex(colorref & 65535) if colorref & 0x01000000 else rgb(colorref)
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,14 @@ from pillow_wmf.wmf.objects import BitmapData, Palette
 COLORS = ((17, 31, 53), (71, 97, 131), (149, 173, 199))
 
 
+def test_paletteindex_flag_is_independent_of_other_high_bits():
+    from pillow_wmf.raster import logical_color
+
+    for flags in range(256):
+        expected = PaletteIndex(0x3412) if flags & 1 else (18, 52, 86)
+        assert logical_color(flags << 24 | 0x563412) == expected
+
+
 @pytest.mark.parametrize("depth,pixels", ((1, b"\x40\0\0\0"), (4, b"\x01\x00\0\0"), (8, b"\0\1\0\0")))
 def test_palette_writer_matches_independent_word_table_bytes(depth, pixels):
     source = encode_dib(3, 1, (0, 1, 0), depth=depth, color_usage=1, colors=(2, 1))
