@@ -72,6 +72,25 @@ def test_pitch_family_guides_unknown_names(installed):
     assert fonts.resolve(request("Unavailable", pitch_and_family=1)).family == "Liberation Mono"
 
 
+@pytest.mark.parametrize("hint,target", [(0, "Liberation Sans"), (16, "Liberation Serif"), (49, "Liberation Mono")])
+def test_unknown_charset_discards_ordinary_family_but_retains_hints(installed, hint, target):
+    paths = [installed(name) for name in ("Original", "Liberation Sans", "Liberation Serif", "Liberation Mono")]
+    fonts = SystemFontCollection(paths=paths)
+    selected = fonts.resolve(request("Original", charset=160, pitch_and_family=hint))
+    assert selected.family == target
+    assert fonts.substitutions[-1].requested == "Original"
+    assert fonts.substitutions[-1].reason == "charset 160 fallback to ANSI"
+
+
+def test_oem_wingdings_request_selects_ordinary_text_font(installed):
+    fonts = SystemFontCollection(paths=[installed("Liberation Sans")])
+    req = request("Wingdings", charset=255)
+    selected = fonts.resolve(req)
+    assert selected.family == "Liberation Sans"
+    assert fonts.decode(req, selected, b"\x80") == "Ç"
+    assert fonts.substitutions[-1].reason == "charset 255 fallback to OEM"
+
+
 def test_ansi_request_skips_custom_symbol_face_but_default_selects_it(installed):
     fonts = SystemFontCollection(paths=[SOURCE.with_name("symbols.ttf"), installed("Liberation Sans")])
     req = request("Pillow WMF Symbols", charset=0)
@@ -100,8 +119,8 @@ def test_substitution_does_not_change_byte_encoding(installed):
     face = fonts.resolve(req)
     assert fonts.decode(req, face, b"\xc0") == "А"
     assert fonts.decode(replace(req, charset=128), face, b"\x83\xa1") == "\u0393"
-    with pytest.raises(UnsupportedOperation, match="charset"):
-        fonts.decode(replace(req, charset=160), face, b"A")
+    assert fonts.decode(replace(req, charset=160), face, b"\xe9") == "é"
+    assert fonts.substitutions[-1].reason == "charset 160 fallback to ANSI"
 
 
 def test_wingdings_and_missing_symbol_families_work_without_system_fonts():

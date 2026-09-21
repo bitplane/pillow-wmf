@@ -18,6 +18,7 @@ from fontTools.ttLib import TTFont
 
 from .constants import TA_RTLREADING
 from .dbcs import LEAD_RANGES, DecodedText, collapse_advances, decode_dbcs
+from .environment_codepages import CODECS, MAC_CODECS, OEM_CODECS, OEM_COVERAGE_BITS, decode_environment
 from .gdi import InvalidOperation, UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import fixed, rounded
@@ -79,6 +80,8 @@ def text_rotation(escapement):
 
 def decode_single_byte(data, codepage):
     """Decode using Windows NLS mappings, including undefined/vendor bytes."""
+    if codepage in CODECS:
+        return decode_environment(data, codepage)
     if codepage not in CODEPAGE_BITS or codepage in LEAD_RANGES:
         raise UnsupportedOperation(f"Unsupported text code page: {codepage}")
     decoded = data.decode(f"cp{codepage}", errors="surrogateescape")
@@ -259,7 +262,9 @@ class FontFace:
                 self.break_character |= 0xF000
             mapping = symbol_map if self.symbol else font.getBestCmap() or {}
             self.cmap = {codepoint: font.getGlyphID(name) for codepoint, name in mapping.items()}
-            self.codepages = getattr(font["OS/2"], "ulCodePageRange1", 0)
+            self.codepages = getattr(font["OS/2"], "ulCodePageRange1", 0) | (
+                getattr(font["OS/2"], "ulCodePageRange2", 0) << 32
+            )
             self.device_metrics = {}
             if "VDMX" in font:
                 table = font["VDMX"]
@@ -444,6 +449,8 @@ class FontCollection:
         faces=(),
         *,
         ansi_codepage=1252,
+        oem_codepage=437,
+        mac_codepage=None,
         aliases=None,
         fallbacks=None,
         missing_glyph="error",
@@ -454,9 +461,15 @@ class FontCollection:
     ):
         if ansi_codepage not in CODEPAGE_BITS:
             raise ValueError(f"Unsupported ANSI environment: {ansi_codepage}")
+        if oem_codepage not in OEM_CODECS and oem_codepage not in {874, 932, 936, 949, 950, 1258}:
+            raise ValueError(f"Unsupported OEM environment: {oem_codepage}")
+        if mac_codepage is not None and mac_codepage not in MAC_CODECS:
+            raise ValueError(f"Unsupported Macintosh environment: {mac_codepage}")
         if missing_glyph not in ("error", "notdef"):
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
         self.ansi_codepage = ansi_codepage
+        self.oem_codepage = oem_codepage
+        self.mac_codepage = mac_codepage
         self.missing_glyph = missing_glyph
         self.synthesize_styles = synthesize_styles
         self.wingdings_fallback = wingdings_fallback
@@ -556,7 +569,19 @@ class FontCollection:
         # GDI forces SYMBOL_CHARSET for the legacy family named Symbol, not
         # for arbitrary symbol-cmap fonts (including Wingdings).
         family = decode_codepage(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).text
-        return 2 if family.casefold() == "symbol" else request.charset
+        return 2 if family.casefold() == "symbol" and request.charset != 254 else request.charset
+
+    def _encoding(self, request):
+        charset = self._charset(request)
+        if charset == 1:
+            return self.ansi_codepage, CODEPAGE_BITS[self.ansi_codepage]
+        if charset == 255:
+            return self.oem_codepage, 30
+        if charset == 77 and self.mac_codepage is not None:
+            return self.mac_codepage, 29
+        if encoding := TEXT_CHARSETS.get(charset):
+            return encoding
+        raise UnsupportedOperation(f"Unsupported text charset: {request.charset}")
 
     def decode(self, request, face, data):
         return self.decode_run(request, face, data).text
@@ -571,13 +596,13 @@ class FontCollection:
             if charset not in (1, 2):
                 raise UnsupportedOperation("Unsupported symbol font charset request")
             return DecodedText.single_byte("".join(chr(0xF000 | byte) for byte in data))
-        encoding = (
-            (self.ansi_codepage, CODEPAGE_BITS[self.ansi_codepage]) if charset == 1 else TEXT_CHARSETS.get(charset)
-        )
-        if encoding is None:
-            raise UnsupportedOperation(f"Unsupported text charset: {request.charset}")
-        codepage, bit = encoding
-        if not face.codepages & (1 << bit):
+        codepage, bit = self._encoding(request)
+        coverage = 1 << bit
+        if charset == 255:
+            page_bit = OEM_COVERAGE_BITS.get(codepage, CODEPAGE_BITS.get(codepage))
+            if page_bit is not None:
+                coverage |= 1 << page_bit
+        if not face.codepages & coverage:
             raise UnsupportedOperation("Font does not advertise the requested charset; explicit selection is required")
         return decode_codepage(data, codepage)
 

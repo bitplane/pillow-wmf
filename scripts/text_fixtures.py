@@ -8,6 +8,8 @@ from pillow_wmf.wmf.objects import Font
 
 
 def cases():
+    environment = runpy.run_path(str(Path(__file__).with_name("environment_cases.py")))
+    yield from environment["cases"]()
     dbcs = runpy.run_path(str(Path(__file__).with_name("dbcs_cases.py")))
     yield from dbcs["extended_cases"]()
     for name, recorder in dbcs["spacing_cases"]():

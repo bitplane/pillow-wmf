@@ -117,9 +117,11 @@ class SystemFontCollection(FontCollection):
     use .notdef after installed Unicode fallbacks have been exhausted.
     """
 
-    def __init__(self, *, paths=None, ansi_codepage=1252, default_font=None):
+    def __init__(self, *, paths=None, ansi_codepage=1252, oem_codepage=437, mac_codepage=None, default_font=None):
         super().__init__(
             ansi_codepage=ansi_codepage,
+            oem_codepage=oem_codepage,
+            mac_codepage=mac_codepage,
             synthesize_styles=True,
             wingdings_fallback=True,
             symbol_fallback=True,
@@ -176,6 +178,42 @@ class SystemFontCollection(FontCollection):
 
     def resolve(self, request):
         request = request or self.default_font
+        effective = self._selection_request(request)
+        face = self._resolve(effective)
+        if effective != request:
+            self._report_charset(request, effective, face)
+        return face
+
+    def _report_charset(self, request, effective, face):
+        encoding = {2: "Symbol", 255: "OEM"}.get(effective.charset, "ANSI")
+        self._report(request, face, f"charset {request.charset} fallback to {encoding}")
+
+    def _selection_request(self, request):
+        """Model unsupported-charset font selection before choosing bytes.
+
+        Native GDI discards the requested ordinary family, selecting the default
+        from pitch/family hints. An explicitly named symbol face keeps its symbol
+        encoding. MAC_CHARSET follows this path unless the caller opts into a
+        legacy Macintosh decoding environment. Charset 254 is a UTF-8 extension,
+        not an unknown charset that can safely be treated as ANSI.
+        """
+        charset = self._charset(request)
+        if charset == 254:
+            raise UnsupportedOperation("Unsupported text charset: 254 (Windows UTF-8 extension)")
+        name = self._name(request).casefold()
+        unknown = charset not in TEXT_CHARSETS and charset not in (1, 2, 255)
+        if charset == 77 and self.mac_codepage is not None:
+            unknown = False
+        if unknown:
+            symbol = name in {"wingdings", "symbol", "webdings"} or any(
+                entry.symbol and entry.family.casefold() == name for entry in self.inventory
+            )
+            return replace(request, charset=2) if symbol else replace(request, face_name=b"", charset=1)
+        if charset == 255 and name in {"wingdings", "webdings"}:
+            return replace(request, face_name=b"")
+        return request
+
+    def _resolve(self, request):
         name = self._name(request).casefold()
         charset = self._charset(request)
         for entry in self._ranked(request):
@@ -188,7 +226,7 @@ class SystemFontCollection(FontCollection):
             ):
                 continue
             if face := self._load(entry):
-                if face.family.casefold() != name:
+                if name and face.family.casefold() != name:
                     self._report(request, face, "family")
                 elif (face.weight, face.italic) != (request.weight or 400, bool(request.italic)):
                     self._report(request, face, "style")
@@ -215,11 +253,13 @@ class SystemFontCollection(FontCollection):
         raise UnsupportedOperation(f"No usable installed font for {self._name(request)!r}")
 
     def decode_run(self, request, face, data):
+        effective = self._selection_request(request)
+        if effective != request:
+            self._report_charset(request, effective, face)
+        request = effective
         if face.symbol or face is self._wingdings_face:
             return super().decode_run(request, face, data)
-        codepage = self.ansi_codepage if request.charset == 1 else TEXT_CHARSETS.get(request.charset, (None,))[0]
-        if codepage is None:
-            raise UnsupportedOperation(f"Unsupported text charset: {request.charset}")
+        codepage, _ = self._encoding(request)
         # Decode the requested encoding before testing actual glyph coverage;
         # a substitute's OS/2 charset flags must not reinterpret the input.
         return decode_codepage(data, codepage)

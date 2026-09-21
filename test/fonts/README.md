@@ -25,3 +25,9 @@ Microsoft Symbol or Wingdings.
 Korean decoding and advance placement. Their byte generators are in
 [`scripts/dbcs_cases.py`](../../scripts/dbcs_cases.py), checked for reproducibility
 by the decoder tests. These are controlled layout faces, not CJK fallback fonts.
+
+`environment.ttf` uses the same CC0 outlines with OEM/Mac coverage flags and a
+small accented-character cmap. Its generator is in
+[`scripts/environment_cases.py`](../../scripts/environment_cases.py). The native
+compatibility fixture uses OEM text; Mac decoding is tested separately because
+modern Windows substitutes the requested Mac face/charset.

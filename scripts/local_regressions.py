@@ -24,6 +24,7 @@ text-rtl-pdy-center
 text-rtl-fractional
 text-scaled-spacing
 text-codepages
+text-oem
 text-symbols
 cp932-natural
 cp932-split

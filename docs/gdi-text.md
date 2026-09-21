@@ -66,7 +66,8 @@ resource; its licence, editable source and build script ship alongside the TTF.
 See the [font resource notice](../src/pillow_wmf/fonts/symbol/README.md).
 
 GDI forces SYMBOL_CHARSET when the requested family is named `Symbol`,
-regardless of the requested charset. This is a legacy font-selection rule,
+regardless of the requested legacy charset. The Windows UTF-8 charset extension
+(254) is not treated as a Symbol request. This is a legacy font-selection rule,
 not a property of every symbol-cmap font: an ANSI request for a custom symbol
 face may instead select a Latin font. Explicit collections reject that
 incompatible request rather than silently substitute. Each Symbol byte retains its
@@ -157,6 +158,48 @@ The `dbcs` probe checks NLS conversion and uses an original controlled font for
 exact spacing comparisons; `dbcs-extended` covers the other four pages and
 `dbcs-spacing` isolates short Hangul advances. Decoding does not itself provide
 CJK or private-use glyphs: the supplied or discovered font inventory must contain them.
+
+### OEM, Macintosh and unknown charsets
+
+Both font collections accept `oem_codepage=437`. OEM_CHARSET (255) uses this
+explicit environment, independently of `ansi_codepage`; neither inherits the
+host's console or locale. Supported OEM pages are 437, 708, 720, 737, 775, 850,
+852, 855, 857, 858, 860–866 and 869, plus the shared ANSI/OEM pages 874, 932,
+936, 949, 950 and 1258. Controlled faces must advertise generic OEM coverage
+or the specific page's coverage bit, including bits in the second OS/2 word.
+
+MAC_CHARSET (77) does not reliably select a Macintosh code page on modern
+Windows. The native mapper substitutes an ANSI face for an ordinary requested
+family, or keeps a requested symbol face's symbol encoding. Automatic font
+selection follows that behavior by default and reports the charset substitution.
+Controlled `FontCollection` rejects that unspecified encoding instead of silently
+substituting a face.
+
+For a file whose intended Macintosh encoding is known, explicitly supply
+`mac_codepage=10000` (Roman), or 10004 (Arabic), 10005 (Hebrew), 10006 (Greek),
+10007 (Cyrillic), 10010 (Romanian), 10017 (Ukrainian), 10021 (Thai), 10029
+(Central European), 10079 (Icelandic), 10081 (Turkish), or 10082 (Croatian).
+This overrides the default mapper policy; it is not a claim that Windows would
+choose the same encoding automatically. The tables preserve Windows NLS vendor
+and private-use assignments, not just Python's similarly named codecs. Mac
+double-byte pages are not supported. Decoding does not add complex-script shaping.
+
+Other unknown legacy charsets follow the same automatic ANSI/symbol selection
+policy as MAC_CHARSET. The requested ordinary family is discarded, while the
+pitch/family hints still choose the generic family. An explicitly named symbol
+face retains its byte meanings. Substitutions are reported once per distinct
+choice. Controlled font collections continue to reject unknown charsets.
+Charset 254 is a Windows UTF-8 extension and remains explicitly unsupported;
+it must not be silently decoded as ANSI or Symbol.
+
+Font-name bytes always use `ansi_codepage`, even when text uses OEM or an explicit
+Mac page. The `text-environments` native probe checks NLS tables, actual selected
+faces/charsets/code pages, and controlled OEM placement. All single-byte mappings
+are fingerprinted in [the environment tests](../test/unit/test_text_environments.py).
+See the [WMF charset enumeration](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/0d0b32ac-a836-4bd2-a112-b6000a1b4fc9)
+and [OpenType coverage bits](https://learn.microsoft.com/en-us/typography/opentype/spec/os2#ulcodepagerange).
+
+### Rasterization quality
 
 NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY, DRAFT_QUALITY and
 PROOF_QUALITY share the same outline-font rendering policy, currently a
@@ -404,8 +447,8 @@ collection's `ansi_codepage` (1252 by default). Face names
 always use that environment code page, independently of the text charset.
 Undefined single-byte values use the Windows mappings described above;
 embedded NULs and tabs are not stripped or expanded. Explicit advances remain
-byte-indexed except for Johab's conversion policy. OEM and Macintosh playback
-environments are not implemented. Use `ansi_codepage=932` for a Japanese source
+byte-indexed except for Johab's conversion policy. OEM and explicit Macintosh
+environments are described above. Use `ansi_codepage=932` for a Japanese source
 environment when its face-name bytes or DEFAULT_CHARSET text require CP932;
 charset-128 text does not require that environment setting.
 

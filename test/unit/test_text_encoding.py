@@ -85,7 +85,7 @@ def test_single_byte_explicit_advances_remain_byte_indexed(face):
 
 
 @pytest.mark.parametrize("charset", [2, 128, 255])
-def test_unimplemented_charsets_are_atomic(face, charset):
+def test_unsupported_charset_face_combinations_are_atomic(face, charset):
     dc = RasterContext(100, 100, fonts=FontCollection([face]))
     dc.select_object(dc.create_font(replace(REQUEST, charset=charset)))
     before = dc.image.tobytes(), list(dc.calls)

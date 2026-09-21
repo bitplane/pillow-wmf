@@ -103,6 +103,7 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
             "cp932.ttf",
             "dbcs.ttf",
             "encoding.ttf",
+            "environment.ttf",
             "layout.ttf",
             "symbols.ttf",
         ]
