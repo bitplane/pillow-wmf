@@ -14,9 +14,9 @@ SOURCE = Path(__file__).parents[1] / "fonts/layout.ttf"
 
 @pytest.fixture
 def installed(tmp_path):
-    def make(family, *, weight=400, italic=False, keep=None):
+    def make(family, *, weight=400, italic=False, keep=None, source=SOURCE):
         path = tmp_path / f"{family}-{weight}-{italic}.ttf"
-        with TTFont(SOURCE) as font:
+        with TTFont(source) as font:
             for record in font["name"].names:
                 if record.nameID in (1, 16):
                     record.string = family.encode(record.getEncoding())
@@ -103,15 +103,35 @@ def test_substitution_does_not_change_byte_encoding(installed):
         fonts.decode(replace(req, charset=128), face, b"A")
 
 
-def test_wingdings_works_without_system_fonts_but_other_symbols_do_not():
+def test_wingdings_and_missing_symbol_families_work_without_system_fonts():
     fonts = SystemFontCollection(paths=[])
     req = request("Wingdings", charset=2)
     face = fonts.resolve(req)
     assert fonts.decode(req, face, b"!") != "!"
     assert fonts.substitutions[0].reason == "symbol mapping"
     for family in ("Webdings", "Wingdings 2"):
-        with pytest.raises(UnsupportedOperation):
-            fonts.resolve(request(family, charset=2))
+        assert fonts.resolve(request(family, charset=2)) is face
+        assert fonts.substitutions[-1].reason == "symbol charset fallback"
+
+
+@pytest.mark.parametrize("hint", (0, 16, 32, 48, 64, 80))
+@pytest.mark.parametrize("pitch", (0, 1, 2))
+def test_native_missing_symbol_pitch_and_family_selection(installed, hint, pitch):
+    fonts = SystemFontCollection(paths=[installed("Webdings", source=SOURCE.with_name("symbols.ttf"))])
+    req = request("Unavailable", charset=2, pitch_and_family=hint | pitch)
+    expected = {
+        0: ("Pillow WMF Wingdings Fallback", "Webdings", "Pillow WMF Wingdings Fallback"),
+        16: ("Symbol", "Webdings", "Symbol"),
+    }.get(hint, ("Pillow WMF Wingdings Fallback",) * 3)[pitch]
+    assert fonts.resolve(req).family == expected
+    assert fonts.substitutions[-1].reason == "symbol charset fallback"
+
+
+def test_missing_webdings_fallback_does_not_recurse_or_change_encoding():
+    fonts = SystemFontCollection(paths=[])
+    for family in ("Unavailable", "Webdings"):
+        with pytest.raises(UnsupportedOperation, match="Native symbol fallback 'Webdings'"):
+            fonts.resolve(request(family, charset=2, pitch_and_family=17))
 
 
 def test_glyph_indices_cannot_use_substituted_family(installed):

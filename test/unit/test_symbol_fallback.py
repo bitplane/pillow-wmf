@@ -8,7 +8,7 @@ from io import BytesIO
 import pytest
 from fontTools.ttLib import TTFont
 
-from pillow_wmf import Font, FontCollection, FontFace, SystemFontCollection, UnsupportedOperation
+from pillow_wmf import Font, FontCollection, FontFace, Recorder, SystemFontCollection, UnsupportedOperation, render
 
 
 @pytest.fixture(scope="module")
@@ -69,8 +69,44 @@ def test_bundled_font_cannot_claim_native_glyph_number_compatibility():
         fonts.layout_font(request, face, (1, 1))
 
 
-def test_symbol_is_not_an_alias_for_other_specialist_fonts():
-    fonts = SystemFontCollection(paths=[])
+def test_explicit_collection_does_not_alias_other_specialist_fonts():
+    fonts = FontCollection(symbol_fallback=True)
     for name in (b"MT Symbol", b"MT Extra", b"ZapfDingbats"):
         with pytest.raises(UnsupportedOperation):
             fonts.resolve(Font(face_name=name, charset=2))
+
+
+@pytest.mark.parametrize("name", (b"????????", b"Missing Symbol Family", b"", b"MT Extra"))
+@pytest.mark.parametrize("pitch,family", ((0, "Pillow WMF Wingdings Fallback"), (18, "Symbol")))
+def test_missing_symbol_family_uses_family_hint_and_reports_substitution(name, pitch, family):
+    fonts = SystemFontCollection(paths=[])
+    request = Font(face_name=name, charset=2, pitch_and_family=pitch)
+    face = fonts.resolve(request)
+    assert face.family == family
+    text = fonts.decode(request, face, b"\xc5")
+    assert text == ("\uf0c5" if pitch == 18 else "\u2bb2")
+    assert fonts.substitutions[-1].requested == name.decode()
+    assert fonts.substitutions[-1].reason == "symbol charset fallback"
+    with pytest.raises(UnsupportedOperation, match="Glyph-index"):
+        fonts.layout_font(request, face, (1, 1))
+
+
+def test_missing_roman_symbol_renders_like_an_explicit_symbol_request():
+    images = []
+    for name in (b"????????", b"Symbol"):
+        recorder = Recorder()
+        recorder.set_background_mode(1)
+        recorder.select_object(
+            recorder.create_font(
+                Font(
+                    face_name=name.ljust(32, b"\0"),
+                    charset=2,
+                    pitch_and_family=18,
+                    height=-48,
+                )
+            )
+        )
+        recorder.text_out(8, 8, b"\xc5")
+        images.append(render(recorder.to_bytes(), (80, 80), fonts=SystemFontCollection(paths=[])))
+    assert images[0].tobytes() == images[1].tobytes()
+    assert len(set(images[0].get_flattened_data())) > 1

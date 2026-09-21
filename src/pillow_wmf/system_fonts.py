@@ -3,7 +3,7 @@
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from pathlib import Path
 
@@ -196,6 +196,21 @@ class SystemFontCollection(FontCollection):
         if name in {"wingdings", "symbol"}:
             face = super().resolve(request)
             self._report(request, face, "bundled symbol font" if name == "symbol" else "symbol mapping")
+            return face
+        if charset == 2:
+            # Native missing-family selection keeps the symbol encoding and
+            # uses LOGFONT's pitch/family hints. This is a reported substitute, not an alias
+            # asserting that the unavailable font used the same glyphs.
+            hint = request.pitch_and_family & 0xF0
+            fixed_pitch = request.pitch_and_family & 3 == 1
+            if fixed_pitch and hint in (0, 0x10):
+                family = b"Webdings"
+            else:
+                family = b"Symbol" if hint == 0x10 else b"Wingdings"
+            if name == family.decode().casefold():
+                raise UnsupportedOperation(f"Native symbol fallback {family.decode()!r} is not installed")
+            face = self.resolve(replace(request, face_name=family.ljust(32, b"\0")))
+            self._report(request, face, "symbol charset fallback")
             return face
         raise UnsupportedOperation(f"No usable installed font for {self._name(request)!r}")
 

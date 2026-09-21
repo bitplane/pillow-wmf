@@ -77,6 +77,17 @@ to unrelated Unicode glyphs. The fallback uses the defined Windows byte ranges
 notably 0xA0 is not a Euro mapping and 0xF0 is not an Apple logo in this encoding.
 Outlines/hinting differ from Microsoft's Symbol and require visual review.
 MT Extra, MT Symbol, Zapf Dingbats and other specialist fonts are not aliases.
+When a requested symbol family is unavailable, `SystemFontCollection` follows
+native missing-family selection for `SYMBOL_CHARSET`: a Roman family hint
+uses Symbol; fixed pitch with a Roman or unspecified family uses Webdings;
+other combinations use Wingdings. Webdings currently requires an installed
+face; its absence is reported rather than silently choosing another encoding.
+Installed requested faces take
+precedence, and the chosen substitute may itself use a bundled fallback.
+This is reported as `symbol charset fallback`, not equivalent glyph coverage
+for the absent font. Explicit `FontCollection` policies remain unchanged and
+require the requested family or an explicit alias. Glyph-index text cannot use
+a substituted family.
 Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
 
