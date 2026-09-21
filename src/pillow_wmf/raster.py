@@ -256,7 +256,6 @@ class RasterContext(TraceContext):
         self.mapping = Mapping(window_extent=(width, height), viewport_extent=(width, height), surface_width=width)
         self._clip = ClipRegion()
         self._saved: list[SavedDC] = []
-        self._failed = False
 
     def _point(self, x: int, y: int) -> tuple[int, int]:
         return self.mapping.device_point(x, y)
@@ -375,10 +374,9 @@ class RasterContext(TraceContext):
             region_mask = RegionMask.from_rectangles(a["region"].rectangles) if a["region"] is not None else None
         return PreparedEffect(text_layout, text_rectangle, transfer, pattern, region_mask, layout)
 
-    def invoke(self, call: Call) -> Handle | int | None:
-        if self._failed:
-            raise RuntimeError("Raster context is unusable after a failed drawing effect")
-        call = self._prepare(call)
+    def prepare(self, call: Call):
+        token = super().prepare(call)
+        call = token.call
         handler = getattr(self, f"_apply_{call.name}", None)
         if handler is None:
             raise UnsupportedOperation(call.name)
@@ -388,14 +386,24 @@ class RasterContext(TraceContext):
             raise
         except FormatError as error:
             raise UnsupportedOperation(f"{call.name}: malformed input: {error}") from error
+        null_object = False
+        if call.name == "create_region":
+            null_object = prepared.region_mask is None
+        elif call.name == "create_palette":
+            palette = call.kwargs["palette"]
+            null_object = palette is None or not palette.entries
+        elif call.name == "create_pattern_brush":
+            null_object = not prepared.layout.complete
+        elif call.name == "create_dib_pattern_brush":
+            null_object = prepared.pattern is None
+        return replace(token, payload=(handler, prepared), null_object=null_object)
+
+    def _execute(self, token):
+        call = token.call
+        handler, prepared = token.payload
         result = self._result(call)
-        try:
-            # Handlers only apply prepared work. Input rejection belongs in
-            # preparation, where tolerant playback can safely omit the record.
-            handler(call, prepared, result)
-        except Exception as error:
-            self._failed = True
-            raise RuntimeError(f"Failed drawing effect: {call.name}") from error
+        # Input rejection belongs in prepare; execution failures are fatal.
+        handler(call, prepared, result)
         self._commit(call)
         if isinstance(result, Handle) and self.is_null_object(result):
             # Intern failed creations so file-slot reuse cannot leak handles.

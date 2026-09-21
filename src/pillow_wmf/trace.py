@@ -6,7 +6,7 @@ deletion quirks, clipping, palette realization or any pixel effects.
 
 import inspect
 
-from .gdi import GDI, OPERATION_NAMES, Call, Handle, InvalidOperation, UnsupportedOperation
+from .gdi import GDI, OPERATION_NAMES, Call, Handle, InvalidOperation, PreparedCall, UnsupportedOperation
 
 CREATED_KINDS = {
     "create_pen": "pen",
@@ -38,6 +38,8 @@ class TraceContext(GDI):
         self._live: dict[int, Handle] = {}
         self._next_handle = 1
         self._save_depth = 0
+        self._revision = 0
+        self._failed = False
         self.max_objects = max_objects
         self.max_saved_states = max_saved_states
 
@@ -98,4 +100,32 @@ class TraceContext(GDI):
         return result
 
     def invoke(self, call: Call) -> Handle | int | None:
-        return self._commit(self._prepare(call))
+        return self.apply(self.prepare(call))
+
+    def _check_usable(self):
+        if self._failed:
+            raise RuntimeError("Context is unusable after a failed drawing effect")
+
+    def prepare(self, call: Call) -> PreparedCall:
+        self._check_usable()
+        return PreparedCall(self, self._revision, self._prepare(call))
+
+    def _check_prepared(self, prepared):
+        self._check_usable()
+        if not isinstance(prepared, PreparedCall) or prepared.owner is not self:
+            raise InvalidOperation("Preparation belongs to another context")
+        if prepared.revision != self._revision:
+            raise InvalidOperation("Preparation is stale or has already been applied")
+
+    def apply(self, prepared: PreparedCall) -> Handle | int | None:
+        self._check_prepared(prepared)
+        try:
+            result = self._execute(prepared)
+        except Exception as error:
+            self._failed = True
+            raise RuntimeError(f"Failed drawing effect: {prepared.call.name}") from error
+        self._revision += 1
+        return result
+
+    def _execute(self, prepared):
+        return self._commit(prepared.call)

@@ -70,6 +70,24 @@ class Call:
         return dict(self.arguments)
 
 
+@dataclass(frozen=True)
+class PreparedCall:
+    """Opaque, single-use preparation tied to one context revision.
+
+    Callers must not construct or modify these tokens. Preparation may warm
+    caches but does not publish handles, append commands or draw pixels.
+    Backends flag predicted null creations and recorders flag operations whose
+    playback semantics differ, so a recording pair can reject them in advance.
+    """
+
+    owner: object = field(repr=False)
+    revision: int
+    call: Call
+    payload: object = field(default=None, repr=False)
+    null_object: bool = False
+    replay_equivalent: bool = True
+
+
 class GDI:
     """Override invoke to implement a backend. Arguments are immutable values."""
 
@@ -85,6 +103,14 @@ class GDI:
 
     def invoke(self, call: Call) -> Handle | int | None:
         raise UnsupportedOperation(call.name)
+
+    def prepare(self, call: Call) -> PreparedCall:
+        """Validate without drawing; backends must opt into staged execution."""
+        raise UnsupportedOperation("Staged execution")
+
+    def apply(self, prepared: PreparedCall) -> Handle | int | None:
+        """Apply an unchanged preparation; execution failures are fatal."""
+        raise UnsupportedOperation("Staged execution")
 
     def save_dc(self) -> int:
         return self.invoke(Call.make("save_dc"))
@@ -505,5 +531,5 @@ class GDI:
 OPERATION_NAMES = frozenset(
     name
     for name, method in vars(GDI).items()
-    if callable(method) and not name.startswith("_") and name not in {"invoke", "is_null_object"}
+    if callable(method) and not name.startswith("_") and name not in {"invoke", "is_null_object", "prepare", "apply"}
 )

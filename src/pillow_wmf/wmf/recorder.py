@@ -1,6 +1,7 @@
 """Record GDI commands into WMF with deterministic file-handle allocation."""
 
 import heapq
+from dataclasses import replace
 
 from ..gdi import Call, Handle
 from ..trace import CREATED_KINDS, TraceContext
@@ -24,8 +25,9 @@ class Recorder(TraceContext):
         self._free: list[int] = []
         self._capacity = 0
 
-    def invoke(self, call: Call) -> Handle | int | None:
-        call = self._prepare(call)
+    def prepare(self, call: Call):
+        token = super().prepare(call)
+        call = token.call
         binding = BINDINGS[call.name]
         arguments = wire_arguments(call.name, call.kwargs)
         for parameter in binding.signed_words:
@@ -50,6 +52,12 @@ class Recorder(TraceContext):
             arguments["reserved"] = 0
         record = binding.record(**arguments)
         record.to_bytes()  # Validate before changing bookkeeping or appending.
+        # WMF playback changes this legacy extension to DEFAULT_CHARSET.
+        equivalent = call.name != "create_font" or call.kwargs["font"].charset != 254
+        return replace(token, payload=record, replay_equivalent=equivalent)
+
+    def _execute(self, prepared):
+        call = prepared.call
         result = self._commit(call)
         if call.name in CREATED_KINDS:
             if self._free:
@@ -60,7 +68,7 @@ class Recorder(TraceContext):
             self._indexes[result] = index
         elif call.name == "delete_object":
             heapq.heappush(self._free, self._indexes.pop(call.kwargs["handle"]))
-        self.records.append(record)
+        self.records.append(prepared.payload)
         return result
 
     def metafile(self, *, placeable: PlaceableHeader | None = None) -> Metafile:
