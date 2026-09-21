@@ -25,6 +25,36 @@ def cases():
             r.text_out(16, y, b"AaBbGgDpWw\xa5\xb1\xb9\xc5\xd5\xe5\xf2\xe6\xe7\xe8\xf6\xf7\xf8")
         yield f"symbol-charset{charset}-weight{weight}-italic{italic}", r
 
+    # Unknown-family selection is charset-driven, not a spelling alias.
+    # Include the damaged corpus name, an unrelated name, and generic hints.
+    for index, (family, pitch) in enumerate(
+        (
+            (b"????????", 18),
+            (b"Missing Symbol Family", 18),
+            (b"", 0),
+            (b"Missing Symbol Family", 34),
+            (b"Missing Symbol Family", 49),
+            (b"MT Extra", 18),
+            (b"Symbol", 18),
+        )
+    ):
+        r = Recorder()
+        r.set_background_mode(1)
+        for y, height in ((8, -16), (64, -48)):
+            r.select_object(
+                r.create_font(
+                    Font(
+                        height=height,
+                        weight=400,
+                        charset=2,
+                        pitch_and_family=pitch,
+                        face_name=family.ljust(32, b"\0"),
+                    )
+                )
+            )
+            r.text_out(16, y, b"\xc5")
+        yield f"symbol-missing-family-{index}", r
+
 
 def custom_selection_case():
     """Unlike Symbol, a private symbol face cannot satisfy an ANSI request."""
