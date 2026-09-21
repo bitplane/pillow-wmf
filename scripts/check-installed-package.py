@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Smoke-test the installed distribution, without repository test resources."""
 
+from importlib.metadata import distribution
 from importlib.resources import files
 from io import BytesIO
 
@@ -11,6 +12,18 @@ from pillow_wmf.wmf.objects import Font
 
 
 def main():
+    package = distribution("pillow_wmf")
+    assert package.metadata["License-Expression"] == (
+        "LicenseRef-WTFPL-With-Warranty AND LGPL-2.1-or-later AND OFL-1.1"
+    )
+    notices = package.metadata.get_all("License-File")
+    assert notices and "LICENSE.md" in notices
+    assert "src/pillow_wmf/fonts/OFL.txt" in notices
+    assert "src/pillow_wmf/fonts/symbol/COPYING.LIB" in notices
+    for notice in notices:
+        path = next(p for p in package.files if str(p).endswith(f".dist-info/licenses/{notice}"))
+        assert package.locate_file(path).read_bytes()
+
     source = Recorder()
     source.set_pixel(2, 3, 255)
     with Image.open(BytesIO(source.to_bytes())) as image:

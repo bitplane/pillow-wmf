@@ -7,7 +7,14 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.13"
-license = {file = "LICENSE.md"}
+license = "LicenseRef-WTFPL-With-Warranty AND LGPL-2.1-or-later AND OFL-1.1"
+license-files = [
+    "LICENSE.md",
+    "src/pillow_wmf/fonts/OFL.txt",
+    "src/pillow_wmf/fonts/README.md",
+    "src/pillow_wmf/fonts/symbol/COPYING.LIB",
+    "src/pillow_wmf/fonts/symbol/README.md",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
@@ -35,7 +42,7 @@ dev = [
 
 [build-system]
 build-backend = "flit_core.buildapi"
-requires = ["flit_core >=3.2,<4"]
+requires = ["flit_core >=3.12,<4"]
 
 [project.urls]
 Repository = "https://github.com/bitplane/pillow-wmf"

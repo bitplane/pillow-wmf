@@ -17,3 +17,14 @@ with Image.open("drawing.wmf") as image:
     image.save("drawing.png")
 ```
 
+## License
+
+pillow-wmf is WTFPL with one additional clause:
+
+1. Don't blame me.
+
+Fonts have their own licenses, rip them out if you don't want to comply:
+
+* [Wingdings fallback (OFL-1.1)](src/pillow_wmf/fonts/OFL.txt)
+* [Wine Symbol (LGPL-2.1-or-later)](src/pillow_wmf/fonts/symbol/COPYING.LIB)
+
