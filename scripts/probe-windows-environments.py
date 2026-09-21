@@ -57,6 +57,7 @@ def main():
             delete = bind(gdi, "DeleteObject", ctypes.c_int, ptr)
             face = bind(gdi, "GetTextFaceW", ctypes.c_int, ptr, ctypes.c_int, ctypes.c_wchar_p)
             charset_info = bind(gdi, "GetTextCharsetInfo", ctypes.c_int, ptr, ptr, ctypes.c_uint)
+            get_codepage = bind(gdi, "GdiGetCodePage", ctypes.c_uint, ptr)
             selections = []
             for family, hint in (
                 (FAMILY, 0),
@@ -67,7 +68,7 @@ def main():
                 ("Unavailable", 16),
                 ("Unavailable", 49),
             ):
-                for charset in (0, 1, 2, 3, 77, 160, 254, 255):
+                for charset in range(256) if family == "Arial" else (0, 1, 2, 3, 77, 160, 254, 255):
                     font = check(create(-20, 0, 0, 0, 400, 0, 0, 0, charset, 0, 0, 3, hint, family), "CreateFontW")
                     old = check(select(dc, font), "SelectObject")
                     try:
@@ -80,6 +81,7 @@ def main():
                                 requested=charset,
                                 selected=name.value,
                                 charset=charset_info(dc, None, 0),
+                                codepage=get_codepage(dc),
                             )
                         )
                     finally:

@@ -8,7 +8,7 @@ from fontTools.ttLib import TTFont
 from pillow_wmf import Font, Recorder
 
 FAMILY = "Pillow WMF Environment"
-OEM_PAGES = (437, 720, 737, 775, 850, 852, 855, 857, 858, 860, 861, 862, 863, 864, 865, 866, 869)
+OEM_PAGES = (437, 708, 720, 737, 775, 850, 852, 855, 857, 858, 860, 861, 862, 863, 864, 865, 866, 869)
 MAC_PAGES = (10000, 10004, 10005, 10006, 10007, 10010, 10017, 10021, 10029, 10079, 10081, 10082)
 
 
@@ -31,7 +31,7 @@ def cases():
     r = Recorder()
     r.set_background_mode(1)
     r.set_text_alignment(25)
-    for row, charset in enumerate((255, 77)):
+    for row, charset in enumerate((255, 255)):
         r.select_object(
             r.create_font(
                 Font(face_name=FAMILY.encode().ljust(32, b"\0"), charset=charset, height=-20, weight=400, quality=3)
@@ -40,4 +40,4 @@ def cases():
         r.move_to(8, 30 + row * 60)
         r.ext_text_out(0, 0, b"\x80\x82AB", advances=(17, 19, 13, 11))
         r.text_out(0, 0, b"B")
-    yield "text-oem-mac", r
+    yield "text-oem", r
