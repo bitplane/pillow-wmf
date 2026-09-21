@@ -134,6 +134,18 @@ def test_wingdings_and_missing_symbol_families_work_without_system_fonts():
         assert fonts.substitutions[-1].reason == "symbol charset fallback"
 
 
+@pytest.mark.parametrize("weight", (100, 300, 400, 500, 600, 700, 800, 900, 1000))
+@pytest.mark.parametrize("family", ("Wingdings", "Symbol", "Marlett"))
+def test_bundled_symbol_selection_accepts_nonstandard_weights(weight, family):
+    fonts = SystemFontCollection(paths=[])
+    req = request(family, charset=2, weight=weight, italic=1)
+    face = fonts.resolve(req)
+    assert face.weight == 400
+    assert req.weight == weight
+    decoded = fonts.decode(req, face, b"!")
+    assert fonts.layout_font(req, face, (1, 1), characters=decoded).shape(decoded, 10000)
+
+
 @pytest.mark.parametrize("hint", (0, 16, 32, 48, 64, 80))
 @pytest.mark.parametrize("pitch", (0, 1, 2))
 def test_native_missing_symbol_pitch_and_family_selection(installed, hint, pitch):

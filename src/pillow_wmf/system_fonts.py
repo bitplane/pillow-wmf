@@ -232,7 +232,10 @@ class SystemFontCollection(FontCollection):
                     self._report(request, face, "style")
                 return face
         if name in {"wingdings", "symbol"}:
-            face = super().resolve(request)
+            # Bundled substitutes provide regular outlines. Selection must not
+            # reject intermediate/heavy weights; realization still receives
+            # the original request and applies the normal style synthesis.
+            face = super().resolve(replace(request, weight=400, italic=False))
             self._report(request, face, "bundled symbol font" if name == "symbol" else "symbol mapping")
             return face
         if charset == 2:
