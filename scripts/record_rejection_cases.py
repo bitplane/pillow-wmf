@@ -75,3 +75,20 @@ def corpus_cases():
             ]
         )
         yield name, replace(m, header=replace(m.header, object_count=capacity))
+
+
+def header_cases():
+    r = Recorder()
+    r.set_pixel(20, 20, 255)
+    r.set_pixel(120, 120, 255)
+    m = r.metafile()
+    for size in (0, 9, 10, m.header.size - 1):
+        yield f"understated-size-{size}", replace(m, header=replace(m.header, size=size))
+    for mode in (0, 65535):
+        r = Recorder()
+        r.set_background_mode(1)
+        r.set_background_mode(mode)
+        r.set_background_color(0x00FF00)
+        r.select_object(r.create_brush(2, 255, 0))
+        r.pat_blt(10, 10, 30, 30, 0x00F00021)
+        yield f"background-transparent-{mode}", r.metafile()

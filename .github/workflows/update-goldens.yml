@@ -16,6 +16,7 @@ on:
           - none
           - record-rejection
           - corpus-rejection
+          - corpus-headers
           - colorrefs
           - mapping
           - precision
@@ -133,13 +134,13 @@ jobs:
           path: colorref-probe/
           retention-days: 7
       - name: Probe record-local rejection
-        if: inputs.probe == 'record-rejection' || inputs.probe == 'corpus-rejection'
+        if: inputs.probe == 'record-rejection' || startsWith(inputs.probe, 'corpus-')
         shell: bash
         run: |
           mkdir -p record-rejection
-          python scripts/probe-windows-record-rejection.py --output record-rejection ${{ inputs.probe == 'corpus-rejection' && '--corpus' || '' }} | tee record-rejection/observations.txt
+          python scripts/probe-windows-record-rejection.py --output record-rejection ${{ inputs.probe == 'corpus-rejection' && '--corpus' || inputs.probe == 'corpus-headers' && '--headers' || '' }} | tee record-rejection/observations.txt
       - name: Upload record rejection observations
-        if: always() && (inputs.probe == 'record-rejection' || inputs.probe == 'corpus-rejection')
+        if: always() && (inputs.probe == 'record-rejection' || startsWith(inputs.probe, 'corpus-'))
         uses: actions/upload-artifact@v4
         with:
           name: record-rejection
