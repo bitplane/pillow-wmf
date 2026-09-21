@@ -21,6 +21,7 @@ on:
           - symbol
           - mt-extra
           - dbcs
+          - codepages
           - real-text
           - text-layout
           - text-styles
@@ -195,6 +196,19 @@ jobs:
         with:
           name: dbcs-probe
           path: dbcs-probe/
+          retention-days: 7
+      - name: Probe remaining single-byte code pages
+        if: inputs.probe == 'codepages'
+        shell: bash
+        run: |
+          mkdir -p codepages-probe
+          python scripts/probe-windows-codepages.py --output codepages-probe | tee codepages-probe/observations.txt
+      - name: Upload code-page observations
+        if: always() && inputs.probe == 'codepages'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codepages-probe
+          path: codepages-probe/
           retention-days: 7
       - name: Probe extended DIB device acceptance
         if: inputs.probe == 'dib-boundaries'
