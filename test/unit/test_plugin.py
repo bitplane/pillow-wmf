@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
-from PIL import Image, WmfImagePlugin
+from PIL import Image, UnidentifiedImageError, WmfImagePlugin
 
 from pillow_wmf import FontCollection, FontFace, Metafile, PlaceableHeader, Recorder, UnsupportedOperation, render
 from pillow_wmf.plugin import WmfImageFile
@@ -85,7 +85,25 @@ def test_invalid_options(options):
 def test_unsupported_drawing_is_not_silently_omitted():
     recorder = Recorder()
     recorder.escape(0x7777, b"")
-    with Image.open(BytesIO(recorder.to_bytes())) as image, pytest.raises(UnsupportedOperation):
+    with Image.open(BytesIO(recorder.to_bytes())) as image, pytest.raises(OSError) as caught:
+        image.load()
+    assert isinstance(caught.value.__cause__, UnsupportedOperation)
+    with pytest.raises(UnsupportedOperation):
+        render(recorder.to_bytes(), (128, 128))
+
+
+def test_corrupt_signature_becomes_unidentified_image():
+    data = b"\x01\x00\x09\x00" + bytes(14)
+    with pytest.raises(UnidentifiedImageError):
+        Image.open(BytesIO(data), formats=["WMF"])
+
+
+def test_plugin_preserves_programming_errors(monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("unexpected defect")
+
+    monkeypatch.setattr("pillow_wmf.plugin.play", broken)
+    with Image.open(BytesIO(Recorder().to_bytes())) as image, pytest.raises(RuntimeError, match="unexpected defect"):
         image.load()
 
 

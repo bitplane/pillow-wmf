@@ -388,9 +388,12 @@ class FontFace:
             # Bound the cache independently of the number of WMF font objects.
             if len(self._sizes) >= 32:
                 self._sizes.pop(next(iter(self._sizes)))
-            font = ft.Face.from_bytes(self.data, index=self.index)
-            # Glyph IDs come from the selected cmap; FreeType only rasterizes.
-            font.set_char_size(max(1, int(mask_width * 64)), max(1, rounded(size) * 64), 72, 72)
+            try:
+                font = ft.Face.from_bytes(self.data, index=self.index)
+                # Glyph IDs come from the selected cmap; FreeType only rasterizes.
+                font.set_char_size(max(1, int(mask_width * 64)), max(1, rounded(size) * 64), 72, 72)
+            except ft.FT_Exception as error:
+                raise UnsupportedOperation(f"Cannot realize font {self.family!r} at {size} pixels: {error}") from error
 
             def metric(units):
                 return (units * size * 2 + self.units_per_em) // (2 * self.units_per_em)

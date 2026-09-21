@@ -5,11 +5,12 @@ import struct
 
 from PIL import Image, ImageFile, WmfImagePlugin
 
+from .gdi import UnsupportedOperation
 from .raster import RasterContext
 from .render import _read_metafile
 from .system_fonts import SystemFontCollection
-from .wmf import Limits
-from .wmf.player import play
+from .wmf import FormatError, Limits
+from .wmf.player import PlaybackError, play
 
 
 def _accept(prefix):
@@ -22,7 +23,10 @@ class WmfImageFile(ImageFile.ImageFile):
 
     def _open(self):
         # Bound the read before parsing; header mtSize is only advisory.
-        self._metafile = _read_metafile(data := self.fp.read(Limits().max_bytes + 1))
+        try:
+            self._metafile = _read_metafile(data := self.fp.read(Limits().max_bytes + 1))
+        except FormatError as error:
+            raise SyntaxError(str(error)) from error
         self._bounds = None
         self._inch = None
         self._size = (128, 128)
@@ -40,7 +44,8 @@ class WmfImageFile(ImageFile.ImageFile):
 
         Plain WMFs have no physical size. Invalid placeable bounds fall back
         to the same 128-square canvas. Records can override the initial mapping.
-        Unsupported drawing fails explicitly rather than returning partial art.
+        Unsupported drawing raises OSError rather than returning partial art.
+        Invalid caller options raise ValueError.
         """
         if self._im is not None:
             if size is not None or dpi is not None or fonts is not None:
@@ -70,7 +75,10 @@ class WmfImageFile(ImageFile.ImageFile):
             left, top, right, bottom = self._bounds
             context.mapping.window_origin = (left, top)
             context.mapping.window_extent = (right - left, bottom - top)
-        play(self._metafile, context, strict=True)
+        try:
+            play(self._metafile, context, strict=True)
+        except (UnsupportedOperation, PlaybackError, FormatError) as error:
+            raise OSError(f"Cannot render WMF: {error}") from error
         self._im = context.image.im
         self._size = target
         if dpi is not None:
