@@ -9,6 +9,10 @@ from pillow_wmf.wmf.objects import Font
 
 def cases():
     dbcs = runpy.run_path(str(Path(__file__).with_name("dbcs_cases.py")))
+    yield from dbcs["extended_cases"]()
+    for name, recorder in dbcs["spacing_cases"]():
+        if name == "dbcs-spacing-run-10-2":
+            yield name, recorder
     for name, recorder in dbcs["cases"]():
         if name in {"cp932-natural", "cp932-split", "cp932-pdy"}:
             yield name, recorder

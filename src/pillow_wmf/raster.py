@@ -1221,6 +1221,7 @@ class RasterContext(TraceContext):
             justification=self._text_state.justification,
             characters=characters,
             byte_lengths=decoded.byte_lengths if decoded is not None else (),
+            byte_indexed_advances=decoded.byte_indexed_advances if decoded is not None else True,
             escapement=request.escapement,
             glyph_indices=glyph_indices,
             vertical_advances=vertical_advances,

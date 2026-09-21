@@ -20,3 +20,8 @@ different character maps. Regenerate them with
 different glyphs to characters decoded from the same Windows-1252/1251 bytes.
 The symbol face has a Microsoft symbol cmap with F000-range entries. Neither is a copy of
 Microsoft Symbol or Wingdings.
+
+`cp932.ttf` and `dbcs.ttf` reuse that CC0 geometry for Japanese, Chinese and
+Korean decoding and advance placement. Their byte generators are in
+[`scripts/dbcs_cases.py`](../../scripts/dbcs_cases.py), checked for reproducibility
+by the decoder tests. These are controlled layout faces, not CJK fallback fonts.

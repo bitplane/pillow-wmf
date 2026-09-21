@@ -105,7 +105,8 @@ packaged, or included in probe artifacts.
 Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
 
-Supported ANSI environments are Windows-1250 through 1258, Thai 874 and Japanese 932.
+Supported ANSI environments are Windows-1250 through 1258, Thai 874, Japanese
+932, Simplified Chinese 936, Korean 949, Traditional Chinese 950 and Johab 1361.
 DEFAULT_CHARSET uses that explicit environment; ANSI_CHARSET selects 1252.
 Decoding follows Windows NLS, including private-use mappings for otherwise
 undefined Greek, Hebrew, Baltic and Thai bytes. All 256 single-byte inputs are
@@ -123,20 +124,39 @@ its complex-script images are diagnostic, not exact controlled-font references.
 Verifying the selected face alone does not rule out per-glyph font linking.
 
 SHIFTJIS_CHARSET (128) selects Windows CP932, including its vendor extensions,
-not the narrower Shift-JIS codec. Decoding retains each character's source-byte
-span. ExtTextOut advances are byte-indexed: entries for a two-byte character
+not the narrower Shift-JIS codec. GB2312_CHARSET (134), HANGEUL_CHARSET (129),
+CHINESEBIG5_CHARSET (136) and JOHAB_CHARSET (130) select 936, 949, 950 and 1361.
+Decoding retains each character's source-byte span. For CP932/936/949/950,
+ExtTextOut advances are byte-indexed: entries for a two-byte character
 are summed, for both horizontal and `ETO_PDY` vertical displacements. Character
 extra, alignment and current-position updates then operate on the decoded run.
 Glyph-index records bypass this conversion and retain their separate WORD-ID
 spacing contract. See [ExtTextOutA](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-exttextouta).
 
+Johab is double-byte for decoding but GDI does not collapse its advance array.
+It consumes the first decoded-character-count entries (or x/y pairs), ignoring
+the remaining entries. WMF still stores and validates one entry per source byte.
+This policy belongs to the ANSI-to-Unicode call conversion, not the rasterizer.
+
+For horizontal precomposed Hangul runs, the final glyph is non-adjustable in
+GDI's script-justification model. A requested advance smaller than its natural
+width therefore does not pull the following run's ink left; earlier Hangul
+glyphs remain adjustable. The current position still uses the caller's original
+advance sum. Paired `ETO_PDY` and direct glyph-index output bypass this step.
+This does not implement composition or shaping of decomposed Jamo.
+
 Malformed CP932 pairs become U+30FB (KATAKANA MIDDLE DOT), consuming the pair;
 a dangling lead byte consumes one byte. A NUL after a lead byte is retained as
 a separate character. The complete native single-byte and lead/trail-pair
 conversion fingerprint is checked in [the decoder tests](../test/unit/test_dbcs.py).
+The other four DBCS pages consume malformed pairs the same way but replace them
+with `?`. Their Windows private-use mappings are retained; Big5's user-defined
+area must not silently become Python's kana extension. Johab's isolated Hangul
+components use conjoining rather than compatibility Jamo, without normalization.
 The `dbcs` probe checks NLS conversion and uses an original controlled font for
-exact spacing comparisons. CP932 decoding does not itself provide Japanese
-glyphs: the supplied or discovered font inventory must contain them.
+exact spacing comparisons; `dbcs-extended` covers the other four pages and
+`dbcs-spacing` isolates short Hangul advances. Decoding does not itself provide
+CJK or private-use glyphs: the supplied or discovered font inventory must contain them.
 
 NONANTIALIASED_QUALITY uses monochrome masks. DEFAULT_QUALITY, DRAFT_QUALITY and
 PROOF_QUALITY share the same outline-font rendering policy, currently a
@@ -382,10 +402,10 @@ The WMF specification ties text decoding to the playback font. ANSI_CHARSET
 uses Windows-1252; RUSSIAN_CHARSET uses Windows-1251. DEFAULT_CHARSET uses the
 collection's `ansi_codepage` (1252 by default). Face names
 always use that environment code page, independently of the text charset.
-Undefined single-byte values retain their same-valued control code points;
+Undefined single-byte values use the Windows mappings described above;
 embedded NULs and tabs are not stripped or expanded. Explicit advances remain
-byte-indexed. CP932 is supported as described above; other DBCS and OEM code
-pages are not implemented. Use `ansi_codepage=932` for a Japanese source
+byte-indexed except for Johab's conversion policy. OEM and Macintosh playback
+environments are not implemented. Use `ansi_codepage=932` for a Japanese source
 environment when its face-name bytes or DEFAULT_CHARSET text require CP932;
 charset-128 text does not require that environment setting.
 

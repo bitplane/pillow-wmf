@@ -99,7 +99,13 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
             path.write_bytes(b"new-reference")
 
     def render(source, width, height):
-        assert [path.name for path in installed] == ["cp932.ttf", "encoding.ttf", "layout.ttf", "symbols.ttf"]
+        assert [path.name for path in installed] == [
+            "cp932.ttf",
+            "dbcs.ttf",
+            "encoding.ttf",
+            "layout.ttf",
+            "symbols.ttf",
+        ]
         calls.append((source, width, height))
         return Output()
 

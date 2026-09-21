@@ -17,7 +17,7 @@ import freetype as ft
 from fontTools.ttLib import TTFont
 
 from .constants import TA_RTLREADING
-from .dbcs import DecodedText, collapse_advances, decode_cp932
+from .dbcs import LEAD_RANGES, DecodedText, collapse_advances, decode_dbcs
 from .gdi import InvalidOperation, UnsupportedOperation
 from .gdi_math import sincos_degrees
 from .mapping import fixed, rounded
@@ -42,7 +42,13 @@ SINGLE_BYTE_CHARSETS = {
     163: (1258, 8),
     222: (874, 16),
 }
-TEXT_CHARSETS = SINGLE_BYTE_CHARSETS | {128: (932, 17)}
+TEXT_CHARSETS = SINGLE_BYTE_CHARSETS | {
+    128: (932, 17),
+    134: (936, 18),
+    129: (949, 19),
+    136: (950, 20),
+    130: (1361, 21),
+}
 CODEPAGE_BITS = dict(TEXT_CHARSETS.values())
 
 # Windows NLS retains vendor mappings absent from Python's codec tables.
@@ -73,7 +79,7 @@ def text_rotation(escapement):
 
 def decode_single_byte(data, codepage):
     """Decode using Windows NLS mappings, including undefined/vendor bytes."""
-    if codepage not in CODEPAGE_BITS or codepage == 932:
+    if codepage not in CODEPAGE_BITS or codepage in LEAD_RANGES:
         raise UnsupportedOperation(f"Unsupported text code page: {codepage}")
     decoded = data.decode(f"cp{codepage}", errors="surrogateescape")
     overrides = UNDEFINED_BYTE_MAPPINGS.get(codepage, {})
@@ -84,8 +90,8 @@ def decode_single_byte(data, codepage):
 
 def decode_codepage(data, codepage):
     """Decode characters and their source spans through one code-page policy."""
-    if codepage == 932:
-        return decode_cp932(data)
+    if codepage in LEAD_RANGES:
+        return decode_dbcs(data, codepage)
     return DecodedText.single_byte(decode_single_byte(data, codepage))
 
 
@@ -693,6 +699,28 @@ class TextLayout:
     decorations: tuple[tuple[tuple[int, int], ...], ...] = ()
 
 
+def _horizontal_script_offsets(characters, glyphs, offsets):
+    """Keep terminal Hangul glyphs at their natural width when squeezing.
+
+    For precomposed Hangul, ScriptShape marks the last glyph of the run with
+    SCRIPT_JUSTIFY_NONE; preceding glyphs use SCRIPT_JUSTIFY_CHARACTER.
+    ScriptApplyLogicalWidth leaves a non-adjustable glyph's natural width
+    intact and applies only positive residual width at the run end. This
+    affects subsequent ink placement, not the caller's logical advance sum.
+    PDY and direct glyph-index output bypass this horizontal shaping step.
+    """
+    hangul = [0xAC00 <= ord(c) <= 0xD7A3 for c in characters]
+    placed = []
+    residual = 0
+    for i, glyph in enumerate(glyphs):
+        placed.append(rounded(offsets[i] + residual))
+        if hangul[i] and (i + 1 == len(hangul) or not hangul[i + 1]):
+            requested = offsets[i + 1] - offsets[i]
+            residual += max(0, glyph.advance - requested)
+    placed.append(rounded(offsets[-1] + residual))
+    return placed
+
+
 def layout_text(
     font,
     text,
@@ -714,6 +742,7 @@ def layout_text(
     mirrored_layout=False,
     precise_origin=None,
     byte_lengths=(),
+    byte_indexed_advances=True,
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if characters is None and glyph_indices is None:
@@ -722,8 +751,8 @@ def layout_text(
         byte_lengths = byte_lengths or (1,) * len(characters)
         if len(byte_lengths) != len(characters) or sum(byte_lengths) != len(text):
             raise InvalidOperation("Decoded character spans must cover the text bytes")
-        advances = collapse_advances(advances, byte_lengths)
-        vertical_advances = collapse_advances(vertical_advances, byte_lengths)
+        advances = collapse_advances(advances, byte_lengths, byte_indexed=byte_indexed_advances)
+        vertical_advances = collapse_advances(vertical_advances, byte_lengths, byte_indexed=byte_indexed_advances)
     sine, cosine = text_rotation(escapement)
 
     def project(px, py, *, snap=True):
@@ -773,6 +802,8 @@ def layout_text(
             device_offset = round(Fraction(total, 65536))
             mapped_offsets.append(rounded(device_offset / scale) * scale)
         offsets.append(rounded(mapped_offsets[-1]))
+    if advances and not vertical_advances and glyph_indices is None:
+        offsets = _horizontal_script_offsets(characters, glyphs, mapped_offsets)
     run_width = total * scale if advances else rounded((total // 65536) / scale) * scale
     if escapement % 900 and not advances:
         run_width = Fraction(total, 65536)

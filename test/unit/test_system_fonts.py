@@ -101,7 +101,7 @@ def test_substitution_does_not_change_byte_encoding(installed):
     assert fonts.decode(req, face, b"\xc0") == "А"
     assert fonts.decode(replace(req, charset=128), face, b"\x83\xa1") == "\u0393"
     with pytest.raises(UnsupportedOperation, match="charset"):
-        fonts.decode(replace(req, charset=129), face, b"A")
+        fonts.decode(replace(req, charset=160), face, b"A")
 
 
 def test_wingdings_and_missing_symbol_families_work_without_system_fonts():
