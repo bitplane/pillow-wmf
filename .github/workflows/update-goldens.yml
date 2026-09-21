@@ -19,6 +19,7 @@ on:
           - precision
           - text
           - symbol
+          - mt-extra
           - real-text
           - text-layout
           - text-styles
@@ -167,6 +168,19 @@ jobs:
         with:
           name: symbol-probe
           path: symbol-probe/
+          retention-days: 7
+      - name: Probe native MT Extra
+        if: inputs.probe == 'mt-extra'
+        shell: bash
+        run: |
+          mkdir -p mtextra-probe
+          python scripts/probe-windows-mtextra.py --output mtextra-probe | tee mtextra-probe/observations.txt
+      - name: Upload MT Extra observations
+        if: always() && inputs.probe == 'mt-extra'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtextra-probe
+          path: mtextra-probe/
           retention-days: 7
       - name: Probe extended DIB device acceptance
         if: inputs.probe == 'dib-boundaries'
