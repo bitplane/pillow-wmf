@@ -16,7 +16,7 @@ from pillow_wmf.wmf.variable import ExtTextOut, TextOut
 
 
 def initialize(root, output, font_directories, candidates):
-    global ROOT, OUTPUT, FONTS, CANDIDATES
+    global ROOT, OUTPUT, FONTS, CANDIDATES, FONT_PATHS, TASK_COUNT
     ROOT, OUTPUT, CANDIDATES = Path(root), Path(output), candidates
     paths = [
         p
@@ -24,10 +24,16 @@ def initialize(root, output, font_directories, candidates):
         for p in Path(directory).rglob("*")
         if p.suffix.lower() in {".ttf", ".ttc", ".otf"}
     ]
-    FONTS = SystemFontCollection(paths=paths)
+    FONT_PATHS, TASK_COUNT = paths, 0
+    FONTS = SystemFontCollection(paths=FONT_PATHS)
 
 
 def compare(relative):
+    global FONTS, TASK_COUNT
+    # Drop accumulated face/size caches without recycling executor processes.
+    if TASK_COUNT and TASK_COUNT % 100 == 0:
+        FONTS = SystemFontCollection(paths=FONT_PATHS)
+    TASK_COUNT += 1
     item = {"file": relative, "has_text": None}
     try:
         data = (ROOT / relative).read_bytes()
@@ -112,6 +118,7 @@ def main():
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--resume", action="store_true", help="Continue this audit using its saved results")
     args = parser.parse_args()
     baseline = json.loads(args.baseline.read_text())
     directories = baseline["font_directories"]
@@ -126,20 +133,20 @@ def main():
     sources.sort(key=lambda name: name not in candidates)
     args.output.mkdir(parents=True, exist_ok=True)
     result_path = args.output / "results.jsonl"
-    if result_path.exists():
+    if result_path.exists() and not args.resume:
         parser.error("Use a new output directory to preserve earlier audit results")
-    results = []
+    results = [json.loads(line) for line in result_path.read_text().splitlines()] if result_path.exists() else []
+    completed = {r["file"] for r in results}
     with (
-        result_path.open("w", encoding="utf-8", buffering=1) as stream,
+        result_path.open("a", encoding="utf-8", buffering=1) as stream,
         ProcessPoolExecutor(
             max_workers=args.workers,
             mp_context=multiprocessing.get_context("spawn"),
             initializer=initialize,
             initargs=(args.root, args.output, directories, candidates),
-            max_tasks_per_child=100,
         ) as pool,
     ):
-        pending = {pool.submit(compare, name): name for name in sources}
+        pending = {pool.submit(compare, name): name for name in sources if name not in completed}
         for future in as_completed(pending):
             result = future.result()
             results.append(result)
