@@ -25,6 +25,13 @@ jobs:
         run: make test-all
       - name: Build distribution
         run: make dist
+      - name: Check distribution metadata
+        run: .venv/bin/python -m twine check dist/*
+      - name: Verify installed wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/pillow-wmf-wheel"
+          "$RUNNER_TEMP/pillow-wmf-wheel/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/pillow-wmf-wheel/bin/python" scripts/check-installed-package.py
       - name: Push release
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
