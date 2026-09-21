@@ -53,6 +53,46 @@ def extended_cases():
         yield f"dbcs-{mode}", r
 
 
+def spacing_cases():
+    """Separate ANSI-array conversion from Unicode Hangul spacing."""
+    for gap in (-3, 0, 2, 5, 7, 10):
+        for pdy in (False, True):
+            r = Recorder()
+            r.set_background_mode(1)
+            r.set_text_alignment(25)
+            for row, (charset, cp, text) in enumerate(
+                ((129, 949, "ABB"), (129, 949, "A가B"), (130, 1361, "ABB"), (130, 1361, "A가B"))
+            ):
+                r.select_object(
+                    r.create_font(
+                        Font(
+                            face_name=EXTENDED_FAMILY.encode().ljust(32, b"\0"),
+                            height=-16,
+                            weight=400,
+                            charset=charset,
+                            quality=3,
+                        )
+                    )
+                )
+                r.move_to(16, 24 + row * 30)
+                data = text.encode(f"cp{cp}")
+                # Supply equivalent character advances through each ANSI API.
+                dx = (
+                    (9, gap, 7, 13)
+                    if cp == 1361 and len(data) == 4
+                    else (9, gap, 0, 7)
+                    if len(data) == 4
+                    else (9, gap, 7)
+                )
+                if pdy:
+                    dx = tuple(value for advance in dx for value in (advance, 0))
+                r.ext_text_out(0, 0, data, advances=dx, options=0x2000 if pdy else 0)
+                r.set_text_color(0x0000FF)
+                r.text_out(0, 0, b"B")
+                r.set_text_color(0)
+            yield f"dbcs-spacing-{gap}-{'pdy' if pdy else 'dx'}", r
+
+
 def font_bytes():
     with TTFont(Path(__file__).resolve().parents[1] / "test/fonts/layout.ttf", recalcTimestamp=False) as font:
         for record in font["name"].names:
