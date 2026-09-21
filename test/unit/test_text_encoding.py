@@ -1,9 +1,10 @@
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from pillow_wmf import FontCollection, FontFace, RasterContext, UnsupportedOperation
+from pillow_wmf import FontCollection, FontFace, RasterContext, SystemFontCollection, UnsupportedOperation
 from pillow_wmf.text import FontRun, decode_single_byte, layout_text
 from pillow_wmf.wmf.objects import Font
 
@@ -110,13 +111,17 @@ def test_invalid_environment_or_policy_is_rejected():
 @pytest.mark.parametrize(
     "charset,codepage,bit,text",
     [
+        (177, 1255, 5, "שלום"),
+        (178, 1256, 6, "العربية"),
+        (163, 1258, 8, "a\u0301 ơưđ"),
+        (222, 874, 16, "ภาษาไทย"),
         (238, 1250, 1, "Příliš žluťoučký kůň Łódź"),
         (161, 1253, 3, "Καλημέρα κόσμε"),
         (162, 1254, 4, "İstanbul ıİ şŞ ğĞ"),
         (186, 1257, 7, "Ąžuolas Ėė Įį Ųų Ūū"),
     ],
 )
-def test_european_charsets_and_explicit_ansi_environment(charset, codepage, bit, text):
+def test_charsets_and_explicit_ansi_environment(charset, codepage, bit, text):
     face = FontFace.from_path(FONTS / "encoding.ttf")
     data = text.encode(f"cp{codepage}")
     assert decode_single_byte(data, codepage) == text
@@ -130,6 +135,35 @@ def test_european_charsets_and_explicit_ansi_environment(charset, codepage, bit,
     assert len(fonts.decode(request, face, bytes(range(256)))) == 256
     # ANSI_CHARSET is Windows-1252, not the caller's DEFAULT_CHARSET environment.
     assert fonts.decode(replace(request, charset=0), face, b"\xe9") == "é"
+    automatic = SystemFontCollection(paths=[], ansi_codepage=codepage)
+    decoded = automatic.decode_run(request, face, data)
+    assert decoded.text == text
+    assert decoded.byte_lengths == (1,) * len(data)
+
+
+@pytest.mark.parametrize(
+    "codepage,fingerprint",
+    [
+        (1255, "20a34a57a2c718c285c88f6df762f8c734d5699662de0771e6c9b708bf16e6b9"),
+        (1256, "3e8c71d2d46c2b8e003788e0aeeff4a85ad8b4f051cea8c65ac7f628b9d2b556"),
+        (1258, "d8f8e7cdd9e3cda7eabe83e52edf96f0645df0c38aca6edc70355ab0563dbae9"),
+        (874, "8e89d9194054b6e2a38a5103e6ef0e08f4bca8e85490ba0b8401d2a4db931c57"),
+    ],
+)
+def test_remaining_single_byte_tables_match_native_nls(codepage, fingerprint):
+    # MultiByteToWideChar(codepage, 0) for each individual byte, in order.
+    decoded = decode_single_byte(bytes(range(256)), codepage)
+    assert len(decoded) == 256
+    assert hashlib.sha256(decoded.encode("utf-32le")).hexdigest() == fingerprint
+
+
+def test_hebrew_and_thai_vendor_mappings_are_preserved():
+    assert decode_single_byte(b"\xca\xd9\xdf\xfb\xfc\xff", 1255) == "\u05ba\uf88d\uf893\uf894\uf895\uf896"
+    assert decode_single_byte(b"\xdb\xde\xfc\xff", 874) == "\uf8c1\uf8c4\uf8c5\uf8c8"
+
+
+def test_vietnamese_combining_bytes_are_not_normalized():
+    assert decode_single_byte(b"a\xec", 1258) == "a\u0301"
 
 
 def test_european_byte_tables_match_native_windows_nls():

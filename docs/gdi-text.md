@@ -105,13 +105,22 @@ packaged, or included in probe artifacts.
 Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
 
-Supported ANSI environments are Windows-1250, 1251, 1252, 1253, 1254, 1257 and 932.
+Supported ANSI environments are Windows-1250 through 1258, Thai 874 and Japanese 932.
 DEFAULT_CHARSET uses that explicit environment; ANSI_CHARSET selects 1252.
 Decoding follows Windows NLS, including private-use mappings for otherwise
-undefined Greek and Baltic bytes. The native byte tables in
-[the encoding regression data](../test/unit/windows_sbcs.txt) cover all 256
-inputs for each newly supported code page. Font coverage bits must advertise
+undefined Greek, Hebrew, Baltic and Thai bytes. All 256 single-byte inputs are
+checked against native tables or fingerprints in
+[the encoding tests](../test/unit/test_text_encoding.py). Font coverage bits must advertise
 the requested character set; a matching family name alone is insufficient.
+
+Hebrew (177), Arabic (178), Vietnamese (163) and Thai (222) charsets select
+1255, 1256, 1258 and 874 respectively. Decoding preserves combining characters
+without normalization and retains one advance entry per byte. This provides
+character decoding, not Arabic shaping, bidirectional layout or correct Thai
+and Vietnamese mark attachment. Those need separate rendering coverage.
+The `codepages` native probe checks conversion and isolated glyph placement;
+its complex-script images are diagnostic, not exact controlled-font references.
+Verifying the selected face alone does not rule out per-glyph font linking.
 
 SHIFTJIS_CHARSET (128) selects Windows CP932, including its vendor extensions,
 not the narrower Shift-JIS codec. Decoding retains each character's source-byte
