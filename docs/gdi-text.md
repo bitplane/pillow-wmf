@@ -88,6 +88,20 @@ This is reported as `symbol charset fallback`, not equivalent glyph coverage
 for the absent font. Explicit `FontCollection` policies remain unchanged and
 require the requested family or an explicit alias. Glyph-index text cannot use
 a substituted family.
+
+MT Extra is version-sensitive: the small Equation Editor font and the larger
+MathType font share a family name but differ in glyph coverage. Its encoding
+includes spacing accents and extensible equation pieces, not just ordinary
+Unicode mathematical characters. A Unicode substitution must preserve those
+pieces and their positioning; matching a few letters or operators is insufficient.
+See [Mozilla's encoding notes](https://www-archive.mozilla.org/projects/mathml/fonts/encoding/mtextra)
+and [Wiris's font-version guidance](https://docs.wiris.com/editing-formatting-equations/mathtype-requires-a-newer-version-of-mt-extra-warning-message).
+No MT Extra remapping is bundled. An installed face is preferred; generic
+missing-family substitution does not imply fidelity to the absent font.
+The `mt-extra` native probe privately loads the checksum-pinned Equation Editor
+font from Microsoft, verifies its selection for DEFAULT/SYMBOL charset requests,
+and reports other charset selections separately. The font is not committed,
+packaged, or included in probe artifacts.
 Missing glyphs raise by
 default; callers may explicitly choose the supplied face's `.notdef` glyph.
 

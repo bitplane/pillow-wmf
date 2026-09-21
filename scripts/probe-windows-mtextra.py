@@ -34,7 +34,8 @@ def main():
             for name, recorder in cases():
                 print(f"\n[{name}]", flush=True)
                 source = recorder.to_bytes()
-                observe(source, family=None, size=SIZE, sample=b"hI", characters="\uf068\uf049")
+                family = "MT Extra" if name.startswith(("mtextra-charset1-", "mtextra-charset2-")) else None
+                observe(source, family=family, size=SIZE, sample=b"hI", characters="\uf068\uf049")
                 (args.output / f"{name}.wmf").write_bytes(source)
                 render_wmf(source, *SIZE).save(args.output / f"{name}.png")
 
