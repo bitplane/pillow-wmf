@@ -1,6 +1,5 @@
 """Native RGB HALFTONE: 13-bit area weights, sharpening and tent expansion.
 
-See docs/gdi-dib-stretching.md for the arithmetic and Windows measurements.
 Includes the native colour census and fast replication-run enlargement filter.
 """
 

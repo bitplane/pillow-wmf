@@ -2,7 +2,6 @@
 
 The pen is realized once from the mapping. Every wide segment then uses the
 same support-vertex sweep, independent of its slope or the mapping scale.
-Native measurement details and limitations are in docs/gdi-strokes.md.
 """
 
 from __future__ import annotations
@@ -312,7 +311,6 @@ def cosmetic_line(start: Point, end: Point, width: int, height: int):
     (ties to the smaller coordinate). A pixel is emitted when the segment exits
     its half-pixel diamond. Endpoint ownership uses the legacy GIQ boundary
     rules (including slope +/-1 edges), not a blanket start/end convention.
-    See docs/gdi-strokes.md for the specification and native measurements.
     Bounds restrict grid enumeration without changing the original line.
     """
     dx, dy = end[0] - start[0], end[1] - start[1]

@@ -60,5 +60,4 @@ fractional inside-frame ellipse rims (`ellipse-fractional-rims-*`), anisotropic
 stroke-only ellipses (`ellipse-anisotropic-unfilled-*`), subpixel minor-axis
 pen realization (`pen-subpixel-minor-axis-paths`) and shallow polygon strokes
 with a collapsed pen axis (`pen-collapsed-shallow-polygons`). They contain no
-imported artwork. See [pen realization](../../../docs/gdi-strokes.md) for the
-underlying rules.
+imported artwork.

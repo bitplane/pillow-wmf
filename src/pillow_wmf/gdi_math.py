@@ -1,7 +1,7 @@
 """Table-based angular arithmetic used by the native GDI Arc constructor.
 
 These are mathematical lookup tables, not drawing-specific correction data.
-See docs/gdi-arcs.md for native path measurements and precision limits.
+Angular arithmetic rounds each stage to binary32 before device-coordinate conversion.
 """
 
 from math import atan, floor, pi, sin
