@@ -91,6 +91,35 @@ def spacing_cases():
                 r.text_out(0, 0, b"B")
                 r.set_text_color(0)
             yield f"dbcs-spacing-{gap}-{'pdy' if pdy else 'dx'}", r
+    # Runs with several unadjustable glyphs distinguish per-glyph clamping
+    # from deferred adjustment at the end of a shaped script run.
+    for first, second in ((2, 10), (10, 2), (10, 10), (-3, 20)):
+        r = Recorder()
+        r.set_background_mode(1)
+        r.set_text_alignment(25)
+        for row, text in enumerate(("A가가B", "A一一B", "AΓΓB", "ABBB")):
+            r.select_object(
+                r.create_font(
+                    Font(
+                        face_name=EXTENDED_FAMILY.encode().ljust(32, b"\0"),
+                        height=-16,
+                        weight=400,
+                        charset=129,
+                        quality=3,
+                    )
+                )
+            )
+            r.move_to(16, 24 + row * 30)
+            dx = tuple(
+                value
+                for char, advance in zip(text, (9, first, second, 7), strict=True)
+                for value in ((advance, 0) if len(char.encode("cp949")) == 2 else (advance,))
+            )
+            r.ext_text_out(0, 0, text.encode("cp949"), advances=dx)
+            r.set_text_color(255)
+            r.text_out(0, 0, b"B")
+            r.set_text_color(0)
+        yield f"dbcs-spacing-run-{first}-{second}", r
 
 
 def font_bytes():

@@ -59,7 +59,13 @@ def main():
         for name, recorder in selected_cases:
             print(f"\n[{name}]", flush=True)
             source = recorder.to_bytes()
-            observe(source, family=EXTENDED_FAMILY if args.extended else FAMILY, sample=b"AB", characters="AB")
+            observe(
+                source,
+                family=EXTENDED_FAMILY if args.extended else FAMILY,
+                sample=b"AB",
+                characters="A가가B一Γ" if args.spacing else "AB",
+                shaping=args.spacing,
+            )
             (args.output / f"{name}.wmf").write_bytes(source)
             render_wmf(source, 128, 128).save(args.output / f"{name}.png")
 
