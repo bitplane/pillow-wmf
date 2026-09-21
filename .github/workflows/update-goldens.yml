@@ -15,6 +15,7 @@ on:
         options:
           - none
           - record-rejection
+          - colorrefs
           - mapping
           - precision
           - text
@@ -117,6 +118,19 @@ jobs:
       - name: Install project
         id: install
         run: python -m pip install .
+      - name: Probe COLORREF flag handling
+        if: inputs.probe == 'colorrefs'
+        shell: bash
+        run: |
+          mkdir -p colorref-probe
+          python scripts/probe-windows-colorrefs.py --output colorref-probe | tee colorref-probe/observations.txt
+      - name: Upload COLORREF observations
+        if: always() && inputs.probe == 'colorrefs'
+        uses: actions/upload-artifact@v4
+        with:
+          name: colorref-probe
+          path: colorref-probe/
+          retention-days: 7
       - name: Probe record-local rejection
         if: inputs.probe == 'record-rejection'
         shell: bash
