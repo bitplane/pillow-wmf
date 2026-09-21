@@ -18,6 +18,9 @@ def font_bytes():
                 name = FAMILY.replace(" ", "") if record.nameID == 6 else FAMILY
                 record.string = name.encode(record.getEncoding())
         for table in font["cmap"].tables:
+            # Also cover the ANSI interpretation so unexpected conversion does
+            # not silently invoke a system fallback font.
+            table.cmap.update({ord(bytes([b]).decode("cp1252", "replace")): "A" for b in range(128, 256)})
             table.cmap.update({0xE9: "B", 0x4E00: "B", 0xFFFD: "A"})
         supplementary = CmapSubtable.newSubtable(12)
         supplementary.platformID, supplementary.platEncID, supplementary.language = 3, 10, 0

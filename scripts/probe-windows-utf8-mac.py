@@ -8,7 +8,7 @@ import runpy
 from pathlib import Path
 
 from utf8_cases import FAMILY, cases, font_bytes
-from windows_wmf_render import bind, check, private_fonts, render_wmf
+from windows_wmf_render import bind, check, private_fonts, reference_surface, render_wmf
 
 
 class CPInfo(ctypes.Structure):
@@ -38,6 +38,7 @@ def samples(codepage):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--font-only", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -53,7 +54,7 @@ def main():
         ctypes.c_int,
     )
     info = bind(kernel, "GetCPInfo", ctypes.c_int, ctypes.c_uint, ctypes.POINTER(CPInfo))
-    for codepage in (65001, 10001, 10002, 10003, 10008):
+    for codepage in () if args.font_only else (65001, 10001, 10002, 10003, 10008):
         cpinfo = CPInfo()
         check(info(codepage, ctypes.byref(cpinfo)), "GetCPInfo")
         print(
@@ -71,6 +72,22 @@ def main():
     font.write_bytes(font_bytes())
     observe = runpy.run_path(str(Path(__file__).with_name("probe-windows-text.py")))["observe"]
     with private_fonts([font]):
+        with reference_surface(128, 128) as (gdi, dc, _):
+            ptr = ctypes.c_void_p
+            select = bind(gdi, "SelectObject", ptr, ptr, ptr)
+            delete = bind(gdi, "DeleteObject", ctypes.c_int, ptr)
+            codepage = bind(gdi, "GdiGetCodePage", ctypes.c_uint, ptr)
+            for suffix, string_type in (("A", ctypes.c_char_p), ("W", ctypes.c_wchar_p)):
+                create = bind(
+                    gdi, f"CreateFont{suffix}", ptr, *([ctypes.c_int] * 5), *([ctypes.c_uint] * 8), string_type
+                )
+                for family in (FAMILY, "Arial", "Symbol", "Wingdings"):
+                    name = family.encode() if suffix == "A" else family
+                    handle = check(create(-16, 0, 0, 0, 400, 0, 0, 0, 254, 0, 0, 3, 0, name), "CreateFont")
+                    old = check(select(dc, handle), "SelectObject")
+                    print(f"CreateFont{suffix} family={family!r} codepage={codepage(dc)}", flush=True)
+                    select(dc, old)
+                    delete(handle)
         for name, recorder in cases():
             print(f"\n[{name}]", flush=True)
             source = recorder.to_bytes()

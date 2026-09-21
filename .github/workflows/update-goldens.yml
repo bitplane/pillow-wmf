@@ -26,6 +26,7 @@ on:
           - codepages
           - text-environments
           - utf8-mac
+          - utf8-font
           - real-text
           - text-layout
           - text-styles
@@ -202,13 +203,13 @@ jobs:
           path: dbcs-probe/
           retention-days: 7
       - name: Probe UTF-8 and double-byte Mac pages
-        if: inputs.probe == 'utf8-mac'
+        if: startsWith(inputs.probe, 'utf8-')
         shell: bash
         run: |
           mkdir -p utf8-mac-probe
-          python scripts/probe-windows-utf8-mac.py --output utf8-mac-probe | tee utf8-mac-probe/observations.txt
+          python scripts/probe-windows-utf8-mac.py --output utf8-mac-probe ${{ inputs.probe == 'utf8-font' && '--font-only' || '' }} | tee utf8-mac-probe/observations.txt
       - name: Upload UTF-8 and Mac observations
-        if: always() && inputs.probe == 'utf8-mac'
+        if: always() && startsWith(inputs.probe, 'utf8-')
         uses: actions/upload-artifact@v4
         with:
           name: utf8-mac-probe
