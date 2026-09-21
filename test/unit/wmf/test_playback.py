@@ -222,16 +222,18 @@ def test_unsupported_creation_does_not_shift_later_handles():
         Metafile.build([fixed.SelectObject(0)]),
     ],
 )
-def test_invalid_handle_references(file):
-    with pytest.raises(PlaybackError, match="object index"):
-        play(file, TraceContext())
+def test_native_out_of_range_selection_is_noop(file):
+    trace = TraceContext()
+    assert play(file, trace, strict=True) == ()
+    assert trace.calls == []
 
 
 def test_header_capacity_is_enforced():
     file = Metafile.build([fixed.CreatePenIndirect(0, 1, 0, 0)])
     file = replace(file, header=replace(file.header, object_count=0))
-    with pytest.raises(PlaybackError, match="table is full"):
-        play(file, TraceContext())
+    trace = TraceContext()
+    assert play(file, trace, strict=True) == ()
+    assert trace.calls == []
 
 
 def test_backend_creation_must_return_a_handle():

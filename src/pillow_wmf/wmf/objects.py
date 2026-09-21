@@ -42,18 +42,26 @@ class Font:
 class Palette:
     start: int = 0x0300
     entries: tuple[tuple[int, int, int, int], ...] = ()
+    declared_count: int | None = None
+
+    @property
+    def complete(self):
+        return self.declared_count is None or self.declared_count == len(self.entries)
 
     def __post_init__(self):
         freeze_fields(self)
 
     def to_bytes(self) -> bytes:
-        return pack("HH", self.start, len(self.entries)) + b"".join(pack("4B", *entry) for entry in self.entries)
+        count = len(self.entries) if self.declared_count is None else self.declared_count
+        return pack("HH", self.start, count) + b"".join(pack("4B", *entry) for entry in self.entries)
 
     @classmethod
-    def read(cls, reader: Reader, limits: Limits):
+    def read(cls, reader: Reader, limits: Limits, *, allow_incomplete=False):
         start, count = reader.unpack("HH")
         if count > reader.remaining // 4:
-            raise FormatError("Palette entries exceed record")
+            if not allow_incomplete:
+                raise FormatError("Palette entries exceed record")
+            return cls(start, tuple(reader.unpack("4B") for _ in range(reader.remaining // 4)), count)
         return cls(start, tuple(reader.unpack("4B") for _ in range(count)))
 
 

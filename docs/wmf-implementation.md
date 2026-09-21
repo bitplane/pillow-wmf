@@ -76,10 +76,10 @@ serve as a security validator for arbitrary nested payloads.
 
 Read records retain the original function word and uninterpreted trailing bytes.
 Known text records retain padding separately. Parsed header fields are preserved
-even where they are advisory (for example maximum record size); declared stream
-size still bounds record reads. Overstated sizes are capped at the actual buffer
-length, matching complete Office/LibreOffice corpus streams accepted by Windows;
-records must still fit and EOF is required. The original size is preserved for
+even where they are advisory, including maximum record size and declared stream
+size. Like native playback, reads are bounded by the actual input buffer and
+individual record sizes, not by `mtSize`. Records must still fit and EOF is
+required. The original declared size is preserved for
 round trips, without allocating from it. Bytes after EOF are retained as the file trailer,
 including any that fall within the declared size. Canonical output excludes that
 trailer from the recalculated stream size while retaining the bytes.
@@ -92,6 +92,10 @@ Invalid framing/counts raise `FormatError`, a `ValueError` subclass. Unknown
 well-framed opcodes become `UnknownRecord`. An optional
 `validate_checksum=False` permits inspection/preservation of a damaged placeable
 checksum. Invalid units-per-inch, truncation and record bounds are still checked.
+The explicitly sized `render` API instead passes the enclosed WMF to playback,
+just like the native oracle: its optional placeable wrapper supplies no drawing
+state. Wrapper checksum and units-per-inch therefore cannot block that API;
+byte limits still include the wrapper. This does not relax codec inspection.
 
 ## Record and replay commands
 
@@ -148,11 +152,20 @@ after a partial effect. New input validation belongs in preparation, not handler
 stack begins empty. It reports unsupported records/operations as `Omission`
 values, or raises in strict mode. SETRELABS is always ignored. Unsupported object
 creations still occupy file slots, so subsequent objects cannot acquire the wrong
-index. References to those unavailable objects are reported and skipped; invalid
-file references outside the declared object table raise `PlaybackError`.
+index. References to those unavailable objects are reported and skipped.
+Native record-local failures are distinct from unsupported features: invalid
+RestoreDC levels leave the stack intact, out-of-range SelectObject/DeleteObject
+references are no-ops, and creations beyond a full file table cannot allocate a
+slot. These do not abort strict playback. Other invalid references still raise
+`PlaybackError`; resource limits remain enforced.
 Selecting or deleting an in-range empty slot is a native no-op, whether that
 slot has never been allocated or has been deleted. Deletion leaves the slot
 available for the next creation.
+
+CreatePenIndirect realizes the magnitude of a signed pen width while preserving
+the original record. Background mode values are retained by the DC; only
+TRANSPARENT (1) suppresses background painting. Other values, including malformed
+legacy values, paint opaquely and participate normally in SaveDC/RestoreDC.
 
 The RGB raster backend retains text alignment, character spacing, justification
 requests, mapper flags and selected logical fonts in saved DC state. Font

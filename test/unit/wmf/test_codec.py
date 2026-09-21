@@ -137,11 +137,12 @@ def test_overstated_size_does_not_allow_truncated_records_or_missing_eof(length)
 
 
 @pytest.mark.parametrize("word_count", [0, 9, 11, 12, 16])
-def test_understated_size_does_not_consume_records_from_trailing_data(word_count):
+def test_understated_size_does_not_override_record_stream_and_eof(word_count):
     data = bytearray(MINIMAL_LINE)
     struct.pack_into("<I", data, 6, word_count)
-    with pytest.raises(FormatError):
-        Metafile.from_bytes(bytes(data))
+    parsed = Metafile.from_bytes(bytes(data))
+    assert parsed.records == Metafile.from_bytes(MINIMAL_LINE).records
+    assert parsed.to_bytes() == bytes(data)
 
 
 def test_overstated_size_still_enforces_record_limit():
@@ -257,7 +258,6 @@ def test_independent_record_layouts(record, hex_bytes):
         (0x0521, bytes.fromhex("0300 6162")),  # Text overruns record.
         (0x0A32, bytes.fromhex("0000 0000 0000 0200")),  # Missing opaque rectangle.
         (0x0538, bytes.fromhex("0200 0100")),  # Missing polygon count.
-        (0x00F7, bytes.fromhex("0003 0100")),  # Missing palette entry.
         (0x0626, bytes.fromhex("7777 ffff")),  # Escape exceeds envelope.
         (0x06FF, bytes(22)),  # Invalid region kind.
     ],

@@ -38,11 +38,11 @@ def test_invalid_record_remains_blocked(tmp_path, load_script):
     script = load_script("audit-release.py")
     (tmp_path / "128x128").mkdir()
     recorder = Recorder()
-    recorder.set_background_mode(0)
+    recorder.escape(0x7777, b"")
     (tmp_path / "bad.wmf").write_bytes(recorder.to_bytes())
     Image.new("RGB", (8, 8), "white").save(tmp_path / "128x128/bad.png")
     script["initialize"](tmp_path, tmp_path, [], {})
     result = script["compare"]("bad.wmf")
     assert result["status"] == "blocked"
-    assert "Background mode 0" in result["error"]
+    assert "escape" in result["error"]
     assert "differing_pixels" not in result

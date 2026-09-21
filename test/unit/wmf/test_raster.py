@@ -5,11 +5,11 @@ from pillow_wmf.ellipse import ellipse_path
 from pillow_wmf.stroke import cosmetic_line, dash_is_foreground
 
 
-def test_raster_rejects_negative_pen_width_before_changing_context() -> None:
+def test_raster_realizes_negative_pen_width_as_its_magnitude() -> None:
     context = RasterContext(8, 8)
-    with pytest.raises(UnsupportedOperation, match="width"):
-        context.create_pen(style=0, width=-1, color=0)
-    assert context.calls == []
+    handle = context.create_pen(style=0, width=-1, color=0)
+    assert context._objects[handle].width == 1
+    assert context.calls[-1].kwargs["width"] == -1
     assert context.image.getpixel((0, 0)) == (255, 255, 255)
 
 
@@ -177,11 +177,11 @@ def test_polypolygon_rejects_all_contours_if_any_has_fewer_than_two_points(short
     assert dc.image.getpixel((16, 29)) == (0, 0, 0)
 
 
-def test_invalid_background_mode_does_not_change_context() -> None:
+def test_nonstandard_background_mode_is_retained() -> None:
     context = RasterContext(8, 8)
-    with pytest.raises(UnsupportedOperation, match="Background mode"):
-        context.set_background_mode(3)
-    assert context.calls == []
+    context.set_background_mode(3)
+    assert context._background_mode == 3
+    assert context.calls[-1].kwargs["mode"] == 3
 
 
 def test_invalid_hatch_does_not_create_an_object() -> None:

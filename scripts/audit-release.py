@@ -11,7 +11,8 @@ from pathlib import Path
 
 from PIL import Image, ImageChops
 
-from pillow_wmf import Metafile, SystemFontCollection, render
+from pillow_wmf import SystemFontCollection, render
+from pillow_wmf.render import _read_metafile
 from pillow_wmf.wmf.variable import ExtTextOut, TextOut
 
 
@@ -36,12 +37,12 @@ def compare(relative):
     TASK_COUNT += 1
     item = {"file": relative, "has_text": None}
     try:
-        data = (ROOT / relative).read_bytes()
-        metafile = Metafile.from_bytes(data)
-        item["has_text"] = any(isinstance(r, (TextOut, ExtTextOut)) and r.text for r in metafile.records)
         reference = (ROOT / "128x128" / relative).with_suffix(".png")
         if not reference.is_file():
             return item | {"status": "missing-reference"}
+        data = (ROOT / relative).read_bytes()
+        metafile = _read_metafile(data)
+        item["has_text"] = any(isinstance(r, (TextOut, ExtTextOut)) and r.text for r in metafile.records)
         with Image.open(reference) as image:
             native = image.convert("RGB")
         FONTS.substitutions.clear()
@@ -119,6 +120,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--resume", action="store_true", help="Continue this audit using its saved results")
+    parser.add_argument("--retry-results", type=Path, help="Only retry earlier blockers and non-text mismatches")
     args = parser.parse_args()
     baseline = json.loads(args.baseline.read_text())
     directories = baseline["font_directories"]
@@ -131,6 +133,16 @@ def main():
                 candidates.setdefault(name, "Previously blocked encoding group: " + group["error"])
     sources = sorted(str(p.relative_to(args.root)) for p in args.root.rglob("*") if p.suffix.lower() == ".wmf")
     sources.sort(key=lambda name: name not in candidates)
+    if args.retry_results:
+        previous = [json.loads(line) for line in args.retry_results.read_text().splitlines()]
+        retry = {
+            r["file"]
+            for r in previous
+            if r["status"] in ("blocked", "error", "missing-reference")
+            or r["has_text"] is False
+            and r["status"] == "different"
+        }
+        sources = [name for name in sources if name in retry]
     args.output.mkdir(parents=True, exist_ok=True)
     result_path = args.output / "results.jsonl"
     if result_path.exists() and not args.resume:

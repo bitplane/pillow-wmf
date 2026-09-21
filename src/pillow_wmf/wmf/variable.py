@@ -157,7 +157,7 @@ class PaletteRecord(Record):
 
     @classmethod
     def read(cls, reader: Reader, function: int, limits: Limits):
-        palette = Palette.read(reader, limits)
+        palette = Palette.read(reader, limits, allow_incomplete=cls.kind == RecordType.CREATEPALETTE)
         if cls.kind == RecordType.CREATEPALETTE and palette.start != 0x0300:
             raise FormatError("New palettes require start/version 0x0300")
         return cls(palette, wire_function=function, trailing=reader.rest())

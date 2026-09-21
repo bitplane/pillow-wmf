@@ -325,15 +325,9 @@ class RasterContext(TraceContext):
             transfer = self._prepare_transfer(name, a)
         elif name in ("bit_blt", "stretch_blt"):
             transfer = self._prepare_legacy_transfer(name, a)
-        elif name == "set_background_mode":
-            if a["mode"] not in (TRANSPARENT, OPAQUE):
-                raise UnsupportedOperation(f"Background mode {a['mode']}")
         elif name == "ext_flood_fill":
             if a["mode"] not in (FLOODFILLBORDER, FLOODFILLSURFACE):
                 raise UnsupportedOperation(f"Flood fill mode {a['mode']}")
-        elif name == "create_pen":
-            if a["width"] < 0:
-                raise UnsupportedOperation("Negative pen width")
         elif name == "create_brush":
             if a["style"] not in (BS_SOLID, BS_NULL, BS_HATCHED) or (
                 a["style"] == BS_HATCHED and a["hatch"] not in range(6)
@@ -444,7 +438,8 @@ class RasterContext(TraceContext):
 
     def _apply_create_palette(self, call, prepared, result):
         a = call.kwargs
-        self._objects[result] = LogicalPalette(a["palette"].entries) if a["palette"].entries else None
+        palette = a["palette"]
+        self._objects[result] = LogicalPalette(palette.entries) if palette.entries and palette.complete else None
 
     def _apply_select_palette(self, call, prepared, result):
         a = call.kwargs
@@ -555,7 +550,7 @@ class RasterContext(TraceContext):
         # styles become PS_SOLID, including styles with join/cap bits.
         # Normalize the realized object only; preserve the requested call.
         style = a["style"] if a["style"] in range(PS_SOLID, PS_INSIDEFRAME + 1) else PS_SOLID
-        self._objects[result] = Pen(logical_color(a["color"]), a["width"], style)
+        self._objects[result] = Pen(logical_color(a["color"]), abs(a["width"]), style)
 
     def _apply_create_brush(self, call, prepared, result):
         a = call.kwargs
@@ -1216,7 +1211,7 @@ class RasterContext(TraceContext):
             *origin,
             alignment,
             advances,
-            opaque=self._background_mode == OPAQUE,
+            opaque=self._background_mode != TRANSPARENT,
             max_pixels=self.max_bitmap_pixels,
             scale=abs(sx),
             extra=self._text_state.character_extra,
@@ -1310,7 +1305,9 @@ class RasterContext(TraceContext):
         if self._realized_pen().cosmetic:
             # Opaque style gaps are painted beneath foreground marks, even
             # when the figure retraces itself. Keep multiplicity in each pass.
-            passes = (False, True) if self._pen.style in range(1, 5) and self._background_mode == OPAQUE else (True,)
+            passes = (
+                (False, True) if self._pen.style in range(1, 5) and self._background_mode != TRANSPARENT else (True,)
+            )
             for foreground in passes:
                 for (x, y), mark in self._cosmetic_fragments((path,)):
                     if mark == foreground:
@@ -1343,7 +1340,7 @@ class RasterContext(TraceContext):
                     phase = position + span.step * (pixel[major] - span.start)
                     if self._pen.style in (0, 6) or dash_is_foreground(self._pen.style, phase):
                         yield pixel, True
-                    elif self._background_mode == OPAQUE:
+                    elif self._background_mode != TRANSPARENT:
                         yield pixel, False
                 position += len(span)
 
@@ -1456,4 +1453,6 @@ class RasterContext(TraceContext):
         mark = (horizontal, vertical, forward, backward, horizontal or vertical, forward or backward)[brush.hatch]
         if mark:
             return self._palette.colorref(brush.color)
-        return self._palette.colorref(self._background_color) if opaque or self._background_mode == OPAQUE else None
+        return (
+            self._palette.colorref(self._background_color) if opaque or self._background_mode != TRANSPARENT else None
+        )

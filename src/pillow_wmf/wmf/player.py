@@ -68,7 +68,7 @@ def play(
             level = record.saved_dc
             target = level if level > 0 else len(saved) + level + 1
             if level == 0 or target < 1 or target > len(saved):
-                raise PlaybackError(f"Record {index}: invalid saved DC reference")
+                continue  # Native WMF ignores failed RestoreDC without popping.
             native_saved = saved[target - 1]
             del saved[target - 1 :]
             if native_saved is None:
@@ -76,6 +76,13 @@ def play(
                 continue
         elif name == "save_dc":
             saved.append(None)
+        if name in {"select_object", "delete_object"} and record.object_index >= len(slots):
+            continue  # A failed native object lookup leaves the DC unchanged.
+        if name in {"fill_region", "frame_region", "invert_region", "paint_region"} and any(
+            not 0 <= (value := getattr(record, field)) < len(slots) or slots[value] is empty
+            for _, field in binding.references
+        ):
+            continue  # Native region painting fails locally on null handles.
         references = dict(binding.references)
         arguments = {}
         missing = False
@@ -116,7 +123,7 @@ def play(
         slot = None
         if record.kind in CREATION_TYPES:
             if not free:
-                raise PlaybackError(f"Record {index}: object table is full")
+                continue  # Excess creations cannot enter the native handle table.
             slot = heapq.heappop(free)
             free_slots.remove(slot)
             slots[slot] = unavailable

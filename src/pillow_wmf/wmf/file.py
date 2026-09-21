@@ -156,21 +156,15 @@ class Metafile:
             raise FormatError("File byte limit exceeded")
         reader = Reader(data)
         placeable = PlaceableHeader.read(reader, validate_checksum) if data[:4] == b"\xd7\xcd\xc6\x9a" else None
-        start = reader.position
         header = Header(*reader.unpack("HHHIHIH"))
         if header.type not in (1, 2) or header.version not in (0x0100, 0x0300) or header.header_size != 9:
             raise FormatError("Unsupported WMF header type, version or size")
         if header.object_count > limits.max_objects:
             raise FormatError("Object capacity limit exceeded")
-        end = start + header.size * 2
-        if end < reader.position + 6:
-            raise FormatError("Invalid declared metafile size")
-        # Windows accepts complete streams with an overstated mtSize (seen in
-        # both Office clipart and the LibreOffice corpus). Keep the original
-        # header for round trips, but never read past the available bytes or
-        # allocate from this untrusted size. Record bounds and EOF remain
-        # mandatory; a smaller declared size still bounds the record stream.
-        end = min(end, len(data))
+        # Native playback walks records to EOF using the supplied buffer, not
+        # mtSize. Preserve that advisory value for round trips, but never use
+        # it for allocation or to override actual record and buffer bounds.
+        end = len(data)
         records = []
         while reader.position < end:
             if len(records) >= limits.max_records:

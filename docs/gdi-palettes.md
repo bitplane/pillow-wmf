@@ -16,6 +16,18 @@ draws observe logical entry changes without requiring realization. PC_EXPLICIT
 references a hardware palette; on this target those entries translate to black.
 PC_NOCOLLAPSE has no visible effect on this target.
 
+COLORREF bit 24 selects a logical palette index from the low WORD even when
+other high bits are set. It is not an equality check against high byte `0x01`.
+Other high bits do not affect literal RGB conversion when bit 24 is clear.
+Out-of-range COLORREF indexes select entry zero; this differs from DIB table wrap.
+
+An incomplete CreatePalette record retains its declared entry count and the
+entries actually contained within the record. It never borrows bytes from the
+next record. Native creation fails for this object, leaving a null handle;
+selecting it keeps the existing palette. This is distinct from an unsupported
+operation and does not prevent later drawing. Palette update records still
+require their declared entries to be present.
+
 ## DIB consumers
 
 The DIB layout retains unresolved WORD entries for DIB_PAL_COLORS. A logical
