@@ -16,7 +16,7 @@ def font_record(request):
         # ASCII is independent of the eventual playback ANSI environment.
         # Non-ASCII export must explicitly select its encoded representation.
         try:
-            values["face_name"] = name.encode("ascii")
+            values["face_name"] = name.encode("ascii").ljust(32, b"\0")
         except UnicodeEncodeError as error:
             raise UnsupportedOperation("WMF font export requires an explicitly encoded non-ASCII face name") from error
     return Font(**values)

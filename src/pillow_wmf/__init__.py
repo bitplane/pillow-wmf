@@ -1,6 +1,6 @@
 """WMF codec, GDI recording and Pillow loading with an RGB raster backend."""
 
-from .gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
+from .gdi import GDI, Call, Handle, InvalidOperation, PreparedCall, UnsupportedOperation
 from .objects import (
     EncodedFaceName,
     EncodedText,
@@ -12,6 +12,7 @@ from .objects import (
 )
 from .plugin import register as _register
 from .raster import RasterContext
+from .recording import RecordingContext
 from .render import render
 from .system_fonts import FontSubstitution, SystemFontCollection
 from .text import FontCollection, FontFace
@@ -45,8 +46,10 @@ __all__ = [
     "Metafile",
     "Omission",
     "PlaceableHeader",
+    "PreparedCall",
     "PlaybackError",
     "RasterContext",
+    "RecordingContext",
     "Recorder",
     "TraceContext",
     "UnsupportedOperation",
