@@ -20,6 +20,7 @@ on:
           - text
           - symbol
           - mt-extra
+          - dbcs
           - real-text
           - text-layout
           - text-styles
@@ -181,6 +182,19 @@ jobs:
         with:
           name: mtextra-probe
           path: mtextra-probe/
+          retention-days: 7
+      - name: Probe CP932 decoding and spacing
+        if: inputs.probe == 'dbcs'
+        shell: bash
+        run: |
+          mkdir -p dbcs-probe
+          python scripts/probe-windows-dbcs.py --output dbcs-probe | tee dbcs-probe/observations.txt
+      - name: Upload CP932 observations
+        if: always() && inputs.probe == 'dbcs'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbcs-probe
+          path: dbcs-probe/
           retention-days: 7
       - name: Probe extended DIB device acceptance
         if: inputs.probe == 'dib-boundaries'
