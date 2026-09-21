@@ -45,6 +45,7 @@ def gallery(
     text_only=False,
     font_note="Primary fonts use identical files. Extra fallback fonts may differ from Windows.",
     fonts=None,
+    case_notes=None,
 ):
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -105,6 +106,8 @@ def gallery(
             note += " Rotation: line/background bounds and some placements still need alignment; this is not mask-only."
         if any(scale < 0 for scale in context.mapping.linear_scale):
             note += " Reflected mapping: opaque bounds still need alignment."
+        if case_notes and str(wmf) in case_notes:
+            note = case_notes[str(wmf)] + " — " + note
         entries.append(
             f"<section><h2>{escape(wmf.stem)} — {count} differing pixels</h2>"
             f"<p>{note}</p><div>{''.join(cells)}</div></section>"
