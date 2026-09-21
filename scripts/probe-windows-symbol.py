@@ -23,8 +23,10 @@ def main():
             source,
             family=None,
             size=SIZE,
-            sample=bytes(range(256)),
-            characters="".join(chr(0xF000 | byte) for byte in range(256)),
+            sample=b"\xc5" if name.startswith("symbol-missing-") else bytes(range(256)),
+            characters="\uf0c5"
+            if name.startswith("symbol-missing-")
+            else "".join(chr(0xF000 | byte) for byte in range(256)),
         )
         (args.output / f"{name}.wmf").write_bytes(source)
         render_wmf(source, *SIZE).save(args.output / f"{name}.png")
@@ -34,7 +36,7 @@ def main():
     with private_fonts([Path(__file__).resolve().parents[1] / "test/fonts/symbols.ttf"]):
         source = custom_selection_case().to_bytes()
         print("\n[custom-symbol-selection]", flush=True)
-        observe(source, family=None, sample=b"AB \x80\xe9\xff")
+        observe(source, family=None, sample=b"AB")
         (args.output / "custom-symbol-selection.wmf").write_bytes(source)
         render_wmf(source, 128, 128).save(args.output / "custom-symbol-selection.png")
 
