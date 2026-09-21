@@ -1,6 +1,6 @@
 """Bounded RLE4/RLE8 command decoding in bottom-up storage coordinates."""
 
-from .wmf.binary import FormatError
+from .binary import FormatError
 
 
 def decode_rle(data, width, height, depth, *, clip_spans=None):
