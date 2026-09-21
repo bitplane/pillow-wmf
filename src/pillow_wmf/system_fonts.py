@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass, replace
-from functools import cached_property
+from functools import cached_property, lru_cache
 from pathlib import Path
 
 from fontTools.ttLib import TTCollection, TTFont, TTLibError
@@ -94,6 +94,16 @@ def catalogue(paths):
             continue
 
 
+@lru_cache(maxsize=16)
+def _catalogue_snapshot(paths):
+    return tuple(catalogue(paths))
+
+
+@lru_cache(maxsize=1)
+def _host_inventory():
+    return _catalogue_snapshot(tuple(font_paths()))
+
+
 FAMILIES = {
     "arial": ("Liberation Sans", "Arial", "DejaVu Sans"),
     "helvetica": ("Liberation Sans", "Arial", "DejaVu Sans"),
@@ -115,6 +125,9 @@ class SystemFontCollection(FontCollection):
     Discovery is lazy. Pass paths to use a bounded application font inventory
     instead of the host. Unsupported outline formats are ignored. Missing glyphs
     use .notdef after installed Unicode fallbacks have been exhausted.
+    Immutable catalogues are shared across jobs, including host discovery.
+    Call clear_cache() after installing, removing or replacing fonts, then
+    construct a new collection. Existing jobs retain their inventory snapshot.
     """
 
     def __init__(self, *, paths=None, ansi_codepage=1252, oem_codepage=437, mac_codepage=None, default_font=None):
@@ -134,7 +147,19 @@ class SystemFontCollection(FontCollection):
 
     @cached_property
     def inventory(self):
-        return tuple(catalogue(font_paths() if self._paths is None else self._paths))
+        if self._paths is None:
+            return _host_inventory()
+        return _catalogue_snapshot(tuple(sorted({Path(path).resolve() for path in self._paths})))
+
+    @staticmethod
+    def clear_cache():
+        """Refresh discovery/catalogues for future jobs; live jobs stay unchanged.
+
+        Loaded FreeType faces and substitution reports are never shared.
+        Changes to files at existing paths also require this explicit refresh.
+        """
+        _host_inventory.cache_clear()
+        _catalogue_snapshot.cache_clear()
 
     def _name(self, request):
         return decode_codepage(request.face_name.split(b"\0", 1)[0], self.ansi_codepage).text

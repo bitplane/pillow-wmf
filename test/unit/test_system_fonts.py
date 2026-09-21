@@ -1,5 +1,6 @@
 """Automatic font policy tested with controlled inventories, never host fonts."""
 
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -10,6 +11,110 @@ from pillow_wmf import Font, FontCollection, Recorder, SystemFontCollection, Uns
 from pillow_wmf.system_fonts import font_paths
 
 SOURCE = Path(__file__).parents[1] / "fonts/layout.ttf"
+
+
+@pytest.fixture(autouse=True)
+def fresh_discovery_cache():
+    SystemFontCollection.clear_cache()
+    yield
+    SystemFontCollection.clear_cache()
+
+
+def test_host_catalogue_is_shared_but_render_state_is_not(monkeypatch, installed):
+    from pillow_wmf import system_fonts
+
+    path = installed("Liberation Sans")
+    discoveries = []
+    scans = []
+    original = system_fonts.catalogue
+
+    def discover():
+        discoveries.append(True)
+        return [path]
+
+    def scan(paths):
+        scans.append(paths)
+        return original(paths)
+
+    monkeypatch.setattr(system_fonts, "font_paths", discover)
+    monkeypatch.setattr(system_fonts, "catalogue", scan)
+    first, second = SystemFontCollection(), SystemFontCollection()
+    assert first.inventory is second.inventory
+    assert len(discoveries) == len(scans) == 1
+    first_face = first.resolve(None)
+    assert first.substitutions and not second.substitutions
+    assert second.resolve(None) is not first_face
+    assert first._loaded is not second._loaded
+
+
+def test_explicit_inventory_refresh_sees_replaced_files(installed):
+    path = installed("Original")
+    first = SystemFontCollection(paths=[path])
+    assert first.inventory[0].family == "Original"
+    assert SystemFontCollection(paths=[str(path), path]).inventory is first.inventory
+    with TTFont(path) as font:
+        for record in font["name"].names:
+            if record.nameID in (1, 16):
+                record.string = "Replacement".encode(record.getEncoding())
+        font.save(path)
+    SystemFontCollection.clear_cache()
+    assert SystemFontCollection(paths=[path]).inventory[0].family == "Replacement"
+    assert first.inventory[0].family == "Original"
+
+
+def test_host_refresh_rediscovers_added_and_removed_files(monkeypatch, installed):
+    paths = [installed("First")]
+    monkeypatch.setattr("pillow_wmf.system_fonts.font_paths", lambda: paths.copy())
+    old = SystemFontCollection()
+    assert old.inventory[0].family == "First"
+    paths[:] = [installed("Second")]
+    SystemFontCollection.clear_cache()
+    assert SystemFontCollection().inventory[0].family == "Second"
+    assert old.inventory[0].family == "First"
+
+
+@pytest.mark.parametrize(
+    "platform,expected",
+    [
+        ("win32", ["/windows/Fonts", "/local/Microsoft/Windows/Fonts"]),
+        ("darwin", ["/System/Library/Fonts", "/Library/Fonts", "/user/Library/Fonts"]),
+        ("linux", ["/usr/share/fonts", "/usr/local/share/fonts", "/user/.fonts", "/xdg/fonts"]),
+    ],
+)
+def test_directory_discovery_without_fontconfig(monkeypatch, platform, expected):
+    from pillow_wmf import system_fonts
+
+    def absent(*args, **kwargs):
+        raise FileNotFoundError("fc-list")
+
+    visited = []
+
+    def scan(root, pattern):
+        assert pattern == "*"
+        visited.append(str(root))
+        return iter([Path("/fonts/a.TTF"), Path("/fonts/b.ttc"), Path("/fonts/c.otf"), Path("/fonts/license.txt")])
+
+    monkeypatch.setattr(system_fonts.subprocess, "run", absent)
+    monkeypatch.setattr(system_fonts.sys, "platform", platform)
+    monkeypatch.setattr(Path, "home", lambda: Path("/user"))
+    monkeypatch.setattr(Path, "rglob", scan)
+    monkeypatch.setenv("WINDIR", "/windows")
+    monkeypatch.setenv("LOCALAPPDATA", "/local")
+    monkeypatch.setenv("XDG_DATA_HOME", "/xdg")
+    assert font_paths() == [Path("/fonts/a.TTF"), Path("/fonts/b.ttc"), Path("/fonts/c.otf")]
+    assert visited == expected
+
+
+@pytest.mark.parametrize(
+    "error", [subprocess.TimeoutExpired("fc-list", 10), subprocess.CalledProcessError(1, "fc-list")]
+)
+def test_fontconfig_failure_uses_directory_scan(monkeypatch, error):
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr("pillow_wmf.system_fonts.subprocess.run", fail)
+    monkeypatch.setattr(Path, "rglob", lambda *args: iter([Path("/fallback.ttf")]))
+    assert font_paths() == [Path("/fallback.ttf")]
 
 
 @pytest.fixture
