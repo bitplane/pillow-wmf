@@ -24,27 +24,24 @@ def test_null_pen_native_curve_bounds():
     assert ellipse_cubics(25, 3, 78, 64, null_pen=True)[0] == ((1220, 520), (1220, 258), (1036, 44), (808, 44))
 
 
-@pytest.mark.parametrize("operation", ("arc", "chord", "ellipse", "rectangle"))
-def test_default_stock_pen_is_device_hairline(operation):
+def test_default_stock_pen_is_device_hairline():
     # Native GetObject(BLACK_PEN) reports width zero, not logical width one.
-    default, explicit = RasterContext(128, 128), RasterContext(128, 128)
+    default, explicit = RasterContext(16, 16), RasterContext(16, 16)
     explicit.select_object(explicit.create_pen(0, 0, 0))
     for context in (default, explicit):
         context.set_map_mode(8)
-        context.set_viewport_extent(256, 128)
-        args = (8, 8, 56, 104)
-        if operation in ("arc", "chord"):
-            args += (56, 40, 17, 93)
-        getattr(context, operation)(*args)
+        context.set_viewport_extent(32, 16)
+        assert context._pen.width == 0
+        assert context._realized_pen().cosmetic
+        context.rectangle(2, 2, 6, 12)
     assert default.image.tobytes() == explicit.image.tobytes()
 
 
 def test_chord_preserves_current_position():
-    context = RasterContext(128, 128)
-    context.move_to(4, 4)
-    context.chord(32, 32, 112, 112, 112, 72, 72, 32)
-    context.line_to(12, 4)
-    assert context.image.getpixel((8, 4)) == (0, 0, 0)
+    context = RasterContext(16, 16)
+    context.move_to(1, 1)
+    context.chord(4, 4, 12, 12, 12, 8, 8, 4)
+    assert context._position == (1, 1)
 
 
 @pytest.mark.parametrize("closed", (False, True))

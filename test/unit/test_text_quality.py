@@ -1,35 +1,29 @@
 """Outline font-matching hints share the default smoothing policy."""
 
-import runpy
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from pillow_wmf import FontCollection, FontFace, Metafile, RasterContext, UnsupportedOperation, play
+from pillow_wmf import FontCollection, FontFace, RasterContext, UnsupportedOperation
 from pillow_wmf.wmf.objects import Font
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("profile", ["small", "cell", "scaled-angle"])
-def test_outline_default_draft_and_proof_share_pixels_and_layout(profile):
-    cases = runpy.run_path(str(ROOT / "scripts/text_quality_cases.py"))["cases"]
-    face = FontFace.from_path(ROOT / "test/fonts/layout.ttf")
-    images = []
-    for name, family, recorder in cases():
-        if family != face.family or not name.endswith(tuple(f"{profile}-{q}" for q in (0, 1, 2))):
-            continue
-        source = recorder.to_bytes()
-        metafile = Metafile.from_bytes(source)
-        assert metafile.to_bytes() == source
-        dc = RasterContext(320, 100, fonts=FontCollection([face]))
-        play(metafile, dc, strict=True)
-        quality = int(name[-1])
+@pytest.mark.parametrize("height,width,angle", [(-11, 0, 0), (24, 0, 0), (-24, 15, -27)])
+def test_outline_default_draft_and_proof_share_layout(face, height, width, angle):
+    layouts = []
+    for quality in (0, 1, 2):
+        dc = RasterContext(80, 40, fonts=FontCollection([face]))
+        request = Font(height=height, width=width, escapement=angle, quality=quality, face_name=face.family.encode())
+        dc.select_object(dc.create_font(request))
+        dc.set_text_alignment(25)
+        dc.move_to(4, 24)
+        layout, _ = dc._prepare_text(dict(x=0, y=0, text=b"AB", advances=(20, 20)))
         assert dc._text_state.font.quality == quality
-        images.append((dc.image.tobytes(), dc._position))
-    assert len(images) == 3
-    assert images[0] == images[1] == images[2]
+        layouts.append(layout)
+    assert layouts[0] == layouts[1] == layouts[2]
 
 
 def test_outline_quality_retains_request_and_explicit_monochrome():
@@ -43,6 +37,16 @@ def test_outline_quality_retains_request_and_explicit_monochrome():
         assert glyph.channels == (1 if quality == 3 else 3)
         masks.append(glyph)
     assert masks[0] == masks[1] == masks[2]
+
+
+def test_outline_default_draft_and_proof_compose_identically(face):
+    images = []
+    for quality in (0, 1, 2):
+        dc = RasterContext(24, 24, fonts=FontCollection([face]))
+        dc.select_object(dc.create_font(Font(height=-16, quality=quality, face_name=face.family.encode())))
+        dc.text_out(2, 2, b"A")
+        images.append(dc.image.tobytes())
+    assert images[0] == images[1] == images[2]
 
 
 @pytest.mark.parametrize("quality", [7, 255])

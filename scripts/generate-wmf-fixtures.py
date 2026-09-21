@@ -2095,10 +2095,10 @@ def halftone_boundary_cases():
     yield "halftone-rop3", r
 
 
-def check_cases():
-    """Validate the full export corpus without rendering or writing files."""
+def check_case_streams(first, second):
+    """Check determinism, lossless bytes and normalized playback commands."""
     seen = set()
-    for (name, recorder), (again, repeated) in zip(all_cases(), all_cases(), strict=True):
+    for (name, recorder), (again, repeated) in zip(first, second, strict=True):
         if name in seen:
             raise ValueError(f"Duplicate generated fixture: {name}")
         seen.add(name)
@@ -2118,9 +2118,23 @@ def check_cases():
         ]
         if trace.calls != expected:
             raise ValueError(f"Changed playback calls: {name}")
+    return seen
+
+
+def check_cases():
+    """Validate the full export corpus without rendering or writing files."""
+    seen = check_case_streams(all_cases(), all_cases())
     if missing := LOCAL_CASES - seen:
         raise ValueError(f"Unknown local regression names: {sorted(missing)}")
     return len(seen)
+
+
+def text_probe_cases():
+    """Development-only text collections, independent of the local suite."""
+    for script in ("real_text_cases.py", "text_layout_cases.py", "text_encoding_cases.py"):
+        factory = runpy.run_path(str(Path(__file__).with_name(script)))
+        for case in factory["cases"]():
+            yield f"{script}/{case[0]}", case[-1]
 
 
 def main():
@@ -2131,6 +2145,7 @@ def main():
     args = parser.parse_args()
     if args.check:
         print(f"Validated {check_cases()} generated fixtures")
+        print(f"Validated {len(check_case_streams(text_probe_cases(), text_probe_cases()))} text probes")
         return
     destination = args.corpus if args.corpus is not None else FIXTURES
     if args.corpus is not None and destination.resolve().is_relative_to(FIXTURES.resolve()):

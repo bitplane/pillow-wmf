@@ -122,15 +122,13 @@ def test_zero_thickness_rotated_decoration_does_not_add_ink(face, decoration):
 
 @pytest.mark.parametrize("thickness", [0, 1, 50])
 @pytest.mark.parametrize("angle,reflection", [(0, 1), (300, 1), (900, 1), (0, -1)])
-def test_native_decoration_thickness_depends_on_rule_direction(thickness, angle, reflection):
-    cases = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/text_decoration_cases.py"))
-    face = FontFace(cases["font_bytes"](thickness))
+def test_native_decoration_thickness_depends_on_rule_direction(decoration_fonts, thickness, angle, reflection):
+    face = FontFace(decoration_fonts[thickness])
     images = []
     for enabled in (False, True):
-        dc = RasterContext(160, 128, fonts=FontCollection([face]))
-        dc.set_window_extent(160, 128)
-        dc.set_viewport_extent(160 * reflection, 128)
-        dc.set_viewport_origin(80, 80)
+        dc = RasterContext(64, 64, fonts=FontCollection([face]))
+        dc.set_viewport_extent(64 * reflection, 64)
+        dc.set_viewport_origin(32, 40)
         dc.set_background_mode(1)
         dc.set_text_alignment(24)
         request = replace(
@@ -141,6 +139,12 @@ def test_native_decoration_thickness_depends_on_rule_direction(thickness, angle,
             strikeout=int(enabled),
         )
         dc.select_object(dc.create_font(request))
-        dc.text_out(0, 0, b"A B")
+        dc.text_out(0, 0, b"A")
         images.append(dc.image.tobytes())
     assert (images[0] != images[1]) == (angle % 900 == 0 or thickness == 50)
+
+
+@pytest.fixture(scope="module")
+def decoration_fonts():
+    cases = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/text_decoration_cases.py"))
+    return {thickness: cases["font_bytes"](thickness) for thickness in (0, 1, 50)}

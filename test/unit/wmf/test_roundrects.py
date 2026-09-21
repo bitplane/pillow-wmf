@@ -23,11 +23,10 @@ def test_native_corner_radius_half_tie_rounds_up():
 
 
 def test_round_rect_preserves_current_position():
-    context = RasterContext(128, 128)
-    context.move_to(4, 4)
-    context.round_rect(32, 32, 112, 112, 17, 29)
-    context.line_to(12, 4)
-    assert context.image.getpixel((8, 4)) == (0, 0, 0)
+    context = RasterContext(16, 16)
+    context.move_to(1, 1)
+    context.round_rect(4, 4, 12, 12, 3, 5)
+    assert context._position == (1, 1)
 
 
 @pytest.mark.parametrize("box", ((8, 8, 8, 64), (8, 8, 64, 8)))

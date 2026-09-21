@@ -24,11 +24,10 @@ def test_full_revolution_pie_keeps_both_radials():
 
 
 def test_pie_preserves_current_position():
-    context = RasterContext(128, 128)
-    context.move_to(4, 4)
-    context.pie(32, 32, 112, 112, 112, 72, 72, 32)
-    context.line_to(12, 4)
-    assert context.image.getpixel((8, 4)) == (0, 0, 0)
+    context = RasterContext(16, 16)
+    context.move_to(1, 1)
+    context.pie(4, 4, 12, 12, 12, 8, 8, 4)
+    assert context._position == (1, 1)
 
 
 @pytest.mark.parametrize("box", ((8, 8, 8, 64), (8, 8, 64, 8)))

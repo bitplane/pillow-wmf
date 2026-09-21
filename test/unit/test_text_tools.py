@@ -1,19 +1,8 @@
 import pytest
 from PIL import Image
 
-from pillow_wmf import Metafile, Recorder, TraceContext, play
+from pillow_wmf import Recorder
 from pillow_wmf.wmf.objects import Font
-
-
-def test_real_font_cases_are_small_deterministic_and_lossless(load_script):
-    cases = load_script("real_text_cases.py")["cases"]
-    first = [(name, family, recorder.to_bytes()) for name, family, recorder in cases()]
-    assert first == [(name, family, recorder.to_bytes()) for name, family, recorder in cases()]
-    assert len(first) == len({name for name, _, _ in first}) == 12
-    for _, _, source in first:
-        metafile = Metafile.from_bytes(source)
-        assert metafile.to_bytes() == source
-        assert play(metafile, TraceContext(), strict=True) == ()
 
 
 def test_cached_font_bytes_are_verified_before_use(tmp_path, load_script):
@@ -23,28 +12,10 @@ def test_cached_font_bytes_are_verified_before_use(tmp_path, load_script):
         fetch(tmp_path)
 
 
-def test_layout_probe_records_signed_spacing_and_round_trips(load_script):
-    cases = load_script("text_layout_cases.py")["cases"]
-    for _, _, recorder in cases():
-        source = recorder.to_bytes()
-        metafile = Metafile.from_bytes(source)
-        assert metafile.to_bytes() == source
-        trace = TraceContext()
-        assert play(metafile, trace, strict=True) == ()
-        assert trace.calls == recorder.calls
-
-
-def test_encoding_probe_inputs_are_lossless_and_fonts_are_reproducible(load_script):
+def test_encoding_fonts_are_reproducible(load_script):
     factory = load_script("text_encoding_cases.py")
     for symbol, filename in ((False, "encoding.ttf"), (True, "symbols.ttf")):
         assert factory["font_bytes"](symbol=symbol) == (factory["FONT_ROOT"] / filename).read_bytes()
-    for _, _, _, _, recorder in factory["cases"]():
-        source = recorder.to_bytes()
-        metafile = Metafile.from_bytes(source)
-        assert metafile.to_bytes() == source
-        trace = TraceContext()
-        assert play(metafile, trace, strict=True) == ()
-        assert trace.calls == recorder.calls
 
 
 def test_gallery_omits_exact_cases_keeps_single_channel_differences_and_reports_blocked(tmp_path, load_script):

@@ -126,6 +126,9 @@ def test_fallback_victory_hand_uses_design_metrics_not_canvas_fitting(size):
     assert abs(glyph.bearing[0] - 173 * xscale) < 2
     assert abs(glyph.bearing[1] + 1604 * yscale) < 2
     assert abs(glyph.advance - 1203 * xscale) < 1
+
+
+def test_source_unicode_face_retains_its_original_metrics():
     # Loading the Unicode face directly never applies Wingdings metrics.
     original = FontFace.from_path(Path(__file__).resolve().parents[2] / "src/fonts/NotoSansSymbols2-Regular.ttf")
     assert (original.units_per_em, original.average_width) == (1000, 830)

@@ -12,10 +12,10 @@ from pillow_wmf.stroke import join_outline, realize_pen
 def test_insideframe_is_solid_for_unbounded_primitives(width):
     images = []
     for style in (0, 6):
-        context = RasterContext(128, 128)
+        context = RasterContext(24, 24)
         context.select_object(context.create_pen(style, width, 0))
-        context.polyline(((8, 8), (112, 32), (8, 56)))
-        context.polygon(((8, 72), (112, 80), (48, 112)))
+        context.polyline(((4, 4), (20, 6), (4, 9)))
+        context.polygon(((4, 14), (20, 16), (12, 20)))
         images.append(context.image.tobytes())
     assert images[0] == images[1]
 
