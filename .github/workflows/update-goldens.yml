@@ -21,6 +21,7 @@ on:
           - symbol
           - mt-extra
           - dbcs
+          - dbcs-extended
           - codepages
           - real-text
           - text-layout
@@ -185,13 +186,13 @@ jobs:
           path: mtextra-probe/
           retention-days: 7
       - name: Probe CP932 decoding and spacing
-        if: inputs.probe == 'dbcs'
+        if: inputs.probe == 'dbcs' || inputs.probe == 'dbcs-extended'
         shell: bash
         run: |
           mkdir -p dbcs-probe
-          python scripts/probe-windows-dbcs.py --output dbcs-probe | tee dbcs-probe/observations.txt
+          python scripts/probe-windows-dbcs.py --output dbcs-probe ${{ inputs.probe == 'dbcs-extended' && '--extended' || '' }} | tee dbcs-probe/observations.txt
       - name: Upload CP932 observations
-        if: always() && inputs.probe == 'dbcs'
+        if: always() && (inputs.probe == 'dbcs' || inputs.probe == 'dbcs-extended')
         uses: actions/upload-artifact@v4
         with:
           name: dbcs-probe

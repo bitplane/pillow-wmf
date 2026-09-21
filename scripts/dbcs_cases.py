@@ -8,6 +8,49 @@ from fontTools.ttLib import TTFont
 from pillow_wmf import Font, Recorder
 
 FAMILY = "Pillow WMF CP932"
+EXTENDED_FAMILY = "Pillow WMF DBCS"
+EXTENDED_CODEPAGES = {936: (134, 18, "一"), 949: (129, 19, "가"), 950: (136, 20, "一"), 1361: (130, 21, "가")}
+
+
+def extended_font_bytes():
+    with TTFont(BytesIO(font_bytes()), recalcTimestamp=False) as font:
+        for record in font["name"].names:
+            if record.nameID in (1, 4, 6):
+                name = EXTENDED_FAMILY.replace(" ", "") if record.nameID == 6 else EXTENDED_FAMILY
+                record.string = name.encode(record.getEncoding())
+        for table in font["cmap"].tables:
+            table.cmap.update({ord("一"): "B", ord("가"): "B"})
+        font["OS/2"].ulCodePageRange1 |= sum(1 << bit for _, bit, _ in EXTENDED_CODEPAGES.values())
+        output = BytesIO()
+        font.save(output)
+        return output.getvalue()
+
+
+def extended_cases():
+    for mode, advances, options in (
+        ("natural", (), 0),
+        ("split", (9, 5, 7, 13), 0),
+        ("pdy", (9, 1, 5, 2, 7, 3, 13, -6), 0x2000),
+    ):
+        r = Recorder()
+        r.set_background_mode(1)
+        r.set_text_alignment(25)
+        for row, (codepage, (charset, _, character)) in enumerate(EXTENDED_CODEPAGES.items()):
+            r.select_object(
+                r.create_font(
+                    Font(
+                        face_name=EXTENDED_FAMILY.encode().ljust(32, b"\0"),
+                        height=-16,
+                        weight=400,
+                        charset=charset,
+                        quality=3,
+                    )
+                )
+            )
+            r.move_to(8, 24 + row * 30)
+            r.ext_text_out(0, 0, b"A" + character.encode(f"cp{codepage}") + b"B", advances=advances, options=options)
+            r.text_out(0, 0, b"B")
+        yield f"dbcs-{mode}", r
 
 
 def font_bytes():
