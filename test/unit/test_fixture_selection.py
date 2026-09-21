@@ -5,13 +5,16 @@ import pytest
 from pillow_wmf import Recorder
 
 
-def test_fixture_suites_partition_all_generated_inputs(load_script):
+def test_fixture_suites_partition_all_generated_inputs(monkeypatch, load_script):
     factory = load_script("generate-wmf-fixtures.py")
-    all_names = {name for name, _ in factory["all_cases"]()}
+    inputs = [(name, Recorder()) for name in ("local-a", "external-a", "local-b", "external-b")]
+    monkeypatch.setitem(factory["cases"].__globals__, "all_cases", lambda: iter(inputs))
+    monkeypatch.setitem(factory["cases"].__globals__, "LOCAL_CASES", {"local-a", "local-b"})
+    all_names = {name for name, _ in inputs}
     local = {name for name, _ in factory["cases"]()}
     corpus = {name for name, _ in factory["cases"](corpus=True)}
     assert local and corpus
-    assert local == factory["LOCAL_CASES"]
+    assert local == {"local-a", "local-b"}
     assert local.isdisjoint(corpus)
     assert local | corpus == all_names
 

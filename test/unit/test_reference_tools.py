@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from pillow_wmf import Metafile, Recorder, TraceContext, play
+from pillow_wmf import Font, Recorder
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
@@ -60,24 +60,33 @@ def test_diagnostics_fail_on_differences_without_writing_references(monkeypatch,
     assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
 
 
-def test_foundation_inputs_are_unique_reproducible_and_lossless(playback_calls):
-    cases = runpy.run_path(str(SCRIPTS / "generate-wmf-fixtures.py"))["all_cases"]
-    first = list(cases())
-    second = list(cases())
-    names = [name for name, _ in first]
-    assert len(names) == len(set(names))
-    assert {"coords-inherited", "pen-width-0-scale-x", "drawing-ellipse-odd", "state-clip-offset-vector"} <= set(names)
-    for (name, recorder), (again, repeated) in zip(first, second, strict=True):
-        source = recorder.to_bytes()
-        assert name == again
-        # Committed local bytes are checked by the compatibility suite. The
-        # full generator must remain deterministic without an external corpus.
-        assert source == repeated.to_bytes()
-        metafile = Metafile.from_bytes(source)
-        assert metafile.to_bytes() == source
-        trace = TraceContext()
-        assert play(metafile, trace, strict=True) == ()
-        assert trace.calls == playback_calls(recorder.calls)
+def test_full_generator_check_validates_round_trips_and_normalization(monkeypatch, load_script):
+    check = load_script("generate-wmf-fixtures.py")["check_cases"]
+
+    def cases():
+        recorder = Recorder()
+        recorder.select_object(recorder.create_font(Font(charset=254)))
+        recorder.set_pixel(1, 2, 255)
+        yield "small", recorder
+
+    monkeypatch.setitem(check.__globals__, "all_cases", cases)
+    monkeypatch.setitem(check.__globals__, "LOCAL_CASES", {"small"})
+    assert check() == 1
+
+
+def test_full_generator_check_rejects_nondeterminism(monkeypatch, load_script):
+    check = load_script("generate-wmf-fixtures.py")["check_cases"]
+    counter = iter(range(2))
+
+    def cases():
+        recorder = Recorder()
+        recorder.set_pixel(0, 0, next(counter))
+        yield "unstable", recorder
+
+    monkeypatch.setitem(check.__globals__, "all_cases", cases)
+    monkeypatch.setitem(check.__globals__, "LOCAL_CASES", set())
+    with pytest.raises(ValueError, match="Non-reproducible fixture: unstable"):
+        check()
 
 
 def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
@@ -142,13 +151,13 @@ def test_explicit_pair_uses_png_dimensions_not_directory_label(tmp_path):
     source = tmp_path / "input.wmf"
     recorder = Recorder()
     recorder.select_object(recorder.create_brush(0, 0x332211, 0))
-    recorder.pat_blt(0, 0, 1000, 1000, 0xF00021)
+    recorder.pat_blt(0, 0, 20, 20, 0xF00021)
     source.write_bytes(recorder.to_bytes())
     png = tmp_path / "different-name.png"
-    Image.new("RGB", (257, 193), (17, 34, 51)).save(png)
+    Image.new("RGB", (7, 3), (17, 34, 51)).save(png)
     compare = runpy.run_path(str(SCRIPTS / "reference_compare.py"))["compare_reference"]
     result = compare(source, png)
-    assert result.pixels == 257 * 193
+    assert result.pixels == 7 * 3
     assert result.differing_pixels == 0
 
 

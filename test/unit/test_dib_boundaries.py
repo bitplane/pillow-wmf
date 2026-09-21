@@ -6,8 +6,9 @@ from pathlib import Path
 from struct import pack_into
 
 import pytest
+from PIL import Image
 
-from pillow_wmf import FormatError, Metafile, RasterContext, UnsupportedOperation, play
+from pillow_wmf import FormatError, Metafile, RasterContext, Recorder, UnsupportedOperation, play
 from pillow_wmf.bitmap import read_dib
 from pillow_wmf.wmf.objects import BitmapData
 
@@ -42,19 +43,44 @@ def test_icm_disabled_decode_never_follows_profile_fields(name):
     assert read_dib(BitmapData("dib", bytes(data))).decode() == layout.decode()
 
 
-@pytest.mark.parametrize(
-    "name,recorder", list(CASES["cases"]()), ids=lambda value: value if isinstance(value, str) else ""
-)
-def test_rgb_device_acceptance_and_following_drawing(name, recorder):
+@pytest.mark.parametrize("name", BITMAPS)
+@pytest.mark.parametrize("operation", ["stretch", "bitblt", "dibstretchblt", "device", "brush"])
+def test_rgb_device_acceptance_and_following_drawing(name, operation):
+    bitmap = BITMAPS[name]
+    recorder = Recorder()
+    recorder.select_object(recorder.create_brush(0, 0x0099CC, 0))
+    if operation == "stretch":
+        recorder.stretch_dib(1, 1, 3, 2, 0, 0, 3, 2, 0xCC0020, 0, bitmap)
+    elif operation == "bitblt":
+        recorder.dib_bit_blt(1, 1, 3, 2, 0, 0, 0xCC0020, bitmap)
+    elif operation == "dibstretchblt":
+        recorder.dib_stretch_blt(1, 1, 3, 2, 0, 0, 3, 2, 0xCC0020, bitmap)
+    elif operation == "device":
+        recorder.set_dib_to_device(1, 1, 3, 2, 0, 0, 0, 2, 0, bitmap)
+    else:
+        handle = recorder.create_dib_pattern_brush(5, 0, bitmap)
+        recorder.select_object(handle)
+        recorder.pat_blt(1, 1, 3, 2, 0xF00021)
+        recorder.delete_object(handle)
+        recorder.select_object(recorder.create_brush(0, 0xCC00CC, 0))
+        recorder.pat_blt(1, 4, 3, 1, 0xF00021)
+    recorder.set_pixel(7, 5, 0x00FF00)
     source = recorder.to_bytes()
     assert Metafile.from_bytes(source).to_bytes() == source
-    context = RasterContext(128, 128)
+    background = (204, 153, 0)
+    context = RasterContext(8, 6, background=background)
     assert play(recorder.metafile(), context, strict=True) == ()
-    assert context.image.getpixel((120, 120)) == (0, 255, 0)
-    if name.startswith(("jpeg-", "png-", "cmyk-")):
-        assert context.image.getpixel((20, 20)) == (204, 153, 0)
-    if name.endswith("brush"):
-        assert context.image.getpixel((20, 95)) == (204, 0, 204)
+    expected = Image.new("RGB", (8, 6), background)
+    if not name.startswith(("jpeg", "png", "cmyk-")):
+        rgb = read_dib(BITMAPS["rgb"]).decode()
+        for y in range(1, 3):
+            for x in range(1, 4):
+                pixel = rgb.pixel(x % 3, y % 2) if operation == "brush" else rgb.pixel(x - 1, y - 1)
+                expected.putpixel((x, y), pixel)
+    if operation == "brush":
+        expected.paste((204, 0, 204), (1, 4, 4, 5))
+    expected.putpixel((7, 5), (0, 255, 0))
+    assert context.image.tobytes() == expected.tobytes()
 
 
 def test_extended_format_pixel_budget_remains_fatal():

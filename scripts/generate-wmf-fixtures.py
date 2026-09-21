@@ -2,11 +2,12 @@
 
 import argparse
 import runpy
+from dataclasses import replace
 from itertools import product
 from pathlib import Path
 from struct import pack_into
 
-from pillow_wmf import Metafile, Recorder, play
+from pillow_wmf import Call, Metafile, Recorder, TraceContext, play
 from pillow_wmf.bitmap import RGBBitmap, encode_dib24
 from pillow_wmf.wmf.fixed import PatBlt
 from pillow_wmf.wmf.objects import BitmapData, Region, Scan
@@ -2094,10 +2095,43 @@ def halftone_boundary_cases():
     yield "halftone-rop3", r
 
 
+def check_cases():
+    """Validate the full export corpus without rendering or writing files."""
+    seen = set()
+    for (name, recorder), (again, repeated) in zip(all_cases(), all_cases(), strict=True):
+        if name in seen:
+            raise ValueError(f"Duplicate generated fixture: {name}")
+        seen.add(name)
+        source = recorder.to_bytes()
+        if name != again or source != repeated.to_bytes():
+            raise ValueError(f"Non-reproducible fixture: {name}")
+        metafile = Metafile.from_bytes(source)
+        if metafile.to_bytes() != source:
+            raise ValueError(f"Lossy fixture round trip: {name}")
+        trace = TraceContext()
+        play(metafile, trace, strict=True)
+        expected = [
+            Call.make("create_font", font=replace(call.kwargs["font"], charset=1))
+            if call.name == "create_font" and call.kwargs["font"].charset == 254
+            else call
+            for call in recorder.calls
+        ]
+        if trace.calls != expected:
+            raise ValueError(f"Changed playback calls: {name}")
+    if missing := LOCAL_CASES - seen:
+        raise ValueError(f"Unknown local regression names: {sorted(missing)}")
+    return len(seen)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus", type=Path, help="Export the non-local cases into this external corpus directory")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--corpus", type=Path, help="Export the non-local cases into this external corpus directory")
+    action.add_argument("--check", action="store_true", help="Validate the full generator without exporting files")
     args = parser.parse_args()
+    if args.check:
+        print(f"Validated {check_cases()} generated fixtures")
+        return
     destination = args.corpus if args.corpus is not None else FIXTURES
     if args.corpus is not None and destination.resolve().is_relative_to(FIXTURES.resolve()):
         parser.error("The external corpus must not be inside the local compatibility suite")
