@@ -21,6 +21,7 @@ from .dbcs import LEAD_RANGES, DecodedText, collapse_advances, decode_dbcs
 from .environment_codepages import CODECS, MAC_CODECS, OEM_CODECS, OEM_COVERAGE_BITS, decode_environment
 from .gdi import InvalidOperation, UnsupportedOperation
 from .gdi_math import sincos_degrees
+from .mac_dbcs import CODECS as MAC_DBCS_CODECS
 from .mapping import fixed, rounded
 from .numeric import float32
 from .symbol import WINDOWS_SYMBOL_BYTES
@@ -133,7 +134,7 @@ class RasterFont:
     background_cell: tuple[int, int] = (0, 0)
     _glyphs: dict[int, Glyph] = field(default_factory=dict)
 
-    def shape(self, characters, max_pixels):
+    def shape(self, characters, max_pixels, *, raw=False):
         return tuple(self.glyph(character, max_pixels) for character in characters)
 
     def glyph(self, character, max_pixels):
@@ -463,7 +464,7 @@ class FontCollection:
             raise ValueError(f"Unsupported ANSI environment: {ansi_codepage}")
         if oem_codepage not in OEM_CODECS and oem_codepage not in {874, 932, 936, 949, 950, 1258}:
             raise ValueError(f"Unsupported OEM environment: {oem_codepage}")
-        if mac_codepage is not None and mac_codepage not in MAC_CODECS:
+        if mac_codepage is not None and mac_codepage not in MAC_CODECS | MAC_DBCS_CODECS:
             raise ValueError(f"Unsupported Macintosh environment: {mac_codepage}")
         if missing_glyph not in ("error", "notdef"):
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
@@ -641,16 +642,19 @@ class FontRun:
     def glyph_index(self, index, max_pixels):
         return self.primary.glyph_index(index, max_pixels)
 
-    def shape(self, characters, max_pixels):
+    def shape(self, characters, max_pixels, *, raw=False):
         """Shape SBCS control runs before choosing masks and advances.
 
         A control run containing an unshapable character falls back to raw
         character output. Its formerly invisible controls then participate in
         font linking too. Separators terminate runs; they are not tab stops or
-        multiline layout commands.
+        multiline layout commands. Paired advances request raw glyph output,
+        bypassing the control-run shaper without disabling font linking.
         """
         if self.primary.symbol:
             return self.primary.shape(characters, max_pixels)
+        if raw:
+            return tuple(self._linked_glyph(c, max_pixels) for c in characters)
         glyphs = []
         for kind, group in groupby(characters, key=_text_run_kind):
             run = "".join(group)
@@ -799,7 +803,7 @@ def layout_text(
     if vertical_advances and len(vertical_advances) != count:
         raise InvalidOperation("Vertical advance count must match the glyph count")
     glyphs = (
-        font.shape(characters, max_pixels)
+        font.shape(characters, max_pixels, raw=bool(vertical_advances))
         if glyph_indices is None
         else tuple(font.glyph_index(index, max_pixels) for index in glyph_indices)
     )

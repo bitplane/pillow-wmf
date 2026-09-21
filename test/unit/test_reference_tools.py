@@ -60,7 +60,7 @@ def test_diagnostics_fail_on_differences_without_writing_references(monkeypatch,
     assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
 
 
-def test_foundation_inputs_are_unique_reproducible_and_lossless():
+def test_foundation_inputs_are_unique_reproducible_and_lossless(playback_calls):
     cases = runpy.run_path(str(SCRIPTS / "generate-wmf-fixtures.py"))["all_cases"]
     first = list(cases())
     second = list(cases())
@@ -77,7 +77,7 @@ def test_foundation_inputs_are_unique_reproducible_and_lossless():
         assert metafile.to_bytes() == source
         trace = TraceContext()
         assert play(metafile, trace, strict=True) == ()
-        assert trace.calls == recorder.calls
+        assert trace.calls == playback_calls(recorder.calls)
 
 
 def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
@@ -106,6 +106,7 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
             "environment.ttf",
             "layout.ttf",
             "symbols.ttf",
+            "utf8.ttf",
         ]
         calls.append((source, width, height))
         return Output()

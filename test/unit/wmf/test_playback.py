@@ -7,6 +7,19 @@ from pillow_wmf.wmf import UnknownRecord, fixed
 from pillow_wmf.wmf.objects import BitmapData, Font, Palette, Region, Scan
 
 
+def test_utf8_extension_is_normalized_only_at_wmf_playback():
+    source = Recorder()
+    request = Font(face_name=b"Example".ljust(32, b"\0"), charset=254)
+    source.create_font(request)
+    data = source.to_bytes()
+    metafile = Metafile.from_bytes(data)
+    assert metafile.to_bytes() == data
+    trace = TraceContext()
+    play(metafile, trace, strict=True)
+    assert trace.calls[0].kwargs["font"] == replace(request, charset=1)
+    assert source.calls[0].kwargs["font"] == request
+
+
 def draw_program(dc):
     pen = dc.create_pen(0, 1, 0x000000FF)
     brush = dc.create_brush(0, 0x0000FF00, 0)

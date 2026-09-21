@@ -307,3 +307,15 @@ def test_del_default_glyph_does_not_force_neighbouring_controls_to_raw_output(co
     delete, first, second = control_fonts.shape("\x7f\x81\x8d", 10000)
     assert delete is control_fonts.fallbacks[0].glyph("\x7f", 10000)
     assert [(g.pixels, g.advance) for g in (first, second)] == [(b"", 0), (b"", 0)]
+
+
+def test_paired_advances_do_not_blank_control_glyphs(control_fonts):
+    characters = "\x81\x8d"
+    assert all(g.size == (0, 0) for g in control_fonts.shape(characters, 10000))
+    raw = control_fonts.shape(characters, 10000, raw=True)
+    assert raw == tuple(control_fonts._linked_glyph(c, 10000) for c in characters)
+    assert any(g.size != (0, 0) for g in raw)
+    layout = layout_text(
+        control_fonts, b"\x81\x8d", 0, 30, 24, (9, 11), vertical_advances=(2, 3), opaque=False, max_pixels=10000
+    )
+    assert tuple(glyph for _, _, glyph in layout.glyphs) == raw

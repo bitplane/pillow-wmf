@@ -23,7 +23,7 @@ def test_wmf_suite_is_present() -> None:
     assert list(WMF_ROOT.glob("*.wmf"))
 
 
-def test_generated_fixtures_are_reproducible_and_playable() -> None:
+def test_generated_fixtures_are_reproducible_and_playable(playback_calls) -> None:
     cases = runpy.run_path(str(ROOT / "scripts" / "generate-wmf-fixtures.py"))["cases"]
     generated = set()
     for name, recorder in cases():
@@ -35,7 +35,9 @@ def test_generated_fixtures_are_reproducible_and_playable() -> None:
         assert parsed.to_bytes() == source
         trace = TraceContext()
         assert play(parsed, trace, strict=True) == ()
-        assert trace.calls == recorder.calls
+        # The codec round trip above is lossless. Playback has one font
+        # normalization: WMF cannot request GDI's UTF-8 charset extension.
+        assert trace.calls == playback_calls(recorder.calls)
     committed = {path.stem for path in WMF_ROOT.glob("*.wmf")}
     assert committed == generated, f"Stale generated fixtures: {sorted(committed - generated)}"
 

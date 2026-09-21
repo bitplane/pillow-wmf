@@ -31,3 +31,8 @@ small accented-character cmap. Its generator is in
 [`scripts/environment_cases.py`](../../scripts/environment_cases.py). The native
 compatibility fixture uses OEM text; Mac decoding is tested separately because
 modern Windows substitutes the requested Mac face/charset.
+
+`utf8.ttf` also uses the original CC0 geometry. Its Unicode cmap includes UTF-8
+test characters and their ANSI byte interpretations, distinguishing direct GDI
+encoding from WMF's charset normalization without system font substitution.
+The byte generator is [`scripts/utf8_cases.py`](../../scripts/utf8_cases.py).

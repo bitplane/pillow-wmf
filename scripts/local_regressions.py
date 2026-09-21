@@ -25,6 +25,8 @@ text-rtl-fractional
 text-scaled-spacing
 text-codepages
 text-oem
+utf8-natural
+utf8-dx
 text-symbols
 cp932-natural
 cp932-split

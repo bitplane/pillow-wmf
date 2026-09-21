@@ -1,7 +1,7 @@
 """Translate WMF records to backend calls without rasterizing or decoding text."""
 
 import heapq
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from .binary import Limits
@@ -100,6 +100,12 @@ def play(
         for parameter in binding.signed_words:
             value = arguments[parameter]
             arguments[parameter] = value - 0x10000 if value & 0x8000 else value
+
+        if name == "create_font" and arguments["font"].charset == 254:
+            # WMF playback converts the UTF-8 extension to DEFAULT_CHARSET;
+            # it does not preserve the direct GDI font API's UTF-8 request.
+            # Our explicit ANSI environments are all legacy code pages.
+            arguments["font"] = replace(arguments["font"], charset=1)
 
         if name == "restore_dc":
             # File save levels include omitted saves. Backend levels do not,

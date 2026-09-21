@@ -145,12 +145,16 @@ def test_explicit_mac_override_does_not_use_native_ansi_fallback():
     assert not fonts.substitutions
 
 
-def test_utf8_charset_is_not_misidentified_as_ansi_or_symbol():
+def test_direct_gdi_utf8_remains_distinct_from_wmf_charset_normalization():
     fonts = SystemFontCollection(paths=[FONT])
     for name in (b"Arial", b"Symbol", b"Wingdings"):
         request = Font(face_name=name, charset=254)
         with pytest.raises(UnsupportedOperation, match="UTF-8"):
             fonts.resolve(request)
+
+
+def test_charset_extension_font_is_reproducible(load_script):
+    assert load_script("utf8_cases.py")["font_bytes"]() == FONT.with_name("utf8.ttf").read_bytes()
 
 
 def test_oem_text_current_position_and_restore():

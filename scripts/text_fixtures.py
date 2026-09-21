@@ -8,6 +8,10 @@ from pillow_wmf.wmf.objects import Font
 
 
 def cases():
+    utf8 = runpy.run_path(str(Path(__file__).with_name("utf8_cases.py")))
+    for name, recorder in utf8["cases"]():
+        if name in {"utf8-natural", "utf8-dx"}:
+            yield name, recorder
     environment = runpy.run_path(str(Path(__file__).with_name("environment_cases.py")))
     yield from environment["cases"]()
     dbcs = runpy.run_path(str(Path(__file__).with_name("dbcs_cases.py")))

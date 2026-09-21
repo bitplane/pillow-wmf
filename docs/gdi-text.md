@@ -179,23 +179,36 @@ For a file whose intended Macintosh encoding is known, explicitly supply
 `mac_codepage=10000` (Roman), or 10004 (Arabic), 10005 (Hebrew), 10006 (Greek),
 10007 (Cyrillic), 10010 (Romanian), 10017 (Ukrainian), 10021 (Thai), 10029
 (Central European), 10079 (Icelandic), 10081 (Turkish), or 10082 (Croatian).
+Double-byte pages 10001 (Japanese), 10002 (Traditional Chinese), 10003 (Korean)
+and 10008 (Simplified Chinese) are also supported. Their lead-byte ranges and
+vendor/private-use assignments differ from the corresponding Windows ANSI pages.
 This overrides the default mapper policy; it is not a claim that Windows would
 choose the same encoding automatically. The tables preserve Windows NLS vendor
-and private-use assignments, not just Python's similarly named codecs. Mac
-double-byte pages are not supported. Decoding does not add complex-script shaping.
+and private-use assignments, not just Python's similarly named codecs. As with
+Johab, Mac DBCS pages do not use GDI's ANSI byte-advance collapsing gate.
+Decoding does not add complex-script shaping.
 
 Other unknown legacy charsets follow the same automatic ANSI/symbol selection
 policy as MAC_CHARSET. The requested ordinary family is discarded, while the
 pitch/family hints still choose the generic family. An explicitly named symbol
 face retains its byte meanings. Substitutions are reported once per distinct
 choice. Controlled font collections continue to reject unknown charsets.
-Charset 254 is a Windows UTF-8 extension and remains explicitly unsupported;
-it must not be silently decoded as ANSI or Symbol.
+Charset 254 is a direct GDI UTF-8 extension, but native **WMF playback** changes
+it to DEFAULT_CHARSET before creating the font. The player performs this
+normalization without changing the parsed record or its lossless round trip.
+The configured `ansi_codepage` therefore determines WMF text decoding; Symbol
+font selection still applies its normal rules. Direct backend UTF-8 requests
+and a UTF-8 ANSI environment remain unsupported. On Windows with a UTF-8 system
+ACP, WMF instead normalizes this charset to ANSI_CHARSET (0); that environment
+is not currently configurable here.
 
 Font-name bytes always use `ansi_codepage`, even when text uses OEM or an explicit
 Mac page. The `text-environments` native probe checks NLS tables, actual selected
 faces/charsets/code pages, and controlled OEM placement. All single-byte mappings
-are fingerprinted in [the environment tests](../test/unit/test_text_environments.py).
+are fingerprinted in [the environment tests](../test/unit/test_text_environments.py),
+and Mac DBCS mappings in [their decoder tests](../test/unit/test_mac_dbcs.py).
+The `utf8-mac` probe checks those NLS mappings and charset-extension playback;
+`utf8-font` checks only font creation and playback, without repeating the NLS scan.
 See the [WMF charset enumeration](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/0d0b32ac-a836-4bd2-a112-b6000a1b4fc9)
 and [OpenType coverage bits](https://learn.microsoft.com/en-us/typography/opentype/spec/os2#ulcodepagerange).
 
@@ -238,6 +251,8 @@ placement and current-position updates share the same accumulated displacement;
 right alignment reverses the horizontal current-position displacement, not its
 vertical component. Decorations use each glyph's unrotated ink span. A record
 with PDY but no advance array does not draw or change the current position.
+PDY bypasses control-run shaping: controls use their raw glyphs, with normal
+font linking, instead of becoming the shaper's invisible zero-width glyphs.
 
 Unrotated opaque PDY output bounds the positioned glyph cells, including ink
 overhangs and the final advance. Rotated output bounds the positioned ink spans
@@ -447,7 +462,7 @@ collection's `ansi_codepage` (1252 by default). Face names
 always use that environment code page, independently of the text charset.
 Undefined single-byte values use the Windows mappings described above;
 embedded NULs and tabs are not stripped or expanded. Explicit advances remain
-byte-indexed except for Johab's conversion policy. OEM and explicit Macintosh
+byte-indexed except for Johab and Mac DBCS conversion policies. OEM and explicit Macintosh
 environments are described above. Use `ansi_codepage=932` for a Japanese source
 environment when its face-name bytes or DEFAULT_CHARSET text require CP932;
 charset-128 text does not require that environment setting.
