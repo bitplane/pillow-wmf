@@ -1,9 +1,11 @@
 """Record-local failure boundaries with a visible continuation marker."""
 
 from dataclasses import replace
+from struct import pack
 
 from pillow_wmf import Metafile, Recorder
 from pillow_wmf.wmf import fixed, variable
+from pillow_wmf.wmf.records import UnknownRecord
 
 
 def cases():
@@ -92,3 +94,20 @@ def header_cases():
         r.select_object(r.create_brush(2, 255, 0))
         r.pat_blt(10, 10, 30, 30, 0x00F00021)
         yield f"background-transparent-{mode}", r.metafile()
+
+
+def palette_cases():
+    for count in (0, 2, 3, 65535):
+        payload = pack("HH", 0x300, count) + bytes((17, 31, 53, 0, 71, 97, 131, 0))
+        m = Metafile.build(
+            [
+                UnknownRecord(0xF7, payload),
+                fixed.SelectPalette(0),
+                fixed.SetPixel(0x01000001, 20, 20),
+                fixed.SetPixel(0x01000002, 30, 30),
+                fixed.SetPixel(255, 120, 120),
+            ]
+        )
+        yield f"palette-count-{count}", replace(m, header=replace(m.header, object_count=1))
+    m = Metafile.build([fixed.FillRegion(0, 0), fixed.SetPixel(255, 120, 120)])
+    yield "fill-region-empty-slot", replace(m, header=replace(m.header, object_count=1))

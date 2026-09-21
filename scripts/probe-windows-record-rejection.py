@@ -6,7 +6,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 from PIL import Image
-from record_rejection_cases import cases, corpus_cases, header_cases
+from record_rejection_cases import cases, corpus_cases, header_cases, palette_cases
 from windows_wmf_render import bind, check, reference_surface
 
 
@@ -15,9 +15,18 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--corpus", action="store_true")
     parser.add_argument("--headers", action="store_true")
+    parser.add_argument("--palettes", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    selected = header_cases() if args.headers else corpus_cases() if args.corpus else cases()
+    selected = (
+        palette_cases()
+        if args.palettes
+        else header_cases()
+        if args.headers
+        else corpus_cases()
+        if args.corpus
+        else cases()
+    )
     for name, metafile in selected:
         source = metafile.to_bytes()
         (args.output / f"{name}.wmf").write_bytes(source)

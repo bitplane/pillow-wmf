@@ -17,6 +17,7 @@ on:
           - record-rejection
           - corpus-rejection
           - corpus-headers
+          - corpus-palettes
           - colorrefs
           - mapping
           - precision
@@ -138,7 +139,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p record-rejection
-          python scripts/probe-windows-record-rejection.py --output record-rejection ${{ inputs.probe == 'corpus-rejection' && '--corpus' || inputs.probe == 'corpus-headers' && '--headers' || '' }} | tee record-rejection/observations.txt
+          python scripts/probe-windows-record-rejection.py --output record-rejection ${{ inputs.probe == 'corpus-rejection' && '--corpus' || inputs.probe == 'corpus-headers' && '--headers' || inputs.probe == 'corpus-palettes' && '--palettes' || '' }} | tee record-rejection/observations.txt
       - name: Upload record rejection observations
         if: always() && (inputs.probe == 'record-rejection' || startsWith(inputs.probe, 'corpus-'))
         uses: actions/upload-artifact@v4
