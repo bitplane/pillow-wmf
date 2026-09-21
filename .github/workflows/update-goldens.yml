@@ -25,6 +25,7 @@ on:
           - dbcs-spacing
           - codepages
           - text-environments
+          - utf8-mac
           - real-text
           - text-layout
           - text-styles
@@ -199,6 +200,19 @@ jobs:
         with:
           name: dbcs-probe
           path: dbcs-probe/
+          retention-days: 7
+      - name: Probe UTF-8 and double-byte Mac pages
+        if: inputs.probe == 'utf8-mac'
+        shell: bash
+        run: |
+          mkdir -p utf8-mac-probe
+          python scripts/probe-windows-utf8-mac.py --output utf8-mac-probe | tee utf8-mac-probe/observations.txt
+      - name: Upload UTF-8 and Mac observations
+        if: always() && inputs.probe == 'utf8-mac'
+        uses: actions/upload-artifact@v4
+        with:
+          name: utf8-mac-probe
+          path: utf8-mac-probe/
           retention-days: 7
       - name: Probe OEM/Mac and unknown charsets
         if: inputs.probe == 'text-environments'
