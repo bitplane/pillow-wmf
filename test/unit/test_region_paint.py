@@ -50,13 +50,13 @@ def test_region_paint_preserves_brush_and_clip(operation):
     context.select_object(selected)
     region = context.create_region(Region((0, 0, 20, 20), (Scan(0, 20, (0, 20)),)))
     context.exclude_clip_rect(0, 0, 2, 32)
-    clip = context._clip
+    clip = context._state.clip
     if operation in ("fill_region", "frame_region"):
         getattr(context, operation)(region, explicit, *((3, 4) if operation == "frame_region" else ()))
     else:
         getattr(context, operation)(region)
-    assert context._brush.color == (255, 0, 0)
-    assert context._clip == clip
+    assert context._state.brush.color == (255, 0, 0)
+    assert context._state.clip == clip
     assert context.image.getpixel((1, 1)) == (255, 255, 255)
     assert (
         context.image.getpixel((2, 1))
@@ -79,8 +79,8 @@ def test_invert_region_ignores_brush_and_rop_without_changing_them(mode):
     context.invert_region(region)
     assert context.image.getpixel((2, 2)) == (238, 192, 126)
     assert context.image.getpixel((0, 0)) == (17, 63, 129)
-    assert context._rop2 == mode
-    assert context._brush.style == 1
+    assert context._state.rop2 == mode
+    assert context._state.brush.style == 1
 
 
 def test_frame_storage_depends_on_region_edges_not_surface_area():

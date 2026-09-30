@@ -27,7 +27,7 @@ def test_pie_preserves_current_position():
     context = RasterContext(16, 16)
     context.move_to(1, 1)
     context.pie(4, 4, 12, 12, 12, 8, 8, 4)
-    assert context._position == (1, 1)
+    assert context._state.position == (1, 1)
 
 
 @pytest.mark.parametrize("box", ((8, 8, 8, 64), (8, 8, 64, 8)))

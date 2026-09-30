@@ -165,6 +165,6 @@ def test_oem_text_current_position_and_restore():
     dc.move_to(8, 30)
     dc.save_dc()
     dc.ext_text_out(0, 0, b"\x80\x82AB", advances=(17, 19, 13, 11))
-    assert dc._position == (68, 30)
+    assert dc._state.position == (68, 30)
     dc.restore_dc(-1)
-    assert dc._position == (8, 30)
+    assert dc._state.position == (8, 30)

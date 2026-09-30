@@ -26,7 +26,7 @@ def test_glyph_ids_bypass_character_decoding_and_ignore_odd_tail(suffix):
     indexed.ext_text_out(0, 0, pack("<3H", 2, 3, 2) + suffix, options=0x10)
     ordinary.ext_text_out(0, 0, b"ABA")
     assert indexed.image.tobytes() == ordinary.image.tobytes()
-    assert indexed._position == ordinary._position == (119, 80)
+    assert indexed._state.position == ordinary._state.position == (119, 80)
 
 
 def test_glyph_ids_use_first_spacing_entries_not_byte_pair_sums():
@@ -34,7 +34,7 @@ def test_glyph_ids_use_first_spacing_entries_not_byte_pair_sums():
     indexed.ext_text_out(0, 0, pack("<3H", 2, 3, 2), options=0x10, advances=(19, 23, 17, 31, 37, 41))
     ordinary.ext_text_out(0, 0, b"ABA", advances=(19, 23, 17))
     assert indexed.image.tobytes() == ordinary.image.tobytes()
-    assert indexed._position == ordinary._position == (139, 80)
+    assert indexed._state.position == ordinary._state.position == (139, 80)
 
 
 def test_invalid_glyph_ids_use_notdef_without_unicode_fallback():
@@ -42,7 +42,7 @@ def test_invalid_glyph_ids_use_notdef_without_unicode_fallback():
     invalid.ext_text_out(0, 0, pack("<3H", 0, 0xFFFF, 2), options=0x10)
     notdef.ext_text_out(0, 0, pack("<3H", 0, 0, 2), options=0x10)
     assert invalid.image.tobytes() == notdef.image.tobytes()
-    assert invalid._position == (118, 80)
+    assert invalid._state.position == (118, 80)
 
 
 @pytest.mark.parametrize("alignment,position", [(25, (139, 67)), (27, (21, 67)), (31, (80, 80))])
@@ -50,7 +50,7 @@ def test_paired_advance_current_position(alignment, position):
     dc = context()
     dc.set_text_alignment(alignment)
     dc.ext_text_out(0, 0, b"ABA", options=0x2000, advances=(19, 7, 23, -5, 17, 11))
-    assert dc._position == position
+    assert dc._state.position == position
 
 
 def test_paired_glyph_spacing_shares_character_placement():
@@ -59,7 +59,7 @@ def test_paired_glyph_spacing_shares_character_placement():
     indexed.ext_text_out(0, 0, pack("<3H", 2, 3, 2), options=0x2010, advances=advances * 2)
     ordinary.ext_text_out(0, 0, b"ABA", options=0x2000, advances=advances)
     assert indexed.image.tobytes() == ordinary.image.tobytes()
-    assert indexed._position == ordinary._position == (139, 67)
+    assert indexed._state.position == ordinary._state.position == (139, 67)
 
 
 def test_paired_output_without_spacing_is_a_native_noop():
@@ -67,7 +67,7 @@ def test_paired_output_without_spacing_is_a_native_noop():
     before = dc.image.tobytes()
     dc.ext_text_out(0, 0, b"ABA", options=0x2000)
     assert dc.image.tobytes() == before
-    assert dc._position == (80, 80)
+    assert dc._state.position == (80, 80)
 
 
 def test_rotated_opaque_paired_output_bounds_positioned_cells():
@@ -78,7 +78,7 @@ def test_rotated_opaque_paired_output_bounds_positioned_cells():
     layout, _ = dc._prepare_text(args)
     assert layout.background == ((51, 24), (88, 24), (88, 81), (51, 81))
     dc.ext_text_out(**args)
-    assert dc._position == (67, 21)
+    assert dc._state.position == (67, 21)
 
 
 @pytest.mark.parametrize(

@@ -69,7 +69,7 @@ def test_reflection_keeps_glyphs_upright_and_updates_logical_position(face, scal
     dc.select_object(dc.create_font(REQUEST))
     dc.move_to(0, 0)
     dc.text_out(0, 0, b"A B A B")
-    assert dc._position == expected
+    assert dc._state.position == expected
     assert dc.image.getpixel((51, 34)) == (0, 0, 0)
     assert dc.image.getpixel((49, 34)) == (255, 255, 255)
 
@@ -85,7 +85,7 @@ def test_rotated_current_position_matches_native_controlled_run(face, angle, exp
     dc.select_object(dc.create_font(replace(REQUEST, escapement=angle)))
     dc.move_to(0, 0)
     dc.text_out(0, 0, b"A B A B")
-    assert dc._position == expected
+    assert dc._state.position == expected
 
 
 @pytest.mark.parametrize("decoration", ["underline", "strikeout"])
@@ -99,7 +99,7 @@ def test_zero_font_decoration_metrics_still_produce_one_pixel_rule(face, decorat
     dc.select_object(dc.create_font(replace(REQUEST, **{decoration: 1})))
     dc.move_to(10, 40)
     dc.text_out(0, 0, b"A B A B")
-    assert dc._position == (81, 40)
+    assert dc._state.position == (81, 40)
     assert all(dc.image.getpixel((x, 40)) == (0, 0, 0) for x in range(10, 81))
     assert dc.image.getpixel((81, 40)) == (255, 255, 255)
 

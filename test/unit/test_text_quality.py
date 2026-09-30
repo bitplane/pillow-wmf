@@ -22,7 +22,7 @@ def test_outline_default_draft_and_proof_share_layout(face, height, width, angle
         dc.set_text_alignment(25)
         dc.move_to(4, 24)
         layout, _ = dc._prepare_text(dict(x=0, y=0, text=EncodedText(b"AB"), advances=(20, 20)))
-        assert dc._text_state.font.quality == quality
+        assert dc._state.text_state.font.quality == quality
         layouts.append(layout)
     assert layouts[0] == layouts[1] == layouts[2]
 

@@ -69,7 +69,7 @@ def test_clip_reset_round_trip_without_objects():
     context = RasterContext(8, 8)
     context.exclude_clip_rect(0, 0, 8, 8)
     assert play(Metafile.from_bytes(recorder.to_bytes()), context, strict=True) == ()
-    assert context._clip.contains(1, 1)
+    assert context._state.clip.contains(1, 1)
 
 
 def test_recorder_does_not_silently_encode_slot_zero_as_clip_reset():
@@ -85,9 +85,9 @@ def test_zero_scan_wmf_region_is_a_null_object_not_an_empty_region():
     context.exclude_clip_rect(0, 0, 8, 8)
     handle = context.create_region(Region((0, 0, 0, 0), ()))
     context.select_object(handle)
-    assert not context._clip.contains(1, 1)
+    assert not context._state.clip.contains(1, 1)
     context.select_clip_region(handle)
-    assert context._clip.contains(1, 1)
+    assert context._state.clip.contains(1, 1)
 
 
 def test_failed_region_creation_does_not_occupy_native_file_slot():

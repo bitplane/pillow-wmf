@@ -64,7 +64,7 @@ def test_failed_explicit_brush_never_falls_back_to_selected_brush(operation, mod
     original = dc.image.tobytes()
     getattr(dc, operation)(region, failed, *((2, 2) if operation == "frame_region" else ()))
     assert dc.image.tobytes() == original
-    assert dc._brush.color == (255, 0, 0)
+    assert dc._state.brush.color == (255, 0, 0)
     dc.set_rop2(13)
     dc.paint_region(region)
     assert dc.image.getpixel((0, 0)) == (255, 0, 0)

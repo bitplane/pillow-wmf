@@ -32,7 +32,7 @@ def test_nontransparent_background_values_remain_opaque_and_saved(mode):
     dc.save_dc()
     dc.set_background_mode(1)
     dc.restore_dc(-1)
-    assert dc._background_mode == mode
+    assert dc._state.background_mode == mode
     dc.set_background_color(0x00FF00)
     dc.select_object(dc.create_brush(2, 255, 0))
     dc.pat_blt(0, 0, 16, 16, 0x00F00021)

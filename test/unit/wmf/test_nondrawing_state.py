@@ -47,10 +47,10 @@ def test_text_setup_is_recorded_and_saved_without_rendering_text():
     context = RasterContext(8, 8)
     before = context.image.tobytes()
     assert play(Metafile.from_bytes(recorder.to_bytes()), context, strict=True) == ()
-    assert context._text_state.alignment == 6
-    assert context._text_state.character_extra == 2
-    assert context._text_state.justification == (3, 7)
-    assert context._text_state.mapper_flags == 1
+    assert context._state.text_state.alignment == 6
+    assert context._state.text_state.character_extra == 2
+    assert context._state.text_state.justification == (3, 7)
+    assert context._state.text_state.mapper_flags == 1
     assert context.image.tobytes() == before
     # Accepting setup is not permission to silently omit glyphs.
     with pytest.raises(UnsupportedOperation, match="text_out"):
@@ -59,15 +59,15 @@ def test_text_setup_is_recorded_and_saved_without_rendering_text():
 
 def test_nested_saves_keep_independent_text_state():
     context = RasterContext(8, 8)
-    original = context._text_state
+    original = context._state.text_state
     first = context.save_dc()
     context.set_text_alignment(6)
     second = context.save_dc()
     context.set_text_alignment(2)
     context.restore_dc(second)
-    assert context._text_state.alignment == 6
+    assert context._state.text_state.alignment == 6
     context.restore_dc(first)
-    assert context._text_state == original
+    assert context._state.text_state == original
 
 
 @pytest.mark.parametrize("operation", ["text_out", "ext_text_out"])
@@ -83,19 +83,19 @@ def test_font_selection_does_not_enable_text_drawing(operation):
 
 def test_logical_fonts_are_selected_lazily_and_saved_independently_of_brushes():
     context = RasterContext(8, 8)
-    brush = context._brush
+    brush = context._state.brush
     default = context.save_dc()
     requested = Font(height=-13, charset=204, face_name=b"Not installed")
     first = context.create_font(requested)
-    assert context._text_state.font is None  # Creation does not select or resolve.
+    assert context._state.text_state.font is None  # Creation does not select or resolve.
     context.select_object(first)
     selected = context.save_dc()
     context.select_object(context.create_font(Font(height=20)))
     context.restore_dc(selected)
-    assert context._text_state.font == requested.to_gdi("create_font")
-    assert context._brush is brush
+    assert context._state.text_state.font == requested.to_gdi("create_font")
+    assert context._state.brush is brush
     context.restore_dc(default)
-    assert context._text_state.font is None
+    assert context._state.text_state.font is None
 
 
 def test_font_creation_validation_does_not_allocate_a_handle():

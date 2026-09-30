@@ -9,9 +9,11 @@ from pathlib import Path
 
 from fontTools.ttLib import TTCollection, TTFont, TTLibError
 
+from .font import FontFace
 from .gdi import UnsupportedOperation
 from .objects import FontRequest
-from .text import TEXT_CHARSETS, FontCollection, FontFace, FontRun, decode_codepage
+from .text import FontCollection, FontRun
+from .text_encoding import TEXT_CHARSETS, decode_codepage
 
 
 def font_paths():

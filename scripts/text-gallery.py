@@ -97,11 +97,11 @@ def gallery(
                 f"<figure><figcaption>{label}</figcaption>"
                 f'<img style="--width:{native.width}px" src="{escape(filename)}"></figure>'
             )
-        if context._text_state.font and context._text_state.font.quality in (0, 1, 2):
+        if context._state.text_state.font and context._state.text_state.font.quality in (0, 1, 2):
             note = "Default/draft/proof quality: RGB subpixel coverage; filtering and contrast remain approximate."
         else:
             note = "Monochrome: inspect ink shape and placement; differences are not automatically waived."
-        request = context._text_state.font
+        request = context._state.text_state.font
         if request and request.escapement:
             note += " Rotation: line/background bounds and some placements still need alignment; this is not mask-only."
         if any(scale < 0 for scale in context.mapping.linear_scale):

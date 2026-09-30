@@ -76,9 +76,9 @@ def test_current_position_is_logical_and_saved_independently_of_glyph_cache(dc):
     dc.move_to(8, 25)
     dc.save_dc()
     dc.ext_text_out(999, 999, b"AB", advances=(17, 9))
-    assert dc._position == (34, 25)
+    assert dc._state.position == (34, 25)
     dc.restore_dc(-1)
-    assert dc._position == (8, 25)
+    assert dc._state.position == (8, 25)
 
 
 @pytest.mark.parametrize("changes", [{"quality": 255}, {"charset": 2}])

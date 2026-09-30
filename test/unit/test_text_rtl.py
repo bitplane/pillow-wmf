@@ -54,17 +54,17 @@ def test_native_rtl_current_position(face, alignment, options, angle, extent, po
     # retains the fractional inverse mapping for subsequent device placement.
     if alignment == 31:
         assert layout.position is None
-        assert dc._position == position
+        assert dc._state.position == position
     else:
         assert tuple(int(value) for value in layout.position) == position
-    assert dc._position == (45, 65)
+    assert dc._state.position == (45, 65)
 
 
 @pytest.mark.parametrize("alignment,expected", [(25, (104, 78)), (31, (45, 65))])
 def test_rtl_drawing_commits_prepared_position(face, alignment, expected):
     dc = rtl_context(face, alignment=alignment)
     dc.ext_text_out(**text_arguments(0x2000))
-    assert dc._position == expected
+    assert dc._state.position == expected
 
 
 @pytest.mark.parametrize("width,last_glyph_x", [(128, 23), (192, 87)])

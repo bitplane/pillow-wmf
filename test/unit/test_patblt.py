@@ -60,9 +60,9 @@ def test_hatch_is_opaque_without_mutating_dc_background_or_rop():
     context.pat_blt(0, 0, 8, 8, 0x00F00021)
     assert context.image.getpixel((0, 0)) == (0xEF, 0xCD, 0xAB)
     assert context.image.getpixel((0, 3)) == (0x56, 0x34, 0x12)
-    assert context._background_mode == 1
-    assert context._rop2 == 7
-    assert context._position == (5, 6)
+    assert context._state.background_mode == 1
+    assert context._state.rop2 == 7
+    assert context._state.position == (5, 6)
 
 
 @pytest.mark.parametrize("rop,color", ((0x00000042, (0, 0, 0)), (0x00550009, (0, 0, 0)), (0x00FF0062, (255, 255, 255))))

@@ -17,7 +17,7 @@ def draw(*, mapper=0, options=0, alignment=0):
     dc.set_text_alignment(25 | alignment)
     dc.move_to(20, 40)
     dc.ext_text_out(999, 999, b"ABA", options=options, advances=(19, 23, 17))
-    return dc.image.tobytes(), dc._position
+    return dc.image.tobytes(), dc._state.position
 
 
 @pytest.mark.parametrize(

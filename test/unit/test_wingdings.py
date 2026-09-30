@@ -75,7 +75,7 @@ def test_wmf_playback_preserves_byte_advances_for_supplementary_symbols():
     assert metafile.to_bytes() == source
     dc = RasterContext(128, 80, fonts=FontCollection(wingdings_fallback=True))
     play(metafile, dc, strict=True)
-    assert dc._position == (87, 40)
+    assert dc._state.position == (87, 40)
     assert any(pixel != (255, 255, 255) for pixel in dc.image.get_flattened_data())
 
 

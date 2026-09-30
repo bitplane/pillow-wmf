@@ -37,9 +37,9 @@ def test_fill_preserves_current_position_and_selected_state(mode):
     context.move_to(3, 4)
     context.select_object(context.create_brush(0, 0xFFFFFF, 0))
     context.ext_flood_fill(0, 0, 0 if mode == 0 else 0xFFFFFF, mode)
-    assert context._position == (3, 4)
-    assert context._rop2 == 13
-    assert context._brush.color == (255, 255, 255)
+    assert context._state.position == (3, 4)
+    assert context._state.rop2 == 13
+    assert context._state.brush.color == (255, 255, 255)
 
 
 def test_unknown_mode_remains_explicitly_unsupported():

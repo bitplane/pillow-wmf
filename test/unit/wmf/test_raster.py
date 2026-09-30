@@ -28,7 +28,7 @@ def test_create_pen_indirect_falls_back_to_solid_without_changing_wire_style(sty
         assert parsed.to_bytes() == source
         context = RasterContext(16, 16)
         assert play(parsed, context, strict=True) == ()
-        assert context._pen.style == 0
+        assert context._state.pen.style == 0
         assert context.calls[0].kwargs["style"] == requested
         images.append(context.image.tobytes())
     assert images[0] == images[1]
@@ -180,7 +180,7 @@ def test_polypolygon_rejects_all_contours_if_any_has_fewer_than_two_points(short
 def test_nonstandard_background_mode_is_retained() -> None:
     context = RasterContext(8, 8)
     context.set_background_mode(3)
-    assert context._background_mode == 3
+    assert context._state.background_mode == 3
     assert context.calls[-1].kwargs["mode"] == 3
 
 

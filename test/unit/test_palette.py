@@ -62,13 +62,13 @@ def test_palette_mutation_is_object_state_not_saved_dc_state():
     a = dc.create_palette(Palette(entries=tuple((*c, 0) for c in COLORS)))
     b = dc.create_palette(Palette(entries=((3, 5, 7, 0),)))
     dc.select_palette(a)
-    original = dc._palette
+    original = dc._state.palette
     dc.save_dc()
     dc.set_palette_entries(Palette(1, ((13, 19, 29, 0),)))
     dc.select_palette(b)
     dc.restore_dc(-1)
-    assert dc._palette is original
-    assert dc._palette.color(1) == (13, 19, 29)
+    assert dc._state.palette is original
+    assert dc._state.palette.color(1) == (13, 19, 29)
 
 
 def test_animation_checks_old_flags_and_replaces_new_flags():
@@ -98,9 +98,9 @@ def test_stock_palette_is_not_mutated():
 
 def test_unallocated_palette_selection_is_noop_but_not_recordable():
     dc = RasterContext(8, 8)
-    palette = dc._palette
+    palette = dc._state.palette
     dc.select_palette(None)
-    assert dc._palette is palette
+    assert dc._state.palette is palette
     with pytest.raises(ValueError, match="portable"):
         Recorder().select_palette(None)
 
