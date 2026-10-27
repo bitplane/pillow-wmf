@@ -93,3 +93,22 @@ def test_dynamic_pen_body_without_caps_has_bounded_size():
     segment = StrokeSegment.line((0, 0), (160, 0))
     with GeometryBudget(0).activate():
         assert len(widen_segment(segment, pen, cap_start=False, cap_end=False)) == 4
+
+
+def test_wide_rectangle_reuses_geometry_within_operation_only():
+    def draw(budget):
+        context = RasterContext(64, 64, max_geometry_points=budget)
+        context.select_object(context.create_pen(0, 12, 0))
+        context.rectangle(10, 10, 50, 50)
+        return context
+
+    # One realization fits; repeating it within the same drawing call did not.
+    limited = draw(25)
+    assert limited.image.tobytes() == draw(1000).image.tobytes()
+    limited.select_object(limited.create_pen(0, 1, 255))
+    limited.set_viewport_origin(1, 1)
+    limited.move_to(0, 0)
+    limited.line_to(4, 0)
+    assert limited.image.getpixel((2, 1)) == (255, 0, 0)
+    with pytest.raises(ResourceLimitError):
+        draw(0)

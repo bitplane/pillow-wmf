@@ -32,6 +32,9 @@ flattening and dynamic pen expansion, including their stroke caps, joins and
 repeated realizations. Input polygon points, fixed-size stroke bodies and
 fixed-table pens (including their caps and joins) do not spend this expansion
 budget.
+Pen realization and identical stroke coverage are reused within one drawing
+operation. Reusing them does not spend the allowance again; subsequent
+operations generate and charge their own geometry.
 The geometry allowance belongs to the raster context and is not restored by
 `RestoreDC`. Each flattened curve also has a fixed 65,536-point limit.
 `RasterContext` accepts `max_geometry_points` for direct drawing; Pillow loading

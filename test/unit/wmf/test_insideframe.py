@@ -5,6 +5,7 @@ import pytest
 from pillow_wmf import RasterContext
 from pillow_wmf.ellipse import arc_figure, ellipse_cubics
 from pillow_wmf.geometry import StrokeSegment
+from pillow_wmf.raster_paint import RasterPainter
 from pillow_wmf.stroke import join_outline, realize_pen
 
 
@@ -60,7 +61,7 @@ def test_logical_collapse_can_invert_quantized_device_bounds(monkeypatch):
     context = RasterContext(128, 128)
     context.set_viewport_extent(192, 96)
     context.select_object(context.create_pen(6, 21, 0))
-    monkeypatch.setattr(context, "_stroke_path", lambda path: paths.append(path))
+    monkeypatch.setattr(RasterPainter, "stroke_path", lambda self, path: paths.append(path))
     context.arc(5, 6, 26, 43, 35, 16, -5, 34)
     # Native accepts logical equality even though mapping inverts x by 8/16.
     assert paths[0].commands == (
@@ -75,7 +76,7 @@ def test_fractional_roundrect_uses_logical_corner_proportions(monkeypatch):
     context = RasterContext(128, 128)
     context.set_viewport_extent(192, 96)
     context.select_object(context.create_pen(6, 0, 0))
-    monkeypatch.setattr(context, "_paint_polygons", lambda figures, **kwargs: paths.extend(figures))
+    monkeypatch.setattr(RasterPainter, "paint_polygons", lambda self, figures, **kwargs: paths.extend(figures))
     context.round_rect(5, 6, 26, 43, 13, 19)
     assert paths[0].commands[0] == ((608, 187), (608, 128), (542, 80), (459, 80))
 

@@ -1,6 +1,7 @@
 """Pixel painting against an image and explicitly supplied drawing state."""
 
 from dataclasses import dataclass
+from functools import cached_property
 
 from PIL import Image
 
@@ -27,7 +28,7 @@ from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outli
 
 @dataclass
 class RasterPainter:
-    """Execute pixel effects; handle bookkeeping and state changes stay in the DC."""
+    """Paint one operation against stable pen/mapping state; never retain across calls."""
 
     image: Image.Image
     state: DrawingState
@@ -168,7 +169,7 @@ class RasterPainter:
             self.image.putpixel((x, y), rop2(self.state.rop2 if operation is None else operation, color, destination))
 
     def stroke_path(self, path: DevicePath, *, miter=False) -> None:
-        if self.realized_pen().cosmetic:
+        if self.realized_pen.cosmetic:
             # Opaque style gaps are painted beneath foreground marks, even
             # when the figure retraces itself. Keep multiplicity in each pass.
             passes = (
@@ -187,6 +188,7 @@ class RasterPainter:
         for x, y in foreground:
             self.pixel(x, y, self.state.pen.color)
 
+    @cached_property
     def realized_pen(self):
         return realize_pen(self.state.pen.width, *self.state.mapping.linear_scale)
 
@@ -215,7 +217,7 @@ class RasterPainter:
     def stroke_fragments(self, paths: tuple[DevicePath, ...], *, miter=False):
         if self.state.pen.style == PS_NULL:
             return set(), set()
-        if not self.realized_pen().cosmetic:
+        if not self.realized_pen.cosmetic:
             return self._stroke_pixels(paths, miter=miter), set()
         foreground, gaps = set(), set()
         for pixel, mark in self._cosmetic_fragments(paths):
@@ -225,7 +227,7 @@ class RasterPainter:
     def _stroke_pixels(self, paths: tuple[DevicePath, ...], *, miter=False) -> set[tuple[int, int]]:
         if self.state.pen.style == PS_NULL:
             return set()
-        pen = self.realized_pen()
+        pen = self.realized_pen
         pixels: set[tuple[int, int]] = set()
         for path in paths:
             # A wholly collapsed figure still has a pen footprint. There is
@@ -271,12 +273,15 @@ class RasterPainter:
         contours = tuple(path.vertices for path in paths)
         # Native copy-mode combined fill/stroke consumes the flattened contour.
         # Other ROP2 modes and stroke-only paths retain cubic tangents.
-        if self.state.brush.style != BS_NULL and self.state.rop2 == R2_COPYPEN:
+        if brush.style != BS_NULL and self.state.rop2 == R2_COPYPEN:
             paths = tuple(path.flattened() for path in paths)
         fill_pixels = set(self.contour_pixels(contours, fill_mode=self.state.polygon_fill_mode))
         foreground, gaps = self.stroke_fragments(paths, miter=miter)
-        stroke_pixels = self._stroke_pixels(paths, miter=miter) if reserve_outline else foreground | gaps
-        pen = self.realized_pen()
+        pen = self.realized_pen
+        # Only cosmetic styles need a separate solid outline for fill reservation.
+        stroke_pixels = (
+            self._stroke_pixels(paths, miter=miter) if reserve_outline and pen.cosmetic else foreground | gaps
+        )
         if pen.cosmetic and not reserve_outline:
             # Cosmetic paths fill first, then emit the outline (including
             # repeated pixels). Wide combined paths exclude stroke coverage.

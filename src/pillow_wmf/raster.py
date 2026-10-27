@@ -603,6 +603,7 @@ class RasterContext(TraceContext):
     def _apply_fill_region(self, call, prepared, result):
         name = call.name
         a = call.kwargs
+        painter = self._painter()
         region = self._objects[a["region"]]
         if region is not None:
             if name == "frame_region":
@@ -620,9 +621,9 @@ class RasterContext(TraceContext):
             for left, top, right, bottom in region.rectangles():
                 for y in range(max(0, top), min(self.image.height, bottom)):
                     for x in range(max(0, left), min(self.image.width, right)):
-                        color = (0, 0, 0) if name == "invert_region" else self._brush_color_at(x, y, brush)
+                        color = (0, 0, 0) if name == "invert_region" else painter.brush_color_at(x, y, brush)
                         if color is not None:
-                            self._pixel(x, y, color, operation=R2_NOT if name == "invert_region" else None)
+                            painter.pixel(x, y, color, operation=R2_NOT if name == "invert_region" else None)
 
     _apply_paint_region = _apply_fill_region
     _apply_invert_region = _apply_fill_region
@@ -631,7 +632,8 @@ class RasterContext(TraceContext):
     def _apply_rectangle(self, call, prepared, result):
         name = call.name
         a = call.kwargs
-        pen = self._realized_pen()
+        painter = self._painter()
+        pen = painter.realized_pen
         # Native EBOX decrements RTL logical X edges before transforming.
         # Rectangle's wide-pen path enters EBOX after its own decrement.
         shift = int(self.mapping.rtl) * (1 + (name == "rectangle" and not pen.cosmetic))
@@ -719,10 +721,10 @@ class RasterContext(TraceContext):
                     clockwise=self.mapping.rtl,
                 )
             if covered:
-                for x, y in self._contour_pixels((path.vertices,)):
-                    self._pixel(x, y, self._state.pen.color)
+                for x, y in painter.contour_pixels((path.vertices,)):
+                    painter.pixel(x, y, self._state.pen.color)
             elif name == "arc":
-                self._stroke_path(path)
+                painter.stroke_path(path)
             else:
                 brush = self._state.brush
                 # Rectangle's block-fill realization simplifies ROPs
@@ -730,7 +732,7 @@ class RasterContext(TraceContext):
                 # transparency. Region/path fills retain the hatch mask.
                 if rectangle and brush.style == BS_HATCHED and self._state.rop2 in (R2_BLACK, R2_NOT, R2_NOP, R2_WHITE):
                     brush = replace(brush, style=0)
-                self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
+                painter.paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
 
     _apply_ellipse = _apply_rectangle
     _apply_arc = _apply_rectangle
@@ -879,7 +881,7 @@ class RasterContext(TraceContext):
         self._painter().stroke_path(path, miter=miter)
 
     def _realized_pen(self):
-        return self._painter().realized_pen()
+        return self._painter().realized_pen
 
     def _stroke_fragments(self, paths, *, miter=False):
         return self._painter().stroke_fragments(paths, miter=miter)

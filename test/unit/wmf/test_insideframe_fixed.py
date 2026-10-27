@@ -4,6 +4,7 @@ import pytest
 
 from pillow_wmf import RasterContext
 from pillow_wmf.ellipse import box_axes, box_corners
+from pillow_wmf.raster_paint import RasterPainter
 
 
 def capture(monkeypatch, operation, *, width=45, window=(2048, 2048), origin=(0, 0), box=(256, 256, 1792, 1792)):
@@ -13,8 +14,8 @@ def capture(monkeypatch, operation, *, width=45, window=(2048, 2048), origin=(0,
     context.set_window_extent(*window)
     context.select_object(context.create_pen(6, width, 0))
     paths = []
-    monkeypatch.setattr(context, "_paint_polygons", lambda figures, **kwargs: paths.extend(figures))
-    monkeypatch.setattr(context, "_stroke_path", lambda path, **kwargs: paths.append(path))
+    monkeypatch.setattr(RasterPainter, "paint_polygons", lambda self, figures, **kwargs: paths.extend(figures))
+    monkeypatch.setattr(RasterPainter, "stroke_path", lambda self, path, **kwargs: paths.append(path))
     args = box
     if operation == "round_rect":
         args += (768, 1024)
