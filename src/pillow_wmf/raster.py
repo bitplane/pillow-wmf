@@ -154,9 +154,10 @@ class RasterContext(TraceContext):
         background=(255, 255, 255),
         max_bitmap_pixels: int = DEFAULT_MAX_BITMAP_PIXELS,
         max_geometry_points: int = DEFAULT_MAX_GEOMETRY_POINTS,
+        max_saved_states: int = 1024,
         fonts: FontCollection | None = None,
     ):
-        super().__init__()
+        super().__init__(max_saved_states=max_saved_states)
         self._geometry_budget = GeometryBudget(max_geometry_points)
         if width <= 0 or height <= 0:
             raise ValueError("Image dimensions must be positive")

@@ -66,3 +66,26 @@ def test_extreme_mapping_cannot_expand_unbounded_curves(strict):
         context.set_pixel(0, 0, 0)
     with pytest.raises(ResourceLimitError, match="Curve point limit"):
         render(data, (16, 16), max_bitmap_pixels=256)
+
+
+def test_render_honors_increased_saved_state_limit():
+    source = Recorder(max_saved_states=1025)
+    for _ in range(1025):
+        source.save_dc()
+    source.set_viewport_origin(1, 1)
+    source.restore_dc(1)
+    source.set_pixel(0, 0, 255)
+    image = render(source.to_bytes(), (2, 2), limits=Limits(max_saved_states=1025))
+    assert image.getpixel((0, 0)) == (255, 0, 0)
+    assert image.getpixel((1, 1)) == (255, 255, 255)
+
+
+@pytest.mark.parametrize("limit", [0, 1, 1024])
+def test_render_rejects_save_beyond_configured_limit(limit):
+    from pillow_wmf import PlaybackError
+
+    source = Recorder(max_saved_states=limit + 1)
+    for _ in range(limit + 1):
+        source.save_dc()
+    with pytest.raises(PlaybackError, match="saved-state limit"):
+        render(source.to_bytes(), (1, 1), limits=Limits(max_saved_states=limit))

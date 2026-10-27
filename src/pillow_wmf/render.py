@@ -47,6 +47,7 @@ def render(
     Fonts are supplied explicitly. For partial rendering with diagnostics, use
     ``play(metafile, context, strict=False)`` and inspect its omissions instead.
     """
+    limits = limits if limits is not None else Limits()
     metafile = _read_metafile(data, limits)
     context = RasterContext(
         *size,
@@ -54,6 +55,7 @@ def render(
         fonts=fonts,
         max_bitmap_pixels=max_bitmap_pixels,
         max_geometry_points=max_geometry_points,
+        max_saved_states=limits.max_saved_states,
     )
     play(metafile, context, strict=True, limits=limits)
     if isinstance(fonts, SystemFontCollection):
