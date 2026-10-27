@@ -46,7 +46,7 @@ from .constants import (
 )
 from .ellipse import arc_figure, box_corners, ellipse_cubics, round_rect_figure
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
-from .geometry import DevicePath, Polygon
+from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon
 from .mapping import Mapping
 from .objects import FontRequest, GlyphIndices
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
@@ -153,9 +153,11 @@ class RasterContext(TraceContext):
         *,
         background=(255, 255, 255),
         max_bitmap_pixels: int = DEFAULT_MAX_BITMAP_PIXELS,
+        max_geometry_points: int = DEFAULT_MAX_GEOMETRY_POINTS,
         fonts: FontCollection | None = None,
     ):
         super().__init__()
+        self._geometry_budget = GeometryBudget(max_geometry_points)
         if width <= 0 or height <= 0:
             raise ValueError("Image dimensions must be positive")
         if max_bitmap_pixels < 0:
@@ -313,7 +315,8 @@ class RasterContext(TraceContext):
         handler, prepared = token.payload
         result = self._result(call)
         # Input rejection belongs in prepare; execution failures are fatal.
-        handler(call, prepared, result)
+        with self._geometry_budget.activate():
+            handler(call, prepared, result)
         self._commit(call)
         if isinstance(result, Handle) and self.is_null_object(result):
             # Intern failed creations so file-slot reuse cannot leak handles.

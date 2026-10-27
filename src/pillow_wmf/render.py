@@ -3,6 +3,7 @@
 from PIL import Image
 
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS
+from .geometry import DEFAULT_MAX_GEOMETRY_POINTS
 from .raster import RasterContext
 from .system_fonts import SystemFontCollection
 from .text import FontCollection
@@ -37,6 +38,7 @@ def render(
     background=(255, 255, 255),
     limits: Limits | None = None,
     max_bitmap_pixels: int = DEFAULT_MAX_BITMAP_PIXELS,
+    max_geometry_points: int = DEFAULT_MAX_GEOMETRY_POINTS,
 ) -> Image.Image:
     """Render to an RGB image, raising if any record cannot be rendered.
 
@@ -46,7 +48,13 @@ def render(
     ``play(metafile, context, strict=False)`` and inspect its omissions instead.
     """
     metafile = _read_metafile(data, limits)
-    context = RasterContext(*size, background=background, fonts=fonts, max_bitmap_pixels=max_bitmap_pixels)
+    context = RasterContext(
+        *size,
+        background=background,
+        fonts=fonts,
+        max_bitmap_pixels=max_bitmap_pixels,
+        max_geometry_points=max_geometry_points,
+    )
     play(metafile, context, strict=True, limits=limits)
     if isinstance(fonts, SystemFontCollection):
         context.image.info["wmf_font_substitutions"] = tuple(fonts.substitutions)

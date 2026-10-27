@@ -11,7 +11,7 @@ from fractions import Fraction
 from math import ceil, floor
 
 from .gdi_math import circle_control
-from .geometry import Point, Polygon, StrokeSegment, flatten_cubic
+from .geometry import Point, Polygon, StrokeSegment, charge_geometry_points, flatten_cubic
 from .numeric import float32
 
 # Native circular pen silhouettes, in half-pixel units. Only one half is
@@ -49,6 +49,7 @@ def dash_is_foreground(style: int, position: int) -> bool:
 class PenGeometry:
     vertices: tuple[Point, ...]
     cosmetic: bool
+    expanded: bool = False
 
 
 def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeometry:
@@ -60,7 +61,8 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
     # rounding the original scale directly misses the half-sixteenth band
     # immediately below each half-pixel boundary.
     table_width = (diameters[0] + 8) // 16
-    if cosmetic or (circular and table_width <= 6):
+    table_pen = cosmetic or (circular and table_width <= 6)
+    if table_pen:
         half = [(x * 8, y * 8) for x, y in _SMALL_PENS[1 if cosmetic else max(1, table_width)]]
     else:
         # Preserve the orientation of the first transformed basis vector.
@@ -97,7 +99,9 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
         # Keep the semicircle's terminal vertex: reflection duplicates both
         # seam vertices. Native contour traversal visits those duplicates;
         # they matter when rounded body support differs from the pen vertex.
-    return PenGeometry(tuple(half + [(-x, -y) for x, y in half]), cosmetic)
+    if not table_pen:
+        charge_geometry_points(2 * len(half))
+    return PenGeometry(tuple(half + [(-x, -y) for x, y in half]), cosmetic, expanded=not table_pen)
 
 
 def frame_footprint(width, height, scale_x, scale_y):
@@ -190,6 +194,8 @@ def widen_segment(segment: StrokeSegment, pen: PenGeometry, *, cap_start=True, c
                 continue
             x, y = vertices[position]
             x, y = (_body(x, miter=miter), _body(y)) if offset in (0, half) else (_cap(x, origin), _cap(y, origin))
+            if pen.expanded and offset not in (0, half):
+                charge_geometry_points()
             outline.append((origin[0] + x, origin[1] + y))
         index = (index + half) % len(vertices)
     return outline
@@ -231,6 +237,8 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
                 # walker starts the next half at its head instead.
                 if step > 0 and vertices[i] == vertices[(i + 1) % count]:
                     continue
+                if pen.expanded:
+                    charge_geometry_points()
                 outline.append((vertex[0] + _cap(vertices[i][0], vertex), vertex[1] + _cap(vertices[i][1], vertex)))
     outline.append(end)
     return outline

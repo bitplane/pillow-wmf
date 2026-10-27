@@ -45,3 +45,24 @@ def test_configured_default_is_equivalent_to_explicit_font_selection():
         render(implicit.to_bytes(), (60, 40), fonts=FontCollection([face]))
     with pytest.raises(ValueError, match="Invalid default font"):
         FontCollection(default_font=request)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_extreme_mapping_cannot_expand_unbounded_curves(strict):
+    from pillow_wmf import Metafile, RasterContext, play
+    from pillow_wmf.binary import ResourceLimitError
+
+    source = Recorder()
+    source.set_window_extent(1, 1)
+    source.set_viewport_extent(32767, 32767)
+    source.scale_viewport_extent(32767, 1, 32767, 1)
+    source.scale_viewport_extent(32767, 1, 32767, 1)
+    source.ellipse(0, 0, 10, 10)
+    data = source.to_bytes()
+    context = RasterContext(16, 16, max_bitmap_pixels=256)
+    with pytest.raises(ResourceLimitError, match="Curve point limit"):
+        play(Metafile.from_bytes(data), context, strict=strict)
+    with pytest.raises(RuntimeError, match="unusable"):
+        context.set_pixel(0, 0, 0)
+    with pytest.raises(ResourceLimitError, match="Curve point limit"):
+        render(data, (16, 16), max_bitmap_pixels=256)

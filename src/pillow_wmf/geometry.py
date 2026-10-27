@@ -2,9 +2,52 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import cached_property
 from itertools import pairwise
+
+from .binary import ResourceLimitError
+
+# Generated vertices are independent of input point counts and canvas size.
+MAX_CURVE_POINTS = 65_536
+DEFAULT_MAX_GEOMETRY_POINTS = 1_000_000
+_active_budget = ContextVar("geometry_budget", default=None)
+
+
+@dataclass
+class GeometryBudget:
+    """Cumulative generated geometry allowance owned by one raster context."""
+
+    remaining: int
+
+    def __post_init__(self):
+        if self.remaining < 0:
+            raise ValueError("Geometry point limit must be nonnegative")
+
+    @contextmanager
+    def activate(self):
+        token = _active_budget.set(self)
+        try:
+            yield
+        finally:
+            _active_budget.reset(token)
+
+
+def charge_geometry_points(count=1):
+    """Charge before generating vertices, including copies used by strokes.
+
+    Scoped context state lets low-level curve and pen helpers share the same
+    allowance without attaching mutable render state to immutable paths.
+    Standalone helpers retain their per-curve limit.
+    """
+    budget = _active_budget.get()
+    if budget is not None:
+        if count > budget.remaining:
+            raise ResourceLimitError("Generated geometry point limit exceeded")
+        budget.remaining -= count
+
 
 type Point = tuple[int, int]
 type Polygon = list[Point]
@@ -192,6 +235,9 @@ def _flatten_large_cubic(control: Cubic) -> Polygon:
         inner_y = _CurveAxis.from_controls(*y.controls(), precision=_LARGE_CURVE_PRECISION)
         inner_steps = _initial_curve_steps(inner_x, inner_y, _LARGE_CURVE_ERROR)
         while inner_steps:
+            if len(points) >= MAX_CURVE_POINTS:
+                raise ResourceLimitError("Curve point limit exceeded")
+            charge_geometry_points()
             inner_steps = _advance_curve(inner_x, inner_y, inner_steps, _LARGE_CURVE_ERROR)
             points.append((inner_x.rounded_position, inner_y.rounded_position))
         steps = _advance_curve(x, y, steps, _COARSE_CURVE_ERROR)
@@ -203,6 +249,8 @@ def flatten_cubic(control: Cubic) -> Polygon:
 
     Arithmetic shifts during step changes are observable. Exact recursive
     subdivision can choose identical sample parameters but different vertices.
+    Each curve is limited to MAX_CURVE_POINTS generated vertices, including
+    off-screen geometry; exceeding this allocation policy aborts rendering.
     """
     if any(max(p[axis] for p in control) - min(p[axis] for p in control) >= _SMALL_CURVE_SPAN for axis in (0, 1)):
         return _flatten_large_cubic(control)
@@ -219,6 +267,9 @@ def flatten_cubic(control: Cubic) -> Polygon:
 
     points: Polygon = []
     while steps:
+        if len(points) >= MAX_CURVE_POINTS:
+            raise ResourceLimitError("Curve point limit exceeded")
+        charge_geometry_points()
         steps = _advance_curve(x, y, steps, _CURVE_ERROR)
         points.append((x.rounded_position, y.rounded_position))
     return points

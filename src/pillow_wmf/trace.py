@@ -6,6 +6,7 @@ deletion quirks, clipping, palette realization or any pixel effects.
 
 import inspect
 
+from .binary import ResourceLimitError
 from .gdi import GDI, OPERATION_NAMES, Call, Handle, InvalidOperation, PreparedCall, UnsupportedOperation
 
 CREATED_KINDS = {
@@ -121,6 +122,9 @@ class TraceContext(GDI):
         self._check_prepared(prepared)
         try:
             result = self._execute(prepared)
+        except ResourceLimitError:
+            self._failed = True
+            raise
         except Exception as error:
             self._failed = True
             raise RuntimeError(f"Failed drawing effect: {prepared.call.name}") from error

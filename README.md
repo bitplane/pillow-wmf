@@ -23,6 +23,26 @@ with Image.open("drawing.wmf") as image:
     image.save("drawing.png")
 ```
 
+## Rendering limits
+
+`render(data, size, limits=Limits(...))` bounds input bytes, records, points,
+objects and saved DC states. `max_bitmap_pixels` limits each decoded bitmap
+or glyph. `max_geometry_points` (default 1,000,000) limits cumulative curve
+flattening and dynamic pen expansion, including their stroke caps, joins and
+repeated realizations. Input polygon points, fixed-size stroke bodies and
+fixed-table pens (including their caps and joins) do not spend this expansion
+budget.
+The geometry allowance belongs to the raster context and is not restored by
+`RestoreDC`. Each flattened curve also has a fixed 65,536-point limit.
+`RasterContext` accepts `max_geometry_points` for direct drawing; Pillow loading
+uses the defaults.
+
+Resource exhaustion raises `pillow_wmf.binary.ResourceLimitError`, including
+during `play(..., strict=False)`; it is never treated as a recoverable omission.
+An execution-time failure makes the context unusable and may leave partial
+pixels. Pillow reports rendering resource failures as `OSError`. These limits
+bound particular allocations and generated geometry, not total rendering time.
+
 ## License
 
 pillow-wmf is WTFPL with one additional clause:

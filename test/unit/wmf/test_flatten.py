@@ -367,3 +367,17 @@ def test_native_large_curve_boundary(control, expected, swap):
         control = tuple((y, x) for x, y in control)
         expected = [(y, x) for x, y in expected]
     assert flatten_cubic(control) == expected
+
+
+@pytest.mark.parametrize("extent", [100, 100_000])
+def test_curve_budget_accepts_exact_limit_and_rejects_next_vertex(monkeypatch, extent):
+    from pillow_wmf import geometry
+    from pillow_wmf.binary import ResourceLimitError
+
+    control = ((0, 0), (0, extent), (extent, extent), (extent, 0))
+    expected = flatten_cubic(control)
+    monkeypatch.setattr(geometry, "MAX_CURVE_POINTS", len(expected))
+    assert flatten_cubic(control) == expected
+    monkeypatch.setattr(geometry, "MAX_CURVE_POINTS", len(expected) - 1)
+    with pytest.raises(ResourceLimitError, match="Curve point limit"):
+        flatten_cubic(control)
