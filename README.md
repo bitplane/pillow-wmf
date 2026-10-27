@@ -37,8 +37,10 @@ operation. Reusing them does not spend the allowance again; subsequent
 operations generate and charge their own geometry.
 The geometry allowance belongs to the raster context and is not restored by
 `RestoreDC`. Each flattened curve also has a fixed 65,536-point limit.
-`RasterContext` accepts `max_geometry_points` for direct drawing; Pillow loading
-uses the defaults.
+`RasterContext` accepts `max_objects`, `max_saved_states`, `max_bitmap_pixels`
+and `max_geometry_points` for direct drawing. `render()` passes its `Limits`
+object's object/save allowances to the backend; Pillow loading uses the defaults.
+Default policy values are defined in `pillow_wmf.limits`.
 
 Resource exhaustion raises `pillow_wmf.binary.ResourceLimitError`, including
 during `play(..., strict=False)`; it is never treated as a recoverable omission.

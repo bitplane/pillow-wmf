@@ -5,9 +5,8 @@ from struct import pack, pack_into, unpack_from
 
 from .binary import FormatError, ResourceLimitError
 from .gdi import UnsupportedOperation
+from .limits import DEFAULT_MAX_BITMAP_PIXELS as DEFAULT_MAX_BITMAP_PIXELS
 from .objects import BitmapData
-
-DEFAULT_MAX_BITMAP_PIXELS = 16_777_216
 
 
 @dataclass(frozen=True)

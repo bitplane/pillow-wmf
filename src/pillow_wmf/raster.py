@@ -47,6 +47,7 @@ from .ellipse import arc_figure, box_corners, ellipse_cubics, inside_frame_bound
 from .execution import CREATED_KINDS, ExecutionContext
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon
+from .limits import DEFAULT_LIMITS
 from .mapping import Mapping
 from .objects import FontRequest, GlyphIndices
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
@@ -141,11 +142,12 @@ class RasterContext(ExecutionContext[DrawingState]):
         background=(255, 255, 255),
         max_bitmap_pixels: int = DEFAULT_MAX_BITMAP_PIXELS,
         max_geometry_points: int = DEFAULT_MAX_GEOMETRY_POINTS,
-        max_saved_states: int = 1024,
+        max_objects: int = DEFAULT_LIMITS.max_objects,
+        max_saved_states: int = DEFAULT_LIMITS.max_saved_states,
         trace_calls: bool = True,
         fonts: FontCollection | None = None,
     ):
-        super().__init__(max_saved_states=max_saved_states, trace_calls=trace_calls)
+        super().__init__(max_objects=max_objects, max_saved_states=max_saved_states, trace_calls=trace_calls)
         self._geometry_budget = GeometryBudget(max_geometry_points)
         if width <= 0 or height <= 0:
             raise ValueError("Image dimensions must be positive")

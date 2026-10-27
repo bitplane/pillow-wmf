@@ -10,9 +10,9 @@ from functools import lru_cache
 from .gdi import UnsupportedOperation
 from .halftone_power import FD6, round_ratio, tent_power
 from .halftone_scan import ExpansionSamples, ExpansionWindow, ReductionScanReader, has_source
+from .limits import MAX_FILTER_TAPS as MAX_FILTER_TAPS
 
 SCALE = 8192
-MAX_FILTER_TAPS = 65536
 
 
 class HalftoneMode(Enum):

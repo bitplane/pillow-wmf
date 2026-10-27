@@ -9,10 +9,9 @@ from functools import cached_property
 from itertools import pairwise
 
 from .binary import ResourceLimitError
+from .limits import DEFAULT_MAX_GEOMETRY_POINTS as DEFAULT_MAX_GEOMETRY_POINTS
+from .limits import MAX_CURVE_POINTS as MAX_CURVE_POINTS
 
-# Generated vertices are independent of input point counts and canvas size.
-MAX_CURVE_POINTS = 65_536
-DEFAULT_MAX_GEOMETRY_POINTS = 1_000_000
 _active_budget = ContextVar("geometry_budget", default=None)
 
 

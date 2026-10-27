@@ -89,3 +89,16 @@ def test_render_rejects_save_beyond_configured_limit(limit):
         source.save_dc()
     with pytest.raises(PlaybackError, match="saved-state limit"):
         render(source.to_bytes(), (1, 1), limits=Limits(max_saved_states=limit))
+
+
+def test_raster_object_limit_rejection_allows_cleanup_and_reuse():
+    from pillow_wmf import RasterContext
+
+    context = RasterContext(4, 4, max_objects=1)
+    pen = context.create_pen(0, 1, 0)
+    with pytest.raises(ValueError, match="Object limit"):
+        context.create_brush(0, 255, 0)
+    context.delete_object(pen)
+    context.select_object(context.create_brush(0, 255, 0))
+    context.pat_blt(0, 0, 4, 4, 0xF00021)
+    assert context.image.getpixel((1, 1)) == (255, 0, 0)

@@ -4,6 +4,7 @@ import inspect
 
 from .binary import ResourceLimitError
 from .gdi import GDI, OPERATION_NAMES, Call, Handle, InvalidOperation, PreparedCall, UnsupportedOperation
+from .limits import DEFAULT_LIMITS
 
 CREATED_KINDS = {
     "create_pen": "pen",
@@ -33,7 +34,13 @@ _NO_SNAPSHOT = object()
 class ExecutionContext[SavedState](GDI):
     """Own one typed save stack; diagnostic call retention is optional."""
 
-    def __init__(self, *, max_objects: int = 65_535, max_saved_states: int = 1024, trace_calls: bool = False):
+    def __init__(
+        self,
+        *,
+        max_objects: int = DEFAULT_LIMITS.max_objects,
+        max_saved_states: int = DEFAULT_LIMITS.max_saved_states,
+        trace_calls: bool = False,
+    ):
         if max_objects < 0 or max_saved_states < 0:
             raise ValueError("Limits must be nonnegative")
         self.calls: list[Call] = []

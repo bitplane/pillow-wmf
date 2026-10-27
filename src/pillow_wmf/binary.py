@@ -1,7 +1,8 @@
-"""Bounded little-endian IO and resource policy shared by graphics codecs."""
+"""Bounded little-endian IO and errors shared by graphics codecs."""
 
 import struct
-from dataclasses import dataclass
+
+from .limits import Limits as Limits
 
 
 class FormatError(ValueError):
@@ -10,21 +11,6 @@ class FormatError(ValueError):
 
 class ResourceLimitError(FormatError):
     """A configured safety limit was exceeded; never a recoverable omission."""
-
-
-@dataclass(frozen=True)
-class Limits:
-    """Allocation/work limits; these are policy, not WMF format limits."""
-
-    max_bytes: int = 64 * 1024 * 1024
-    max_records: int = 100_000
-    max_points: int = 1_000_000
-    max_objects: int = 65_535
-    max_saved_states: int = 1024
-
-    def __post_init__(self):
-        if any(value < 0 for value in vars(self).values()):
-            raise ValueError("Limits must be nonnegative")
 
 
 class Reader:
