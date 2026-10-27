@@ -45,6 +45,7 @@ from .constants import (
     WINDING,
 )
 from .ellipse import arc_figure, box_corners, ellipse_cubics, round_rect_figure
+from .execution import CREATED_KINDS, ExecutionContext
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon
 from .mapping import Mapping
@@ -59,7 +60,6 @@ from .raster_state import TextState as TextState
 from .stroke import frame_footprint
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
-from .trace import CREATED_KINDS, TraceContext
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
@@ -127,7 +127,7 @@ BITMAP_NOOP_ESCAPES = frozenset(
 )
 
 
-class RasterContext(TraceContext):
+class RasterContext(ExecutionContext[DrawingState]):
     """Draw the currently supported GDI calls into an RGB Pillow image.
 
     Unsupported modes and primitives raise rather than silently draw an
@@ -143,9 +143,10 @@ class RasterContext(TraceContext):
         max_bitmap_pixels: int = DEFAULT_MAX_BITMAP_PIXELS,
         max_geometry_points: int = DEFAULT_MAX_GEOMETRY_POINTS,
         max_saved_states: int = 1024,
+        trace_calls: bool = True,
         fonts: FontCollection | None = None,
     ):
-        super().__init__(max_saved_states=max_saved_states)
+        super().__init__(max_saved_states=max_saved_states, trace_calls=trace_calls)
         self._geometry_budget = GeometryBudget(max_geometry_points)
         if width <= 0 or height <= 0:
             raise ValueError("Image dimensions must be positive")
@@ -158,7 +159,6 @@ class RasterContext(TraceContext):
         self._state = DrawingState(
             Mapping(window_extent=(width, height), viewport_extent=(width, height), surface_width=width)
         )
-        self._saved: list[DrawingState] = []
 
     @property
     def mapping(self):
@@ -588,14 +588,16 @@ class RasterContext(TraceContext):
 
     _apply_ext_flood_fill = _apply_flood_fill
 
-    def _apply_save_dc(self, call, prepared, result):
-        self._saved.append(self._state.snapshot())
+    def _capture_saved_state(self):
+        return self._state.snapshot()
 
-    def _apply_restore_dc(self, call, prepared, result):
-        level = call.kwargs["saved_dc"]
-        target = level if level > 0 else len(self._saved) + level + 1
-        self._state = self._saved[target - 1]
-        del self._saved[target - 1 :]
+    def _restore_saved_state(self, state):
+        self._state = state
+
+    def _apply_save_dc(self, call, prepared, result):
+        pass  # The execution base commits the snapshot and stack together.
+
+    _apply_restore_dc = _apply_save_dc
 
     def _apply_intersect_clip_rect(self, call, prepared, result):
         name = call.name

@@ -182,3 +182,39 @@ def test_live_image_matches_wmf_replay_exactly(face):
     replay = raster()
     assert play(Metafile.from_bytes(context.recorder.to_bytes()), replay, strict=True) == ()
     assert context.image.tobytes() == replay.image.tobytes()
+
+
+def test_recording_without_call_logs_preserves_nested_state_and_replay():
+    drawing = RasterContext(8, 8, trace_calls=False)
+    recorder = Recorder(trace_calls=False)
+    context = RecordingContext(drawing, recorder, trace_calls=False)
+    outer = context.save_dc()
+    context.set_viewport_origin(2, 2)
+    context.save_dc()
+    context.set_viewport_origin(4, 4)
+    context.restore_dc(-1)
+    context.set_pixel(0, 0, 255)
+    context.restore_dc(outer)
+    context.set_pixel(0, 0, 0)
+    assert context.image.getpixel((2, 2)) == (255, 0, 0)
+    assert context.image.getpixel((0, 0)) == (0, 0, 0)
+    replay = RasterContext(8, 8, trace_calls=False)
+    assert play(recorder.metafile(), replay, strict=True) == ()
+    assert context.image.tobytes() == replay.image.tobytes()
+    assert not context.calls and not drawing.calls and not recorder.calls and not replay.calls
+    with pytest.raises(InvalidOperation, match="saved DC"):
+        context.restore_dc(-1)
+    # Exhausted restore is rejected without making the pair unusable.
+    context.set_pixel(1, 1, 255)
+
+
+def test_recording_detects_independent_use_without_call_logging():
+    drawing = RasterContext(8, 8, trace_calls=False)
+    drawing.set_pixel(0, 0, 0)
+    with pytest.raises(ValueError, match="fresh"):
+        RecordingContext(drawing, Recorder(trace_calls=False))
+    drawing = RasterContext(8, 8, trace_calls=False)
+    context = RecordingContext(drawing, Recorder(trace_calls=False))
+    drawing.move_to(1, 1)
+    with pytest.raises(RuntimeError, match="independently"):
+        context.set_pixel(0, 0, 0)

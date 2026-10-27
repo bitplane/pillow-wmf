@@ -2,11 +2,11 @@
 
 from dataclasses import replace
 
+from .execution import CREATED_KINDS, REFERENCES, ExecutionContext
 from .gdi import Call, Handle, UnsupportedOperation
-from .trace import CREATED_KINDS, REFERENCES, TraceContext
 
 
-class RecordingContext(TraceContext):
+class RecordingContext(ExecutionContext[tuple[int, int]]):
     """Pair fresh staged backends, rejecting work before either side applies it.
 
     Issue all drawing through this wrapper after construction. Direct changes
@@ -17,16 +17,17 @@ class RecordingContext(TraceContext):
     potentially different object-slot lifetimes.
     """
 
-    def __init__(self, drawing: TraceContext, recorder: TraceContext):
+    def __init__(self, drawing: ExecutionContext, recorder: ExecutionContext, *, trace_calls=True):
         if drawing is recorder:
             raise ValueError("Drawing and recording require distinct contexts")
         for backend in (drawing, recorder):
-            if not isinstance(backend, TraceContext):
-                raise TypeError("Recording requires staged TraceContext backends")
+            if not isinstance(backend, ExecutionContext):
+                raise TypeError("Recording requires staged ExecutionContext backends")
             backend._check_usable()
-            if backend.calls or backend._revision or getattr(backend, "records", ()):
+            if backend._revision or getattr(backend, "records", ()):
                 raise ValueError("Recording must start with fresh contexts")
         super().__init__(
+            trace_calls=trace_calls,
             max_objects=min(drawing.max_objects, recorder.max_objects),
             max_saved_states=min(drawing.max_saved_states, recorder.max_saved_states),
         )
@@ -35,7 +36,6 @@ class RecordingContext(TraceContext):
         self._backends = (drawing, recorder)
         self._backend_revisions = tuple(backend._revision for backend in self._backends)
         self._handles = {}
-        self._saved = []
 
     @property
     def image(self):
@@ -61,8 +61,7 @@ class RecordingContext(TraceContext):
                 handle = arguments[name]
                 arguments[name] = None if handle is None else self._handles[handle][side]
             if call.name == "restore_dc":
-                level = arguments["saved_dc"]
-                index = level - 1 if level > 0 else len(self._saved) + level
+                index = self._saved_index(arguments["saved_dc"])
                 arguments["saved_dc"] = self._saved[index][side]
             operation = backend.prepare(Call.make(call.name, **arguments))
             if operation.null_object:
@@ -96,16 +95,10 @@ class RecordingContext(TraceContext):
             for side, result in enumerate(results):
                 if type(result) is not int or result <= 0 or any(frame[side] == result for frame in self._saved):
                     raise RuntimeError("Backend returned an invalid saved-state identifier")
-        result = self._commit(call)
+        result = self._commit(call, saved_state=results)
         if call.name in CREATED_KINDS:
             self._handles[result] = results
         elif call.name == "delete_object":
             del self._handles[call.kwargs["handle"]]
-        elif call.name == "save_dc":
-            self._saved.append(results)
-        elif call.name == "restore_dc":
-            level = call.kwargs["saved_dc"]
-            index = level - 1 if level > 0 else len(self._saved) + level
-            del self._saved[index:]
         self._backend_revisions = tuple(backend._revision for backend in self._backends)
         return result

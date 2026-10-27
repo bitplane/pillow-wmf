@@ -56,6 +56,7 @@ def render(
         max_bitmap_pixels=max_bitmap_pixels,
         max_geometry_points=max_geometry_points,
         max_saved_states=limits.max_saved_states,
+        trace_calls=False,
     )
     play(metafile, context, strict=True, limits=limits)
     if isinstance(fonts, SystemFontCollection):

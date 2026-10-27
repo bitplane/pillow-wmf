@@ -46,6 +46,15 @@ An execution-time failure makes the context unusable and may leave partial
 pixels. Pillow reports rendering resource failures as `OSError`. These limits
 bound particular allocations and generated geometry, not total rendering time.
 
+## Drawing diagnostics
+
+`RasterContext` and `Recorder` retain requested calls by default for existing
+diagnostic callers. Pass `trace_calls=False` to omit that history; WMF recording,
+handle validation and saved drawing state still work. `RecordingContext` also
+accepts this option for its own history, independently of its two backends.
+`render()` and the Pillow loader disable call history because they only return
+pixels. `TraceContext` remains the backend for collecting a command trace.
+
 ## License
 
 pillow-wmf is WTFPL with one additional clause:

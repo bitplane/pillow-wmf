@@ -70,7 +70,7 @@ class WmfImageFile(ImageFile.ImageFile):
         target = tuple(target)
         Image._decompression_bomb_check(target)
         fonts = SystemFontCollection() if fonts is None else fonts
-        context = RasterContext(*target, fonts=fonts)
+        context = RasterContext(*target, fonts=fonts, trace_calls=False)
         if self._bounds is not None:
             left, top, right, bottom = self._bounds
             context.mapping.window_origin = (left, top)
