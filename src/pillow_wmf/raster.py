@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from fractions import Fraction
 from math import floor
 
 from PIL import Image
 
 from .binary import FormatError, ResourceLimitError
-from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, DIBLayout, RGBBitmap, read_dib
-from .bitmap16 import Bitmap16Layout, read_bitmap16
+from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, read_dib
+from .bitmap16 import read_bitmap16
 from .clip import ClipRegion, RegionMask
 from .constants import (
     ALTERNATE,
@@ -59,7 +59,7 @@ from .raster_state import TextState as TextState
 from .stroke import frame_footprint
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
-from .trace import TraceContext
+from .trace import CREATED_KINDS, TraceContext
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
@@ -73,18 +73,6 @@ def logical_color(colorref):
     # PALETTEINDEX is a flag, not an exclusive high-byte value. Other high
     # bits do not cancel it, including sign-extended colours in legacy files.
     return PaletteIndex(colorref & 65535) if colorref & 0x01000000 else rgb(colorref)
-
-
-@dataclass(frozen=True)
-class PreparedEffect:
-    """Decoded inputs shared by validation and application, never DC state."""
-
-    text_layout: TextLayout | None = None
-    text_rectangle: tuple[int, int, int, int] | None = None
-    transfer: SourceTransfer | TransferAction | None = None
-    pattern: RGBBitmap | DIBLayout | None = None
-    region_mask: RegionMask | None = None
-    layout: Bitmap16Layout | DIBLayout | None = None
 
 
 # MS-WMF's defined escape records are printer operations or embedded metadata.
@@ -199,93 +187,9 @@ class RasterContext(TraceContext):
         return path
 
     def _prepare_effect(self, call):
-        """Validate and decode inputs before recording or changing DC state."""
-        name = call.name
-        a = call.kwargs
-        text_layout = text_rectangle = transfer = pattern = region_mask = layout = None
-        if name == "escape":
-            if a["escape_function"] not in BITMAP_NOOP_ESCAPES:
-                raise UnsupportedOperation(f"escape {a['escape_function']:#06x}")
-        elif name in ("text_out", "ext_text_out"):
-            try:
-                text_layout, text_rectangle = self._prepare_text(a)
-            except UnsupportedOperation as error:
-                raise UnsupportedOperation(f"{name}: {error}") from error
-        elif name == "resize_palette":
-            if not 0 <= a["count"] <= 65535:
-                raise ValueError("Palette size outside WORD range")
-        elif name == "set_layout":
-            if a["layout"] & ~9:
-                raise UnsupportedOperation(f"Layout {a['layout']}")
-        elif name == "set_map_mode":
-            if a["mode"] not in range(MM_TEXT, MM_ANISOTROPIC + 1):
-                raise UnsupportedOperation(f"Map mode {a['mode']}")
-        elif name == "set_polygon_fill_mode":
-            if a["mode"] not in (ALTERNATE, WINDING):
-                raise UnsupportedOperation(f"Polygon fill mode {a['mode']}")
-        elif name == "set_rop2":
-            if a["mode"] not in range(R2_BLACK, R2_WHITE + 1):
-                raise UnsupportedOperation(f"ROP2 mode {a['mode']}")
-        elif name == "set_stretch_mode":
-            if a["mode"] not in (BLACKONWHITE, WHITEONBLACK, COLORONCOLOR, HALFTONE):
-                raise UnsupportedOperation(f"Stretch mode {a['mode']}")
-        elif name in ("dib_bit_blt", "dib_stretch_blt", "stretch_dib"):
-            transfer = self._prepare_transfer(name, a)
-        elif name in ("bit_blt", "stretch_blt"):
-            transfer = self._prepare_legacy_transfer(name, a)
-        elif name == "ext_flood_fill":
-            if a["mode"] not in (FLOODFILLBORDER, FLOODFILLSURFACE):
-                raise UnsupportedOperation(f"Flood fill mode {a['mode']}")
-        elif name == "create_brush":
-            if a["style"] not in (BS_SOLID, BS_NULL, BS_HATCHED) or (
-                a["style"] == BS_HATCHED and a["hatch"] not in range(6)
-            ):
-                raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
-        elif name == "create_pattern_brush":
-            layout = read_bitmap16(a["bitmap"], native_pattern=True, max_pixels=self.max_bitmap_pixels)
-            # A DDB keeps its device format. Only monochrome, the default
-            # indexed device palette, and matching RGB32 realize on this DC.
-            pattern = None
-            if layout.complete and layout.depth in (1, 8, 32):
-                colors = DEFAULT_COLORS[:10] + ((0, 0, 0),) * 236 + DEFAULT_COLORS[10:]
-                pattern = layout.decode(colors=colors if layout.depth == 8 else None)
-        elif name == "create_dib_pattern_brush":
-            layout = read_dib(
-                a["bitmap"],
-                color_usage=0 if a["style"] == 3 else a["color_usage"],
-                max_pixels=self.max_bitmap_pixels,
-            )
-            if layout.color_usage == 1 and layout.complete:
-                # Packed brush storage DWORD-aligns the WORD palette table.
-                # The allocation's tail is zero-filled, unlike the separate
-                # header/bits pointers used by transfer records.
-                padding = -layout.offset % 4
-                layout = replace(layout, offset=layout.offset + padding, data=layout.data + bytes(padding))
-            pattern = (
-                None
-                if not accepts_dib(layout)
-                or layout.compression in (1, 2)
-                or (layout.header_size > 40 and layout.compression == 3)
-                else layout.decode(palette=self._state.palette.colors())
-            )
-            if pattern is not None and layout.color_usage == 1 and layout.depth <= 8:
-                # Validate the packed samples now, but retain their palette
-                # references. Pattern colours are realized against the drawing
-                # DC, including subsequent palette edits and selections.
-                pattern = layout
-            if a["style"] == 3 and pattern is not None:
-                # The legacy record path realizes a monochrome DDB in a
-                # compatible memory DC. Its bitmap creation rejects top-down
-                # dimensions; failed selection preserves the previous brush.
-                pattern = None if layout.top_down else pattern.monochrome()
-        elif name == "set_dib_to_device":
-            transfer = self._prepare_device_transfer(a)
-        elif name == "select_object":
-            if a["handle"] is not None and a["handle"].kind not in {"pen", "brush", "region", "font"}:
-                raise UnsupportedOperation(f"Selecting {a['handle'].kind}")
-        elif name == "create_region":
-            region_mask = RegionMask.from_rectangles(a["region"].rectangles) if a["region"] is not None else None
-        return PreparedEffect(text_layout, text_rectangle, transfer, pattern, region_mask, layout)
+        """Preparation lives beside its handler; simple state calls need none."""
+        prepare = getattr(self, f"_prepare_{call.name}", None)
+        return prepare(call.kwargs) if prepare is not None else None
 
     def prepare(self, call: Call):
         token = super().prepare(call)
@@ -299,17 +203,11 @@ class RasterContext(TraceContext):
             raise
         except FormatError as error:
             raise UnsupportedOperation(f"{call.name}: malformed input: {error}") from error
-        null_object = False
-        if call.name == "create_region":
-            null_object = prepared.region_mask is None
-        elif call.name == "create_palette":
-            palette = call.kwargs["palette"]
-            null_object = palette is None or not palette.entries
-        elif call.name == "create_pattern_brush":
-            null_object = not prepared.layout.complete
-        elif call.name == "create_dib_pattern_brush":
-            null_object = prepared.pattern is None
-        return replace(token, payload=(handler, prepared), null_object=null_object)
+        return replace(
+            token,
+            payload=(handler, prepared),
+            null_object=call.name in CREATED_KINDS and prepared is None,
+        )
 
     def _execute(self, token):
         call = token.call
@@ -327,21 +225,39 @@ class RasterContext(TraceContext):
             self._objects[result] = None
         return result
 
+    def _prepare_escape(self, a):
+        if a["escape_function"] not in BITMAP_NOOP_ESCAPES:
+            raise UnsupportedOperation(f"escape {a['escape_function']:#06x}")
+
     def _apply_escape(self, call, prepared, result):
         pass  # Accepted printer metadata has no effect on a bitmap DC.
 
     _apply_realize_palette = _apply_escape
 
+    def _prepare_text_out(self, a):
+        try:
+            return self._prepare_text(a)
+        except UnsupportedOperation as error:
+            raise UnsupportedOperation(f"text_out: {error}") from error
+
     def _apply_text_out(self, call, prepared, result):
         a = call.kwargs
-        self._draw_text(prepared.text_layout, prepared.text_rectangle, a.get("options", 0))
+        self._draw_text(*prepared, a.get("options", 0))
+
+    def _prepare_ext_text_out(self, a):
+        try:
+            return self._prepare_text(a)
+        except UnsupportedOperation as error:
+            raise UnsupportedOperation(f"ext_text_out: {error}") from error
 
     _apply_ext_text_out = _apply_text_out
 
-    def _apply_create_palette(self, call, prepared, result):
-        a = call.kwargs
+    def _prepare_create_palette(self, a):
         palette = a["palette"]
-        self._objects[result] = LogicalPalette(palette.entries) if palette is not None and palette.entries else None
+        return LogicalPalette(palette.entries) if palette is not None and palette.entries else None
+
+    def _apply_create_palette(self, call, prepared, result):
+        self._objects[result] = prepared
 
     def _apply_select_palette(self, call, prepared, result):
         a = call.kwargs
@@ -355,25 +271,49 @@ class RasterContext(TraceContext):
 
     _apply_animate_palette = _apply_set_palette_entries
 
+    def _prepare_resize_palette(self, a):
+        if not 0 <= a["count"] <= 65535:
+            raise ValueError("Palette size outside WORD range")
+
     def _apply_resize_palette(self, call, prepared, result):
         a = call.kwargs
         self._state.palette.resize(a["count"])
+
+    def _prepare_set_map_mode(self, a):
+        if a["mode"] not in range(MM_TEXT, MM_ANISOTROPIC + 1):
+            raise UnsupportedOperation(f"Map mode {a['mode']}")
 
     def _apply_set_map_mode(self, call, prepared, result):
         a = call.kwargs
         self.mapping.set_mode(a["mode"])
 
+    def _prepare_set_layout(self, a):
+        if a["layout"] & ~9:
+            raise UnsupportedOperation(f"Layout {a['layout']}")
+
     def _apply_set_layout(self, call, prepared, result):
         a = call.kwargs
         self.mapping.set_layout(a["layout"])
+
+    def _prepare_set_polygon_fill_mode(self, a):
+        if a["mode"] not in (ALTERNATE, WINDING):
+            raise UnsupportedOperation(f"Polygon fill mode {a['mode']}")
 
     def _apply_set_polygon_fill_mode(self, call, prepared, result):
         a = call.kwargs
         self._state.polygon_fill_mode = a["mode"]
 
+    def _prepare_set_rop2(self, a):
+        if a["mode"] not in range(R2_BLACK, R2_WHITE + 1):
+            raise UnsupportedOperation(f"ROP2 mode {a['mode']}")
+
     def _apply_set_rop2(self, call, prepared, result):
         a = call.kwargs
         self._state.rop2 = a["mode"]
+
+    def _prepare_set_stretch_mode(self, a):
+        if a["mode"] not in (BLACKONWHITE, WHITEONBLACK, COLORONCOLOR, HALFTONE):
+            raise UnsupportedOperation(f"Stretch mode {a['mode']}")
 
     def _apply_set_stretch_mode(self, call, prepared, result):
         a = call.kwargs
@@ -446,45 +386,98 @@ class RasterContext(TraceContext):
 
     _apply_scale_viewport_extent = _apply_scale_window_extent
 
-    def _apply_create_pen(self, call, prepared, result):
-        a = call.kwargs
+    def _prepare_create_pen(self, a):
         # CreatePenIndirect uses CreatePen, not ExtCreatePen: unrecognized
         # styles become PS_SOLID, including styles with join/cap bits.
         # Normalize the realized object only; preserve the requested call.
         style = a["style"] if a["style"] in range(PS_SOLID, PS_INSIDEFRAME + 1) else PS_SOLID
-        self._objects[result] = Pen(logical_color(a["color"]), abs(a["width"]), style)
+        return Pen(logical_color(a["color"]), abs(a["width"]), style)
+
+    def _apply_create_pen(self, call, prepared, result):
+        self._objects[result] = prepared
+
+    def _prepare_create_brush(self, a):
+        if a["style"] not in (BS_SOLID, BS_NULL, BS_HATCHED) or (
+            a["style"] == BS_HATCHED and a["hatch"] not in range(6)
+        ):
+            raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
+        return Brush(logical_color(a["color"]), a["style"], a["hatch"])
 
     def _apply_create_brush(self, call, prepared, result):
-        a = call.kwargs
-        self._objects[result] = Brush(logical_color(a["color"]), a["style"], a["hatch"])
+        self._objects[result] = prepared
+
+    def _prepare_create_font(self, a):
+        return a["font"]
 
     def _apply_create_font(self, call, prepared, result):
-        a = call.kwargs
-        self._objects[result] = a["font"]
+        self._objects[result] = prepared
 
-    def _apply_create_pattern_brush(self, call, prepared, result):
-        self._objects[result] = (
+    def _prepare_create_pattern_brush(self, a):
+        layout = read_bitmap16(a["bitmap"], native_pattern=True, max_pixels=self.max_bitmap_pixels)
+        # A DDB keeps its device format. Only monochrome, the default
+        # indexed device palette, and matching RGB32 realize on this DC.
+        pattern = None
+        if layout.complete and layout.depth in (1, 8, 32):
+            colors = DEFAULT_COLORS[:10] + ((0, 0, 0),) * 236 + DEFAULT_COLORS[10:]
+            pattern = layout.decode(colors=colors if layout.depth == 8 else None)
+        return (
             Brush(
                 (0, 0, 0),
                 style=BS_PATTERN,
-                pattern=prepared.pattern,
-                monochrome=prepared.layout.depth == 1,
-                realizable=prepared.pattern is not None,
+                pattern=pattern,
+                monochrome=layout.depth == 1,
+                realizable=pattern is not None,
             )
-            if prepared.layout.complete
+            if layout.complete
+            else None
+        )
+
+    def _apply_create_pattern_brush(self, call, prepared, result):
+        self._objects[result] = prepared
+
+    def _prepare_create_dib_pattern_brush(self, a):
+        layout = read_dib(
+            a["bitmap"],
+            color_usage=0 if a["style"] == 3 else a["color_usage"],
+            max_pixels=self.max_bitmap_pixels,
+        )
+        if layout.color_usage == 1 and layout.complete:
+            # Packed brush storage DWORD-aligns the WORD palette table.
+            # The allocation's tail is zero-filled, unlike the separate
+            # header/bits pointers used by transfer records.
+            padding = -layout.offset % 4
+            layout = replace(layout, offset=layout.offset + padding, data=layout.data + bytes(padding))
+        pattern = (
+            None
+            if not accepts_dib(layout)
+            or layout.compression in (1, 2)
+            or (layout.header_size > 40 and layout.compression == 3)
+            else layout.decode(palette=self._state.palette.colors())
+        )
+        if pattern is not None and layout.color_usage == 1 and layout.depth <= 8:
+            # Validate the packed samples now, but retain their palette
+            # references. Pattern colours are realized against the drawing
+            # DC, including subsequent palette edits and selections.
+            pattern = layout
+        if a["style"] == 3 and pattern is not None:
+            # The legacy record path realizes a monochrome DDB in a
+            # compatible memory DC. Its bitmap creation rejects top-down
+            # dimensions; failed selection preserves the previous brush.
+            pattern = None if layout.top_down else pattern.monochrome()
+        return (
+            Brush((0, 0, 0), style=BS_PATTERN, pattern=pattern, monochrome=a["style"] == BS_PATTERN)
+            if pattern is not None
             else None
         )
 
     def _apply_create_dib_pattern_brush(self, call, prepared, result):
-        a = call.kwargs
-        self._objects[result] = (
-            Brush((0, 0, 0), style=BS_PATTERN, pattern=prepared.pattern, monochrome=a["style"] == BS_PATTERN)
-            if prepared.pattern is not None
-            else None
-        )
+        self._objects[result] = prepared
+
+    def _prepare_create_region(self, a):
+        return RegionMask.from_rectangles(a["region"].rectangles) if a["region"] is not None else None
 
     def _apply_create_region(self, call, prepared, result):
-        self._objects[result] = prepared.region_mask
+        self._objects[result] = prepared
 
     def _apply_select_clip_region(self, call, prepared, result):
         a = call.kwargs
@@ -546,17 +539,35 @@ class RasterContext(TraceContext):
         a = call.kwargs
         self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
 
+    def _prepare_bit_blt(self, a):
+        return self._prepare_legacy_transfer("bit_blt", a)
+
+    def _prepare_stretch_blt(self, a):
+        return self._prepare_legacy_transfer("stretch_blt", a)
+
+    def _prepare_dib_bit_blt(self, a):
+        return self._prepare_transfer("dib_bit_blt", a)
+
+    def _prepare_dib_stretch_blt(self, a):
+        return self._prepare_transfer("dib_stretch_blt", a)
+
+    def _prepare_stretch_dib(self, a):
+        return self._prepare_transfer("stretch_dib", a)
+
+    def _prepare_set_dib_to_device(self, a):
+        return self._prepare_device_transfer(a)
+
     def _apply_bit_blt(self, call, prepared, result):
         a = call.kwargs
-        if isinstance(prepared.transfer, SourceTransfer):
+        if isinstance(prepared, SourceTransfer):
             self._source_blt(
-                prepared.transfer.bitmap,
-                prepared.transfer.horizontal,
-                prepared.transfer.vertical,
-                prepared.transfer.operation,
-                pad_bounds=prepared.transfer.pad_bounds,
+                prepared.bitmap,
+                prepared.horizontal,
+                prepared.vertical,
+                prepared.operation,
+                pad_bounds=prepared.pad_bounds,
             )
-        elif prepared.transfer is TransferAction.PATTERN:
+        elif prepared is TransferAction.PATTERN:
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
 
     _apply_stretch_blt = _apply_bit_blt
@@ -570,6 +581,10 @@ class RasterContext(TraceContext):
         self._flood_fill(
             self._point(a["x"], a["y"]), self._state.palette.colorref(logical_color(a["color"])), a.get("mode", 0)
         )
+
+    def _prepare_ext_flood_fill(self, a):
+        if a["mode"] not in (FLOODFILLBORDER, FLOODFILLSURFACE):
+            raise UnsupportedOperation(f"Flood fill mode {a['mode']}")
 
     _apply_ext_flood_fill = _apply_flood_fill
 
