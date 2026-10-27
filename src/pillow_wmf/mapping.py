@@ -160,6 +160,19 @@ class Mapping:
             result[0] = -result[0]
         return tuple(result)
 
+    def advance_logical_position(self, logical_origin, device_origin, device_position):
+        """Map a text-layout displacement back to the logical current position.
+
+        Retain the fractional logical start. Native current-position updates
+        floor the displaced device coordinate before inverse mapping.
+        """
+        result = []
+        for axis, scale in enumerate(self.linear_scale):
+            coordinate = (logical_origin[axis] - self.window_origin[axis]) * scale + self.viewport_origin[axis]
+            delta = device_position[axis] - device_origin[axis]
+            result.append(((coordinate + delta) // 1 - self.viewport_origin[axis]) / scale + self.window_origin[axis])
+        return tuple(result)
+
     def set_mode(self, mode: int) -> None:
         self.mode = MM_ANISOTROPIC if self.rtl else mode
         if mode == MM_TEXT:

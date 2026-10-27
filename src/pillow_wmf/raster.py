@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from fractions import Fraction
-from math import floor
 
 from PIL import Image
 
@@ -44,7 +43,7 @@ from .constants import (
     WHITEONBLACK,
     WINDING,
 )
-from .ellipse import arc_figure, box_corners, ellipse_cubics, round_rect_figure
+from .ellipse import arc_figure, box_corners, ellipse_cubics, inside_frame_bounds, round_rect_figure
 from .execution import CREATED_KINDS, ExecutionContext
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon
@@ -662,28 +661,14 @@ class RasterContext(ExecutionContext[DrawingState]):
             drawing_bounds = None
             covered = False
             if self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
-                dx, dy = (
-                    floor(self._state.pen.width * abs(Fraction(v, w)) * 16 + 0.5)
-                    for v, w in zip(self.mapping.viewport_extent, self.mapping.window_extent, strict=False)
+                covered, drawing_bounds = inside_frame_bounds(
+                    (a["left"], a["top"], a["right"], a["bottom"]),
+                    (left, top, right, bottom),
+                    self._state.pen.width,
+                    self.mapping.linear_scale,
                 )
-                # Equality retains a degenerate centreline and widens it
-                # normally. Only a negative interior triggers GDI's
-                # pen-colour fill (or rejection for arc-family calls).
-                covered = self._state.pen.width > min(abs(a["right"] - a["left"]), abs(a["bottom"] - a["top"]))
-                if covered:
-                    if name in {"arc", "chord", "pie"}:
-                        return
-                    drawing_bounds = left * 16, top * 16, right * 16, bottom * 16
-                else:
-                    # Preserve the native signed half-width rounding.
-                    # Odd spans retain their corner geometry downstream;
-                    # they must not be replaced by a symmetric radius.
-                    drawing_bounds = (
-                        left * 16 + (dx + 1) // 2,
-                        top * 16 + (dy + 1) // 2,
-                        right * 16 - dx // 2,
-                        bottom * 16 - (dy + 1) // 2,
-                    )
+                if covered and name in {"arc", "chord", "pie"}:
+                    return
             rectangle = name == "rectangle"
             if name == "rectangle":
                 bounds = drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
@@ -864,20 +849,9 @@ class RasterContext(ExecutionContext[DrawingState]):
             precise_origin=precise_origin,
         )
         if layout.position is not None:
-            logical_origin = self._state.position
-            device_position = []
-            for axis, scale in enumerate((sx, sy)):
-                coordinate = (
-                    logical_origin[axis] - self.mapping.window_origin[axis]
-                ) * scale + self.mapping.viewport_origin[axis]
-                delta = layout.position[axis] - origin[axis]
-                device_position.append(
-                    ((coordinate + delta) // 1 - self.mapping.viewport_origin[axis]) / scale
-                    + self.mapping.window_origin[axis]
-                )
             layout = replace(
                 layout,
-                position=tuple(device_position),
+                position=self.mapping.advance_logical_position(self._state.position, origin, layout.position),
             )
         return layout, rectangle
 

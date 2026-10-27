@@ -10,6 +10,26 @@ from .geometry import DevicePath, Point, Polygon, flatten_cubic
 _SCALE = 16
 
 
+def inside_frame_bounds(logical_bounds, device_bounds, width, scale):
+    """Return full coverage and the 28.4 centreline for an inside-frame pen.
+
+    Logical equality retains a degenerate centreline, even when quantized
+    device bounds invert. Half-width rounding keeps the native asymmetry.
+    """
+    x0, y0, x1, y1 = logical_bounds
+    left, top, right, bottom = device_bounds
+    covered = width > min(abs(x1 - x0), abs(y1 - y0))
+    if covered:
+        return True, (left * 16, top * 16, right * 16, bottom * 16)
+    dx, dy = (floor(width * abs(value) * 16 + 0.5) for value in scale)
+    return False, (
+        left * 16 + (dx + 1) // 2,
+        top * 16 + (dy + 1) // 2,
+        right * 16 - dx // 2,
+        bottom * 16 - (dy + 1) // 2,
+    )
+
+
 def box_corners(bounds):
     """Native box traversal: retain the upper edge, reflect about its centre."""
     left, top, right, bottom = bounds
