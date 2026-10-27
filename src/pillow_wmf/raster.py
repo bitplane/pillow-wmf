@@ -207,6 +207,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         return replace(
             token,
             payload=(handler, prepared),
+            # Creation preparation returns the realized object, or None for a native null object.
             null_object=call.name in CREATED_KINDS and prepared is None,
         )
 
@@ -879,11 +880,5 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _stroke_fragments(self, paths, *, miter=False):
         return self._painter().stroke_fragments(paths, miter=miter)
 
-    def _contour_pixels(self, contours, *, fill_mode=ALTERNATE):
-        return self._painter().contour_pixels(contours, fill_mode=fill_mode)
-
     def _paint_polygons(self, paths, *, miter=False, reserve_outline=False, brush=None):
         self._painter().paint_polygons(paths, miter=miter, reserve_outline=reserve_outline, brush=brush)
-
-    def _brush_color_at(self, x, y, brush, *, opaque=False):
-        return self._painter().brush_color_at(x, y, brush, opaque=opaque)

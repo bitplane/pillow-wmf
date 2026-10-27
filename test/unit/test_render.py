@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from pillow_wmf import FontCollection, FontFace, FormatError, Limits, Recorder, UnsupportedOperation, render
+from pillow_wmf.binary import ResourceLimitError
 from pillow_wmf.wmf.objects import Font
 
 
@@ -96,9 +97,20 @@ def test_raster_object_limit_rejection_allows_cleanup_and_reuse():
 
     context = RasterContext(4, 4, max_objects=1)
     pen = context.create_pen(0, 1, 0)
-    with pytest.raises(ValueError, match="Object limit"):
+    with pytest.raises(ResourceLimitError, match="Object limit"):
         context.create_brush(0, 255, 0)
     context.delete_object(pen)
     context.select_object(context.create_brush(0, 255, 0))
     context.pat_blt(0, 0, 4, 4, 0xF00021)
     assert context.image.getpixel((1, 1)) == (255, 0, 0)
+
+
+def test_raster_save_limit_rejection_allows_restore_and_reuse():
+    from pillow_wmf import RasterContext
+
+    context = RasterContext(4, 4, max_saved_states=1)
+    saved = context.save_dc()
+    with pytest.raises(ResourceLimitError, match="Saved-state limit"):
+        context.save_dc()
+    context.restore_dc(saved)
+    assert context.save_dc() == 1

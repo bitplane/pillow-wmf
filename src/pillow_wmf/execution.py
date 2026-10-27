@@ -91,9 +91,9 @@ class ExecutionContext[SavedState](GDI):
             if handle.kind not in kinds:
                 raise InvalidOperation(f"Wrong object type for {call.name}.{name}")
         if call.name in CREATED_KINDS and len(self._live) >= self.max_objects:
-            raise ValueError("Object limit exceeded")
+            raise ResourceLimitError("Object limit exceeded")
         if call.name == "save_dc" and self._save_depth >= self.max_saved_states:
-            raise ValueError("Saved-state limit exceeded")
+            raise ResourceLimitError("Saved-state limit exceeded")
         if call.name == "restore_dc":
             self._saved_index(arguments["saved_dc"])
         return Call.make(call.name, **arguments)
