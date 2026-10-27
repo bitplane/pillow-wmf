@@ -155,3 +155,32 @@ def test_explicit_text_payload_rejects_conflicting_encoding_flags():
     with pytest.raises(InvalidOperation, match="ext_text_out"):
         trace.text_out(0, 0, GlyphIndices((1,)))
     assert not trace.calls
+
+
+@pytest.mark.parametrize("name", [b"Arial", b"Wingdings", b"Symbol", b"\xc0rial", b"A" * 32])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_recorder_pads_encoded_face_names_without_reencoding(name, explicit):
+    request = FontRequest(face_name=EncodedFaceName(name) if explicit else name)
+    recorder = Recorder()
+    recorder.create_font(request)
+    metafile = Metafile.from_bytes(recorder.to_bytes())
+    assert metafile.records[0].font.face_name == name.ljust(32, b"\0")
+    trace = TraceContext()
+    assert play(metafile, trace, strict=True) == ()
+    assert trace.calls[0].kwargs["font"].face_name.data.rstrip(b"\0") == name
+
+
+def test_recorder_rejects_overlong_encoded_face_name_before_mutating():
+    recorder = Recorder()
+    with pytest.raises(ValueError, match="at most 32 bytes"):
+        recorder.create_font(FontRequest(face_name=b"A" * 33))
+    assert not recorder.records and not recorder.calls
+
+
+def test_raw_font_record_retains_short_face_name():
+    from pillow_wmf.wmf.variable import CreateFontIndirect
+
+    source = Metafile.build([CreateFontIndirect(Font(face_name=b"Arial\0"))]).to_bytes()
+    parsed = Metafile.from_bytes(source)
+    assert parsed.records[0].font.face_name == b"Arial\0"
+    assert parsed.to_bytes() == source

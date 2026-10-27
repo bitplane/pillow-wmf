@@ -11,7 +11,7 @@ def font_record(request):
     values = vars(request).copy()
     name = request.face_name
     if isinstance(name, EncodedFaceName):
-        values["face_name"] = name.data
+        values["face_name"] = name.data.ljust(32, b"\0")
     else:
         # ASCII is independent of the eventual playback ANSI environment.
         # Non-ASCII export must explicitly select its encoded representation.
