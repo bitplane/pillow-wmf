@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 from .execution import CREATED_KINDS, REFERENCES, ExecutionContext
-from .gdi import Call, Handle, UnsupportedOperation
+from .gdi import Call, Handle, PreparedCall, UnsupportedOperation
 
 
 class RecordingContext(ExecutionContext[tuple[int, int]]):
@@ -17,7 +17,7 @@ class RecordingContext(ExecutionContext[tuple[int, int]]):
     potentially different object-slot lifetimes.
     """
 
-    def __init__(self, drawing: ExecutionContext, recorder: ExecutionContext, *, trace_calls=True):
+    def __init__(self, drawing: ExecutionContext, recorder: ExecutionContext, *, trace_calls: bool = True):
         if drawing is recorder:
             raise ValueError("Drawing and recording require distinct contexts")
         for backend in (drawing, recorder):
@@ -51,7 +51,7 @@ class RecordingContext(ExecutionContext[tuple[int, int]]):
             self._failed = True
             raise RuntimeError("Recording context is unusable: a backend was modified independently")
 
-    def prepare(self, call):
+    def prepare(self, call: Call) -> PreparedCall:
         token = super().prepare(call)
         call = token.call
         prepared = []
@@ -71,12 +71,12 @@ class RecordingContext(ExecutionContext[tuple[int, int]]):
             prepared.append(operation)
         return replace(token, payload=tuple(prepared))
 
-    def _check_prepared(self, prepared):
+    def _check_prepared(self, prepared: PreparedCall):
         super()._check_prepared(prepared)
         for backend, operation in zip(self._backends, prepared.payload, strict=True):
             backend._check_prepared(operation)
 
-    def _execute(self, prepared):
+    def _execute(self, prepared: PreparedCall):
         call = prepared.call
         results = tuple(
             backend.apply(operation) for backend, operation in zip(self._backends, prepared.payload, strict=True)

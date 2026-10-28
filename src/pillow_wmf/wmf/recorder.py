@@ -4,6 +4,7 @@ import heapq
 from dataclasses import replace
 
 from ..gdi import Call, Handle
+from ..limits import DEFAULT_LIMITS
 from ..trace import CREATED_KINDS, TraceContext
 from .adapters import wire_arguments
 from .bindings import BINDINGS
@@ -18,8 +19,14 @@ class Recorder(TraceContext):
     intentionally invalid test cases. Public calls use logical backend handles.
     """
 
-    def __init__(self, **limits):
-        super().__init__(**limits)
+    def __init__(
+        self,
+        *,
+        max_objects: int = DEFAULT_LIMITS.max_objects,
+        max_saved_states: int = DEFAULT_LIMITS.max_saved_states,
+        trace_calls: bool = True,
+    ):
+        super().__init__(max_objects=max_objects, max_saved_states=max_saved_states, trace_calls=trace_calls)
         self.records: list[Record] = []
         self._indexes: dict[Handle, int] = {}
         self._free: list[int] = []
