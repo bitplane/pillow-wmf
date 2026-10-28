@@ -165,8 +165,12 @@ class RasterPainter:
     def pixel(self, x: int, y: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
         if 0 <= x < self.image.width and 0 <= y < self.image.height and self.state.clip.contains(x, y):
             color = self.state.palette.colorref(color)
+            operation = self.state.rop2 if operation is None else operation
+            if operation == R2_COPYPEN:
+                self.image.putpixel((x, y), color)
+                return
             destination = self.image.getpixel((x, y))
-            self.image.putpixel((x, y), rop2(self.state.rop2 if operation is None else operation, color, destination))
+            self.image.putpixel((x, y), rop2(operation, color, destination))
 
     def stroke_path(self, path: DevicePath, *, miter=False) -> None:
         if self.realized_pen.cosmetic:
