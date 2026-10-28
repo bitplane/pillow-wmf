@@ -254,12 +254,15 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     _apply_ext_text_out = _apply_text_out
 
+    def _store_object(self, call, prepared, result):
+        # Store native null creations too; execution normalizes their handles.
+        self._objects[result] = prepared
+
     def _prepare_create_palette(self, a):
         palette = a["palette"]
         return LogicalPalette(palette.entries) if palette is not None and palette.entries else None
 
-    def _apply_create_palette(self, call, prepared, result):
-        self._objects[result] = prepared
+    _apply_create_palette = _store_object
 
     def _apply_select_palette(self, call, prepared, result):
         a = call.kwargs
@@ -395,8 +398,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         style = a["style"] if a["style"] in range(PS_SOLID, PS_INSIDEFRAME + 1) else PS_SOLID
         return Pen(logical_color(a["color"]), abs(a["width"]), style)
 
-    def _apply_create_pen(self, call, prepared, result):
-        self._objects[result] = prepared
+    _apply_create_pen = _store_object
 
     def _prepare_create_brush(self, a):
         if a["style"] not in (BS_SOLID, BS_NULL, BS_HATCHED) or (
@@ -405,14 +407,12 @@ class RasterContext(ExecutionContext[DrawingState]):
             raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
         return Brush(logical_color(a["color"]), a["style"], a["hatch"])
 
-    def _apply_create_brush(self, call, prepared, result):
-        self._objects[result] = prepared
+    _apply_create_brush = _store_object
 
     def _prepare_create_font(self, a):
         return a["font"]
 
-    def _apply_create_font(self, call, prepared, result):
-        self._objects[result] = prepared
+    _apply_create_font = _store_object
 
     def _prepare_create_pattern_brush(self, a):
         layout = read_bitmap16(a["bitmap"], native_pattern=True, max_pixels=self.max_bitmap_pixels)
@@ -434,8 +434,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             else None
         )
 
-    def _apply_create_pattern_brush(self, call, prepared, result):
-        self._objects[result] = prepared
+    _apply_create_pattern_brush = _store_object
 
     def _prepare_create_dib_pattern_brush(self, a):
         layout = read_dib(
@@ -472,14 +471,12 @@ class RasterContext(ExecutionContext[DrawingState]):
             else None
         )
 
-    def _apply_create_dib_pattern_brush(self, call, prepared, result):
-        self._objects[result] = prepared
+    _apply_create_dib_pattern_brush = _store_object
 
     def _prepare_create_region(self, a):
         return RegionMask.from_rectangles(a["region"].rectangles) if a["region"] is not None else None
 
-    def _apply_create_region(self, call, prepared, result):
-        self._objects[result] = prepared
+    _apply_create_region = _store_object
 
     def _apply_select_clip_region(self, call, prepared, result):
         a = call.kwargs
