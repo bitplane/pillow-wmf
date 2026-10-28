@@ -286,7 +286,9 @@ class RasterPainter:
         foreground, gaps = (set(), set()) if pen.cosmetic else self.stroke_fragments(paths, miter=miter)
         # Only cosmetic styles need a separate solid outline for fill reservation.
         stroke_pixels = (
-            self._stroke_pixels(paths, miter=miter) if reserve_outline and pen.cosmetic else foreground | gaps
+            self._stroke_pixels(paths, miter=miter)
+            if fill_pixels and reserve_outline and pen.cosmetic
+            else foreground | gaps
         )
         if pen.cosmetic and not reserve_outline:
             # Cosmetic paths fill first, then emit the outline (including
