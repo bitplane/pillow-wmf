@@ -276,8 +276,10 @@ class RasterPainter:
         if brush.style != BS_NULL and self.state.rop2 == R2_COPYPEN:
             paths = tuple(path.flattened() for path in paths)
         fill_pixels = set(self.contour_pixels(contours, fill_mode=self.state.polygon_fill_mode))
-        foreground, gaps = self.stroke_fragments(paths, miter=miter)
         pen = self.realized_pen
+        # Cosmetic strokes are emitted below with pixel multiplicity intact;
+        # their deduplicated coverage sets would not be used.
+        foreground, gaps = (set(), set()) if pen.cosmetic else self.stroke_fragments(paths, miter=miter)
         # Only cosmetic styles need a separate solid outline for fill reservation.
         stroke_pixels = (
             self._stroke_pixels(paths, miter=miter) if reserve_outline and pen.cosmetic else foreground | gaps
