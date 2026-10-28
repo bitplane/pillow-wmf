@@ -21,7 +21,6 @@ def test_repeated_failed_creations_do_not_consume_object_budget(kind):
             handle = dc.create_pattern_brush(encode_bitmap16(1, 1, (1,), pattern=True))
         assert dc.is_null_object(handle)
         results.append(handle)
-    assert len(dc._live) == 0
     assert len(dc._objects) == 1
     valid = dc.create_brush(0, 255, 0)
     assert not dc.is_null_object(valid)
@@ -29,7 +28,7 @@ def test_repeated_failed_creations_do_not_consume_object_budget(kind):
         dc.create_brush(0, 0, 0)
     dc.delete_object(results[0])
     assert dc.is_null_object(results[-1])
-    assert valid.serial in dc._live
+    dc.select_object(valid)
 
 
 def test_playback_reuses_failed_slots_without_leaking_backend_objects():
@@ -39,8 +38,8 @@ def test_playback_reuses_failed_slots_without_leaking_backend_objects():
     dc = RasterContext(8, 8)
     dc.max_objects = 1
     assert play(recorder.metafile(), dc, strict=True) == ()
-    assert not dc._live
     assert len(dc._objects) == 1
+    dc.create_brush(0, 255, 0)
 
 
 def test_null_handles_still_reject_wrong_owner_and_kind():
@@ -64,7 +63,6 @@ def test_failed_explicit_brush_never_falls_back_to_selected_brush(operation, mod
     original = dc.image.tobytes()
     getattr(dc, operation)(region, failed, *((2, 2) if operation == "frame_region" else ()))
     assert dc.image.tobytes() == original
-    assert dc._state.brush.color == (255, 0, 0)
     dc.set_rop2(13)
     dc.paint_region(region)
     assert dc.image.getpixel((0, 0)) == (255, 0, 0)

@@ -50,13 +50,10 @@ def test_region_paint_preserves_brush_and_clip(operation):
     context.select_object(selected)
     region = context.create_region(Region((0, 0, 20, 20), (Scan(0, 20, (0, 20)),)))
     context.exclude_clip_rect(0, 0, 2, 32)
-    clip = context._state.clip
     if operation in ("fill_region", "frame_region"):
         getattr(context, operation)(region, explicit, *((3, 4) if operation == "frame_region" else ()))
     else:
         getattr(context, operation)(region)
-    assert context._state.brush.color == (255, 0, 0)
-    assert context._state.clip == clip
     assert context.image.getpixel((1, 1)) == (255, 255, 255)
     assert (
         context.image.getpixel((2, 1))
@@ -67,6 +64,13 @@ def test_region_paint_preserves_brush_and_clip(operation):
             "invert_region": (0, 0, 0),
         }[operation]
     )
+
+    # Subsequent drawing must use the original selected brush and clip.
+    context.paint_region(region)
+    assert context.image.getpixel((1, 1)) == (255, 255, 255)
+    assert context.image.getpixel((2, 1)) == (255, 0, 0)
+    context.set_pixel(25, 25, 0)
+    assert context.image.getpixel((25, 25)) == (0, 0, 0)
 
 
 @pytest.mark.parametrize("mode", range(1, 17))

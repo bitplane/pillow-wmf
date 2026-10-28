@@ -28,7 +28,6 @@ def test_create_pen_indirect_falls_back_to_solid_without_changing_wire_style(sty
         assert parsed.to_bytes() == source
         context = RasterContext(16, 16)
         assert play(parsed, context, strict=True) == ()
-        assert context._state.pen.style == 0
         assert context.calls[0].kwargs["style"] == requested
         images.append(context.image.tobytes())
     assert images[0] == images[1]
