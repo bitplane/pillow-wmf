@@ -275,7 +275,11 @@ class RasterPainter:
         # Other ROP2 modes and stroke-only paths retain cubic tangents.
         if brush.style != BS_NULL and self.state.rop2 == R2_COPYPEN:
             paths = tuple(path.flattened() for path in paths)
-        fill_pixels = set(self.contour_pixels(contours, fill_mode=self.state.polygon_fill_mode))
+        fill_pixels = (
+            set()
+            if brush.style == BS_NULL
+            else set(self.contour_pixels(contours, fill_mode=self.state.polygon_fill_mode))
+        )
         pen = self.realized_pen
         # Cosmetic strokes are emitted below with pixel multiplicity intact;
         # their deduplicated coverage sets would not be used.
