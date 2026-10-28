@@ -26,7 +26,11 @@ def test_round_rect_preserves_current_position():
     context = RasterContext(16, 16)
     context.move_to(1, 1)
     context.round_rect(4, 4, 12, 12, 3, 5)
-    assert context._state.position == (1, 1)
+    expected = context.image.copy()
+    expected.putpixel((1, 1), (0, 0, 0))
+    expected.putpixel((2, 1), (0, 0, 0))
+    context.line_to(3, 1)
+    assert context.image.tobytes() == expected.tobytes()
 
 
 @pytest.mark.parametrize("box", ((8, 8, 8, 64), (8, 8, 64, 8)))

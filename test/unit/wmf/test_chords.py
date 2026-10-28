@@ -31,8 +31,6 @@ def test_default_stock_pen_is_device_hairline():
     for context in (default, explicit):
         context.set_map_mode(8)
         context.set_viewport_extent(32, 16)
-        assert context._state.pen.width == 0
-        assert context._realized_pen().cosmetic
         context.rectangle(2, 2, 6, 12)
     assert default.image.tobytes() == explicit.image.tobytes()
 
@@ -41,7 +39,11 @@ def test_chord_preserves_current_position():
     context = RasterContext(16, 16)
     context.move_to(1, 1)
     context.chord(4, 4, 12, 12, 12, 8, 8, 4)
-    assert context._state.position == (1, 1)
+    expected = context.image.copy()
+    expected.putpixel((1, 1), (0, 0, 0))
+    expected.putpixel((2, 1), (0, 0, 0))
+    context.line_to(3, 1)
+    assert context.image.tobytes() == expected.tobytes()
 
 
 @pytest.mark.parametrize("closed", (False, True))

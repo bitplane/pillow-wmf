@@ -33,13 +33,19 @@ def test_tall_fill_does_not_recurse():
 
 @pytest.mark.parametrize("mode", (0, 1))
 def test_fill_preserves_current_position_and_selected_state(mode):
-    context = RasterContext(8, 8)
-    context.move_to(3, 4)
-    context.select_object(context.create_brush(0, 0xFFFFFF, 0))
+    context, control = RasterContext(8, 8), RasterContext(8, 8)
+    for dc in (context, control):
+        dc.move_to(3, 4)
+        dc.select_object(dc.create_pen(0, 0, 0x123456))
+        dc.select_object(dc.create_brush(0, 0x654321, 0))
+        dc.set_rop2(7)
     context.ext_flood_fill(0, 0, 0 if mode == 0 else 0xFFFFFF, mode)
-    assert context._state.position == (3, 4)
-    assert context._state.rop2 == 13
-    assert context._state.brush.color == (255, 255, 255)
+    # Equalize pixels only; subsequent drawing must still use the original state.
+    control.image.paste(context.image)
+    for dc in (context, control):
+        dc.line_to(7, 4)
+        dc.rectangle(0, 0, 3, 3)
+    assert context.image.tobytes() == control.image.tobytes()
 
 
 def test_unknown_mode_remains_explicitly_unsupported():

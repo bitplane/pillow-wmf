@@ -8,9 +8,14 @@ from pillow_wmf.stroke import cosmetic_line, dash_is_foreground
 def test_raster_realizes_negative_pen_width_as_its_magnitude() -> None:
     context = RasterContext(8, 8)
     handle = context.create_pen(style=0, width=-1, color=0)
-    assert context._objects[handle].width == 1
     assert context.calls[-1].kwargs["width"] == -1
     assert context.image.getpixel((0, 0)) == (255, 255, 255)
+    explicit = RasterContext(8, 8)
+    explicit.select_object(explicit.create_pen(style=0, width=1, color=0))
+    context.select_object(handle)
+    for dc in (context, explicit):
+        dc.polyline(((1, 1), (6, 1), (6, 6)))
+    assert context.image.tobytes() == explicit.image.tobytes()
 
 
 @pytest.mark.parametrize("style", [7, 8, 0x0100, 0x0200, 0x1000, 0x2000, 0x1100, 0x2200, 0x1001, 0x1005, 0xFFFF])

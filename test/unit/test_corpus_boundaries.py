@@ -42,8 +42,13 @@ def test_nontransparent_background_values_remain_opaque_and_saved(mode):
 def test_negative_pen_width_normalizes_object_not_recorded_call():
     dc = RasterContext(16, 16)
     handle = dc.create_pen(0, -3, 255)
-    assert dc._objects[handle].width == 3
     assert dc.calls[-1].kwargs["width"] == -3
+    explicit = RasterContext(16, 16)
+    explicit.select_object(explicit.create_pen(0, 3, 255))
+    dc.select_object(handle)
+    for context in (dc, explicit):
+        context.polyline(((3, 3), (12, 3), (12, 12)))
+    assert dc.image.tobytes() == explicit.image.tobytes()
 
 
 def test_invalid_restore_preserves_the_valid_saved_frame(load_script):

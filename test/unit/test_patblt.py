@@ -51,18 +51,22 @@ def test_source_dependent_operation_is_native_noop():
 
 
 def test_hatch_is_opaque_without_mutating_dc_background_or_rop():
-    context = RasterContext(8, 8)
-    context.select_object(context.create_brush(2, 0x123456, 0))
-    context.set_background_mode(1)
-    context.set_background_color(0xABCDEF)
-    context.set_rop2(7)
-    context.move_to(5, 6)
+    context, control = RasterContext(8, 8), RasterContext(8, 8)
+    for dc in (context, control):
+        dc.select_object(dc.create_brush(2, 0x123456, 0))
+        dc.select_object(dc.create_pen(0, 0, 0x654321))
+        dc.set_background_mode(1)
+        dc.set_background_color(0xABCDEF)
+        dc.set_rop2(7)
+        dc.move_to(5, 6)
     context.pat_blt(0, 0, 8, 8, 0x00F00021)
     assert context.image.getpixel((0, 0)) == (0xEF, 0xCD, 0xAB)
     assert context.image.getpixel((0, 3)) == (0x56, 0x34, 0x12)
-    assert context._state.background_mode == 1
-    assert context._state.rop2 == 7
-    assert context._state.position == (5, 6)
+    control.image.paste(context.image)
+    for dc in (context, control):
+        dc.line_to(7, 6)
+        dc.rectangle(0, 0, 5, 5)
+    assert context.image.tobytes() == control.image.tobytes()
 
 
 @pytest.mark.parametrize("rop,color", ((0x00000042, (0, 0, 0)), (0x00550009, (0, 0, 0)), (0x00FF0062, (255, 255, 255))))

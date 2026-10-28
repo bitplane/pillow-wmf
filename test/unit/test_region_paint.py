@@ -83,8 +83,19 @@ def test_invert_region_ignores_brush_and_rop_without_changing_them(mode):
     context.invert_region(region)
     assert context.image.getpixel((2, 2)) == (238, 192, 126)
     assert context.image.getpixel((0, 0)) == (17, 63, 129)
-    assert context._state.rop2 == mode
-    assert context._state.brush.style == 1
+    control = RasterContext(8, 8)
+    control.image.paste(context.image)
+    control.select_object(control.create_brush(1, 0, 0))
+    control.set_rop2(mode)
+    for dc in (context, control):
+        dc.select_object(dc.create_pen(0, 0, 0x123456))
+        dc.rectangle(0, 0, 8, 8)
+    assert context.image.tobytes() == control.image.tobytes()
+    # A solid fill observes ROP2 even when the selected null brush cannot.
+    for dc in (context, control):
+        dc.select_object(dc.create_brush(0, 0x654321, 0))
+        dc.rectangle(1, 1, 7, 7)
+    assert context.image.tobytes() == control.image.tobytes()
 
 
 def test_frame_storage_depends_on_region_edges_not_surface_area():
