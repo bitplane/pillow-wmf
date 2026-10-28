@@ -33,6 +33,9 @@ class RasterPainter:
     image: Image.Image
     state: DrawingState
 
+    def __post_init__(self):
+        self._pixels = self.image.load()
+
     def source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
         coverage = getattr(bitmap, "coverage", None)
         table = (operation >> 16) & 255
@@ -167,10 +170,10 @@ class RasterPainter:
             color = self.state.palette.colorref(color)
             operation = self.state.rop2 if operation is None else operation
             if operation == R2_COPYPEN:
-                self.image.putpixel((x, y), color)
+                self._pixels[x, y] = color
                 return
-            destination = self.image.getpixel((x, y))
-            self.image.putpixel((x, y), rop2(operation, color, destination))
+            destination = self._pixels[x, y]
+            self._pixels[x, y] = rop2(operation, color, destination)
 
     def stroke_path(self, path: DevicePath, *, miter=False) -> None:
         if self.realized_pen.cosmetic:
