@@ -1,25 +1,27 @@
-"""Pillow's WMF entry point; EMF remains with Pillow's existing handler."""
+"""Pillow's entry point for the metafile formats rendered here.
+
+Formats without a loader, such as EMF, remain with Pillow's existing handler.
+"""
 
 import math
-import struct
 
 from PIL import Image, ImageFile, WmfImagePlugin
 
 from .gdi import UnsupportedOperation
 from .raster import RasterContext
-from .render import _read_metafile
 from .system_fonts import SystemFontCollection
 from .wmf import FormatError, Limits
-from .wmf.binary import Reader
-from .wmf.file import Header
-from .wmf.player import PlaybackError, play
+from .wmf import loader as wmf_loader
+from .wmf.player import PlaybackError
 
-PLACEABLE_SIZE = 22
-HEADER_SIZE = 18
+# Each loader identifies its format from a prefix, reads the declared
+# placement from the headers, and plays the whole file into a context.
+LOADERS = (wmf_loader,)
+HEADER_BYTES = max(loader.HEADER_BYTES for loader in LOADERS)
 
 
-def _accept(prefix):
-    return prefix.startswith((b"\xd7\xcd\xc6\x9a", b"\x01\x00\x09\x00", b"\x02\x00\x09\x00"))
+def _loader(prefix):
+    return next((loader for loader in LOADERS if loader.accepts(prefix)), None)
 
 
 class WmfImageFile(ImageFile.ImageFile):
@@ -28,29 +30,27 @@ class WmfImageFile(ImageFile.ImageFile):
 
     def _open(self):
         # Identify from the headers only; records are read by load().
-        data = self.fp.read(PLACEABLE_SIZE + HEADER_SIZE)
-        placeable = data.startswith(b"\xd7\xcd\xc6\x9a")
+        data = self.fp.read(HEADER_BYTES)
+        self._loader = _loader(data)
+        if self._loader is None:
+            raise SyntaxError("Not a supported metafile")
         try:
-            Header.read(Reader(data[PLACEABLE_SIZE:] if placeable else data), Limits())
+            self._placement = self._loader.placement(data)
         except FormatError as error:
             raise SyntaxError(str(error)) from error
-        self._bounds = None
-        self._inch = None
         self._size = (128, 128)
-        if placeable:
-            left, top, right, bottom, inch = struct.unpack_from("<4hH", data, 6)
-            if right > left and bottom > top and inch:
-                self._bounds = (left, top, right, bottom)
-                self._inch = inch
-                self._size = (max(1, (right - left) * 72 // inch), max(1, (bottom - top) * 72 // inch))
-                self.info.update(dpi=72, wmf_bbox=self._bounds)
+        if self._placement is not None:
+            left, top, right, bottom = self._placement.bounds
+            inch = self._placement.units_per_inch
+            self._size = (max(1, (right - left) * 72 // inch), max(1, (bottom - top) * 72 // inch))
+            self.info.update(dpi=72, wmf_bbox=self._placement.bounds)
         self._mode = "RGB"
 
     def load(self, *, size=None, dpi=None, fonts=None):
-        """Rasterize once; choose size or placeable DPI before the first load.
+        """Rasterize once; choose size or placement DPI before the first load.
 
-        Plain WMFs have no physical size. Invalid placeable bounds fall back
-        to the same 128-square canvas. Records can override the initial mapping.
+        Files without a declared placement have no physical size and use a
+        128-square canvas. Records can override the initial mapping.
         Opening validates only the headers; records are read and parsed here,
         so malformed records, like unsupported drawing, raise OSError rather
         than returning partial art. Invalid caller options raise ValueError.
@@ -63,14 +63,14 @@ class WmfImageFile(ImageFile.ImageFile):
             raise ValueError("Specify size or dpi, not both")
         target = self.size if size is None else size
         if dpi is not None:
-            if self._bounds is None:
+            if self._placement is None:
                 raise ValueError("DPI requires valid placeable bounds; use size instead")
             density = dpi if isinstance(dpi, tuple) else (dpi, dpi)
             if len(density) != 2 or any(not math.isfinite(v) or v <= 0 for v in density):
                 raise ValueError("DPI must contain two positive finite values")
-            left, top, right, bottom = self._bounds
+            left, top, right, bottom = self._placement.bounds
             target = tuple(
-                max(1, int(extent * value / self._inch))
+                max(1, int(extent * value / self._placement.units_per_inch))
                 for extent, value in zip((right - left, bottom - top), density, strict=True)
             )
         if len(target) != 2 or any(not isinstance(v, int) or isinstance(v, bool) or v <= 0 for v in target):
@@ -79,15 +79,10 @@ class WmfImageFile(ImageFile.ImageFile):
         Image._decompression_bomb_check(target)
         fonts = SystemFontCollection() if fonts is None else fonts
         context = RasterContext(*target, fonts=fonts, trace_calls=False)
-        if self._bounds is not None:
-            left, top, right, bottom = self._bounds
-            context.mapping.window_origin = (left, top)
-            context.mapping.window_extent = (right - left, bottom - top)
         try:
-            # Bound the read before parsing; header mtSize is only advisory.
+            # Bound the read before parsing; header sizes are only advisory.
             self.fp.seek(0)
-            metafile = _read_metafile(self.fp.read(Limits().max_bytes + 1))
-            play(metafile, context, strict=True)
+            self._loader.play_into(context, self.fp.read(Limits().max_bytes + 1), self._placement)
         except (UnsupportedOperation, PlaybackError, FormatError) as error:
             raise OSError(f"Cannot render WMF: {error}") from error
         self._im = context.image.im
@@ -105,7 +100,7 @@ class WmfImageFile(ImageFile.ImageFile):
 def _factory(fp, filename):
     prefix = fp.read(16)
     fp.seek(0)
-    if _accept(prefix):
+    if _loader(prefix) is not None:
         return WmfImageFile(fp, filename)
     return WmfImagePlugin.WmfStubImageFile(fp, filename)
 
@@ -113,5 +108,5 @@ def _factory(fp, filename):
 def register():
     # Importing the built-in module above first prevents lazy Pillow plugin
     # initialization from subsequently replacing this registry entry.
-    Image.register_open("WMF", _factory, lambda prefix: _accept(prefix) or WmfImagePlugin._accept(prefix))
+    Image.register_open("WMF", _factory, lambda prefix: _loader(prefix) is not None or WmfImagePlugin._accept(prefix))
     Image.register_extension("WMF", ".wmf")

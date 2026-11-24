@@ -113,7 +113,7 @@ def test_plugin_preserves_programming_errors(monkeypatch):
     def broken(*args, **kwargs):
         raise RuntimeError("unexpected defect")
 
-    monkeypatch.setattr("pillow_wmf.plugin.play", broken)
+    monkeypatch.setattr("pillow_wmf.wmf.loader.play", broken)
     with Image.open(BytesIO(Recorder().to_bytes())) as image, pytest.raises(RuntimeError, match="unexpected defect"):
         image.load()
 
@@ -180,13 +180,13 @@ def test_open_reads_headers_and_load_parses_records(monkeypatch):
     recorder.set_pixel(2, 3, 255)
     data = PlaceableHeader(0, 0, 32, 16, 1440).to_bytes() + recorder.to_bytes()
     parses = []
-    original = pillow_wmf.plugin._read_metafile
+    original = pillow_wmf.wmf.loader.read
 
     def parse(data, *args):
         parses.append(len(data))
         return original(data, *args)
 
-    monkeypatch.setattr(pillow_wmf.plugin, "_read_metafile", parse)
+    monkeypatch.setattr(pillow_wmf.wmf.loader, "read", parse)
     with Image.open(BytesIO(data)) as image:
         assert image.size == (1, 1) and image.info["wmf_bbox"] == (0, 0, 32, 16)
         assert parses == []

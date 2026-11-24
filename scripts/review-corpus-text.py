@@ -6,7 +6,7 @@ import runpy
 from pathlib import Path
 
 from pillow_wmf import SystemFontCollection
-from pillow_wmf.render import _read_metafile
+from pillow_wmf.wmf.loader import read
 from pillow_wmf.wmf.variable import CreateFontIndirect, ExtTextOut
 
 
@@ -42,7 +42,7 @@ def select_examples(rows, survey, root, limit):
             break
         if name in selected:
             continue
-        m = _read_metafile((root / name).read_bytes())
+        m = read((root / name).read_bytes())
         features = set()
         for record in m.records:
             if isinstance(record, CreateFontIndirect) and record.font.escapement % 3600:
