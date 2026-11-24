@@ -10,7 +10,12 @@ from .raster import RasterContext
 from .render import _read_metafile
 from .system_fonts import SystemFontCollection
 from .wmf import FormatError, Limits
+from .wmf.binary import Reader
+from .wmf.file import Header
 from .wmf.player import PlaybackError, play
+
+PLACEABLE_SIZE = 22
+HEADER_SIZE = 18
 
 
 def _accept(prefix):
@@ -22,15 +27,17 @@ class WmfImageFile(ImageFile.ImageFile):
     format_description = "Windows Metafile"
 
     def _open(self):
-        # Bound the read before parsing; header mtSize is only advisory.
+        # Identify from the headers only; records are read by load().
+        data = self.fp.read(PLACEABLE_SIZE + HEADER_SIZE)
+        placeable = data.startswith(b"\xd7\xcd\xc6\x9a")
         try:
-            self._metafile = _read_metafile(data := self.fp.read(Limits().max_bytes + 1))
+            Header.read(Reader(data[PLACEABLE_SIZE:] if placeable else data), Limits())
         except FormatError as error:
             raise SyntaxError(str(error)) from error
         self._bounds = None
         self._inch = None
         self._size = (128, 128)
-        if data.startswith(b"\xd7\xcd\xc6\x9a"):
+        if placeable:
             left, top, right, bottom, inch = struct.unpack_from("<4hH", data, 6)
             if right > left and bottom > top and inch:
                 self._bounds = (left, top, right, bottom)
@@ -44,8 +51,9 @@ class WmfImageFile(ImageFile.ImageFile):
 
         Plain WMFs have no physical size. Invalid placeable bounds fall back
         to the same 128-square canvas. Records can override the initial mapping.
-        Unsupported drawing raises OSError rather than returning partial art.
-        Invalid caller options raise ValueError.
+        Opening validates only the headers; records are read and parsed here,
+        so malformed records, like unsupported drawing, raise OSError rather
+        than returning partial art. Invalid caller options raise ValueError.
         """
         if self._im is not None:
             if size is not None or dpi is not None or fonts is not None:
@@ -76,7 +84,10 @@ class WmfImageFile(ImageFile.ImageFile):
             context.mapping.window_origin = (left, top)
             context.mapping.window_extent = (right - left, bottom - top)
         try:
-            play(self._metafile, context, strict=True)
+            # Bound the read before parsing; header mtSize is only advisory.
+            self.fp.seek(0)
+            metafile = _read_metafile(self.fp.read(Limits().max_bytes + 1))
+            play(metafile, context, strict=True)
         except (UnsupportedOperation, PlaybackError, FormatError) as error:
             raise OSError(f"Cannot render WMF: {error}") from error
         self._im = context.image.im
@@ -85,7 +96,6 @@ class WmfImageFile(ImageFile.ImageFile):
             self.info["dpi"] = dpi
         if isinstance(fonts, SystemFontCollection):
             self.info["wmf_font_substitutions"] = tuple(fonts.substitutions)
-        del self._metafile
         if self._exclusive_fp:
             self.fp.close()
         self.fp = None

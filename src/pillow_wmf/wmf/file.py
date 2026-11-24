@@ -33,6 +33,16 @@ class Header:
     max_record: int = 3
     members: int = 0
 
+    @classmethod
+    def read(cls, reader: Reader, limits: Limits) -> "Header":
+        """Read and validate the 18-byte header that precedes the records."""
+        header = cls(*reader.unpack("HHHIHIH"))
+        if header.type not in (1, 2) or header.version not in (0x0100, 0x0300) or header.header_size != 9:
+            raise FormatError("Unsupported WMF header type, version or size")
+        if header.object_count > limits.max_objects:
+            raise FormatError("Object capacity limit exceeded")
+        return header
+
     def to_bytes(self) -> bytes:
         return pack(
             "HHHIHIH",
@@ -156,11 +166,7 @@ class Metafile:
             raise FormatError("File byte limit exceeded")
         reader = Reader(data)
         placeable = PlaceableHeader.read(reader, validate_checksum) if data[:4] == b"\xd7\xcd\xc6\x9a" else None
-        header = Header(*reader.unpack("HHHIHIH"))
-        if header.type not in (1, 2) or header.version not in (0x0100, 0x0300) or header.header_size != 9:
-            raise FormatError("Unsupported WMF header type, version or size")
-        if header.object_count > limits.max_objects:
-            raise FormatError("Object capacity limit exceeded")
+        header = Header.read(reader, limits)
         # Native playback walks records to EOF using the supplied buffer, not
         # mtSize. Preserve that advisory value for round trips, but never use
         # it for allocation or to override actual record and buffer bounds.
