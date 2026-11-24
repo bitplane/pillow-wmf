@@ -141,7 +141,8 @@ def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
 def render_emf(source: bytes, width: int, height: int) -> Image.Image:
     """Render EMF bytes with PlayEnhMetaFile, fitting the picture frame to the canvas.
 
-    The target rectangle is the whole canvas in the reference DC's 1:1
+    The result is the image even when a record failed natively. The target
+    rectangle is the whole canvas in the reference DC's 1:1
     logical units, as Pillow loading fits the frame to the requested size.
     """
     if not source:
@@ -155,7 +156,9 @@ def render_emf(source: bytes, width: int, height: int) -> Image.Image:
         source_buffer = ctypes.create_string_buffer(source)
         metafile = check(set_bits(len(source), source_buffer), "SetEnhMetaFileBits")
         try:
-            check(play(dc, metafile, ctypes.byref(wintypes.RECT(0, 0, width, height))), "PlayEnhMetaFile")
+            # PlayEnhMetaFile reports FALSE when any record fails, for example
+            # SetPixelV outside the surface, after drawing everything else.
+            play(dc, metafile, ctypes.byref(wintypes.RECT(0, 0, width, height)))
             check(flush(), "GdiFlush")
             pixels = ctypes.string_at(bits, width * height * 4)
             return Image.frombytes("RGB", (width, height), pixels, "raw", "BGRX")

@@ -126,6 +126,7 @@ def run_case(name, header, records, rect):
         print(f"  header device={header['device'].pixels} millimetres={header['device'].millimetres}")
     print(f"  LPtoDP inputs={samples}")
     outputs = []
+    failed = []
     for enumerate_records in (True, False):
         with reference_surface(SIZE, SIZE) as (gdi, dc, bits):
             bind_probe(gdi)
@@ -144,6 +145,8 @@ def run_case(name, header, records, rect):
                             print("  before header:")
                             snapshot(gdi, hdc, samples)
                         played = gdi.PlayEnhMetaFileRecord(hdc, table, record, handles)
+                        if kind in PIXEL_RECORDS and not played:
+                            failed.append(ctypes.cast(record, ctypes.POINTER(wintypes.LONG))[2:4])
                         if kind not in PIXEL_RECORDS:
                             print(f"  after record type {kind} (played={played}):")
                             snapshot(gdi, hdc, samples)
@@ -160,9 +163,11 @@ def run_case(name, header, records, rect):
                         ctypes.c_void_p,
                         ctypes.POINTER(wintypes.RECT),
                     )
-                    check(enum(dc, metafile, callback, None, ctypes.byref(target)), "EnumEnhMetaFile")
+                    result = enum(dc, metafile, callback, None, ctypes.byref(target))
+                    print(f"  EnumEnhMetaFile={result}; SetPixelV failed at logical {failed}")
                 else:
-                    check(gdi.PlayEnhMetaFile(dc, metafile, ctypes.byref(target)), "PlayEnhMetaFile")
+                    # FALSE when any record fails, such as SetPixelV off the surface.
+                    print(f"  PlayEnhMetaFile={gdi.PlayEnhMetaFile(dc, metafile, ctypes.byref(target))}")
                 check(gdi.GdiFlush(), "GdiFlush")
                 outputs.append(markers(bits))
             finally:
