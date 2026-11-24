@@ -121,273 +121,28 @@ jobs:
       - name: Install project
         id: install
         run: python -m pip install .
-      - name: Probe COLORREF flag handling
-        if: inputs.probe == 'colorrefs'
+      - name: Resolve native probe
+        id: probe
+        if: github.event_name == 'workflow_dispatch' && inputs.probe != 'none'
         shell: bash
-        run: |
-          mkdir -p colorref-probe
-          python scripts/probe-windows-colorrefs.py --output colorref-probe | tee colorref-probe/observations.txt
-      - name: Upload COLORREF observations
-        if: always() && inputs.probe == 'colorrefs'
-        uses: actions/upload-artifact@v4
-        with:
-          name: colorref-probe
-          path: colorref-probe/
-          retention-days: 7
-      - name: Probe record-local rejection
-        if: inputs.probe == 'record-rejection' || startsWith(inputs.probe, 'corpus-')
+        env:
+          PROBE: ${{ inputs.probe }}
+        run: python scripts/run-probe.py describe "$PROBE"
+      - name: Run native probe
+        if: steps.probe.outcome == 'success'
         shell: bash
-        run: |
-          mkdir -p record-rejection
-          python scripts/probe-windows-record-rejection.py --output record-rejection ${{ inputs.probe == 'corpus-rejection' && '--corpus' || inputs.probe == 'corpus-headers' && '--headers' || inputs.probe == 'corpus-palettes' && '--palettes' || '' }} | tee record-rejection/observations.txt
-      - name: Upload record rejection observations
-        if: always() && (inputs.probe == 'record-rejection' || startsWith(inputs.probe, 'corpus-'))
+        env:
+          PROBE: ${{ inputs.probe }}
+        run: python scripts/run-probe.py run "$PROBE"
+      - name: Upload probe observations
+        if: >-
+          always() && steps.probe.outputs.artifact != '' &&
+          (success() || steps.probe.outputs.upload-on-failure == 'true')
         uses: actions/upload-artifact@v4
         with:
-          name: record-rejection
-          path: record-rejection/
+          name: ${{ steps.probe.outputs.artifact }}
+          path: ${{ steps.probe.outputs.artifact }}/
           retention-days: 7
-      - name: Report native coordinate mapping
-        if: inputs.probe == 'mapping'
-        run: python scripts/probe-windows-mapping.py
-      - name: Inspect binary-review arithmetic boundaries
-        if: inputs.probe == 'precision'
-        run: python scripts/probe-windows-precision.py
-      - name: Measure controlled-font text playback
-        if: inputs.probe == 'text'
-        run: python scripts/probe-windows-text.py --output text-probe
-      - name: Upload controlled-font observations
-        if: inputs.probe == 'text'
-        uses: actions/upload-artifact@v4
-        with:
-          name: text-probe
-          path: text-probe/
-          retention-days: 7
-      - name: Render pinned real-font samples
-        if: inputs.probe == 'real-text' || inputs.probe == 'text-layout' || inputs.probe == 'text-styles' || inputs.probe == 'text-quality'
-        shell: bash
-        run: |
-          mkdir -p real-text-probe
-          args=()
-          if [[ "${{ inputs.probe }}" == text-layout ]]; then args+=(--layout); fi
-          if [[ "${{ inputs.probe }}" == text-styles ]]; then args+=(--styles); fi
-          if [[ "${{ inputs.probe }}" == text-quality ]]; then args+=(--quality); fi
-          python scripts/probe-windows-real-text.py --output real-text-probe "${args[@]}" | tee real-text-probe/observations.txt
-      - name: Upload real-font samples
-        if: always() && (inputs.probe == 'real-text' || inputs.probe == 'text-layout' || inputs.probe == 'text-styles' || inputs.probe == 'text-quality')
-        uses: actions/upload-artifact@v4
-        with:
-          name: real-text-probe
-          path: real-text-probe/
-          retention-days: 7
-      - name: Probe native Symbol fonts
-        if: inputs.probe == 'symbol'
-        shell: bash
-        run: |
-          mkdir -p symbol-probe
-          python scripts/probe-windows-symbol.py --output symbol-probe | tee symbol-probe/observations.txt
-      - name: Upload Symbol observations
-        if: always() && inputs.probe == 'symbol'
-        uses: actions/upload-artifact@v4
-        with:
-          name: symbol-probe
-          path: symbol-probe/
-          retention-days: 7
-      - name: Probe native MT Extra
-        if: inputs.probe == 'mt-extra'
-        shell: bash
-        run: |
-          mkdir -p mtextra-probe
-          python scripts/probe-windows-mtextra.py --output mtextra-probe | tee mtextra-probe/observations.txt
-      - name: Upload MT Extra observations
-        if: always() && inputs.probe == 'mt-extra'
-        uses: actions/upload-artifact@v4
-        with:
-          name: mtextra-probe
-          path: mtextra-probe/
-          retention-days: 7
-      - name: Probe DBCS decoding and spacing
-        if: startsWith(inputs.probe, 'dbcs')
-        shell: bash
-        run: |
-          mkdir -p dbcs-probe
-          python scripts/probe-windows-dbcs.py --output dbcs-probe ${{ inputs.probe == 'dbcs-spacing' && '--extended --spacing' || inputs.probe == 'dbcs-extended' && '--extended' || '' }} | tee dbcs-probe/observations.txt
-      - name: Upload DBCS observations
-        if: always() && startsWith(inputs.probe, 'dbcs')
-        uses: actions/upload-artifact@v4
-        with:
-          name: dbcs-probe
-          path: dbcs-probe/
-          retention-days: 7
-      - name: Probe UTF-8 and double-byte Mac pages
-        if: startsWith(inputs.probe, 'utf8-')
-        shell: bash
-        run: |
-          mkdir -p utf8-mac-probe
-          python scripts/probe-windows-utf8-mac.py --output utf8-mac-probe ${{ inputs.probe == 'utf8-font' && '--font-only' || '' }} | tee utf8-mac-probe/observations.txt
-      - name: Upload UTF-8 and Mac observations
-        if: always() && startsWith(inputs.probe, 'utf8-')
-        uses: actions/upload-artifact@v4
-        with:
-          name: utf8-mac-probe
-          path: utf8-mac-probe/
-          retention-days: 7
-      - name: Probe OEM/Mac and unknown charsets
-        if: inputs.probe == 'text-environments'
-        shell: bash
-        run: |
-          mkdir -p environments-probe
-          python scripts/probe-windows-environments.py --output environments-probe | tee environments-probe/observations.txt
-      - name: Upload environment observations
-        if: always() && inputs.probe == 'text-environments'
-        uses: actions/upload-artifact@v4
-        with:
-          name: environments-probe
-          path: environments-probe/
-          retention-days: 7
-      - name: Probe remaining single-byte code pages
-        if: inputs.probe == 'codepages'
-        shell: bash
-        run: |
-          mkdir -p codepages-probe
-          python scripts/probe-windows-codepages.py --output codepages-probe | tee codepages-probe/observations.txt
-      - name: Upload code-page observations
-        if: always() && inputs.probe == 'codepages'
-        uses: actions/upload-artifact@v4
-        with:
-          name: codepages-probe
-          path: codepages-probe/
-          retention-days: 7
-      - name: Probe extended DIB device acceptance
-        if: inputs.probe == 'dib-boundaries'
-        shell: bash
-        run: |
-          mkdir -p dib-boundaries
-          python scripts/probe-windows-dib-boundaries.py --output dib-boundaries | tee dib-boundaries/observations.txt
-      - name: Upload DIB boundary observations
-        if: always() && inputs.probe == 'dib-boundaries'
-        uses: actions/upload-artifact@v4
-        with:
-          name: dib-boundaries
-          path: dib-boundaries/
-          retention-days: 7
-      - name: Probe WMF text options
-        if: inputs.probe == 'text-options' || inputs.probe == 'text-placement' || inputs.probe == 'text-rtl'
-        shell: bash
-        run: |
-          mkdir -p text-options
-          args=()
-          if [[ "${{ inputs.probe }}" == text-placement ]]; then args+=(--placement); fi
-          if [[ "${{ inputs.probe }}" == text-rtl ]]; then args+=(--rtl); fi
-          python scripts/probe-windows-text-options.py --output text-options "${args[@]}" | tee text-options/observations.txt
-      - name: Upload text option observations
-        if: always() && (inputs.probe == 'text-options' || inputs.probe == 'text-placement' || inputs.probe == 'text-rtl')
-        uses: actions/upload-artifact@v4
-        with:
-          name: text-options
-          path: text-options/
-          retention-days: 7
-      - name: Probe printer escapes on the RGB device
-        if: inputs.probe == 'escapes'
-        shell: bash
-        run: |
-          mkdir -p escapes
-          python scripts/probe-windows-escapes.py --output escapes | tee escapes/observations.txt
-      - name: Upload escape observations
-        if: always() && inputs.probe == 'escapes'
-        uses: actions/upload-artifact@v4
-        with:
-          name: escapes
-          path: escapes/
-          retention-days: 7
-      - name: Probe single-byte text encodings
-        if: inputs.probe == 'text-encoding' || inputs.probe == 'text-missing' || inputs.probe == 'text-encoding-extended'
-        shell: bash
-        run: |
-          mkdir -p text-encoding-probe
-          args=()
-          if [[ "${{ inputs.probe }}" == text-missing ]]; then args+=(--missing-only); fi
-          if [[ "${{ inputs.probe }}" == text-encoding-extended ]]; then args+=(--extended-only); fi
-          python scripts/probe-windows-encoding.py --output text-encoding-probe "${args[@]}" | tee text-encoding-probe/observations.txt
-      - name: Probe native decoration thickness
-        if: inputs.probe == 'text-decorations'
-        shell: bash
-        run: |
-          mkdir -p text-decorations
-          python scripts/probe-windows-text-decorations.py --output text-decorations | tee text-decorations/observations.txt
-      - name: Measure Wingdings fallback metrics
-        if: inputs.probe == 'wingdings' || inputs.probe == 'wingdings-visual' || inputs.probe == 'wingdings-metrics'
-        shell: bash
-        run: |
-          mkdir -p wingdings-probe
-          args=()
-          if [[ "${{ inputs.probe }}" == wingdings-visual ]]; then args+=(--visual); fi
-          if [[ "${{ inputs.probe }}" == wingdings-metrics ]]; then args+=(--metadata-only); fi
-          python scripts/probe-windows-wingdings.py --output wingdings-probe "${args[@]}" | tee wingdings-probe/observations.txt
-      - name: Upload Wingdings metrics
-        if: always() && (inputs.probe == 'wingdings' || inputs.probe == 'wingdings-visual' || inputs.probe == 'wingdings-metrics')
-        uses: actions/upload-artifact@v4
-        with:
-          name: wingdings-probe
-          path: wingdings-probe/
-          retention-days: 7
-      - name: Upload decoration observations
-        if: always() && inputs.probe == 'text-decorations'
-        uses: actions/upload-artifact@v4
-        with:
-          name: text-decorations
-          path: text-decorations/
-          retention-days: 7
-      - name: Upload encoding observations
-        if: always() && (inputs.probe == 'text-encoding' || inputs.probe == 'text-missing' || inputs.probe == 'text-encoding-extended')
-        uses: actions/upload-artifact@v4
-        with:
-          name: text-encoding-probe
-          path: text-encoding-probe/
-          retention-days: 7
-      - name: Probe fallback font sizing
-        if: inputs.probe == 'text-fallback-sizing'
-        shell: bash
-        run: |
-          mkdir -p text-fallback-sizing
-          python scripts/probe-windows-encoding.py --sizing-only --output text-fallback-sizing | tee text-fallback-sizing/observations.txt
-      - name: Upload fallback sizing observations
-        if: always() && inputs.probe == 'text-fallback-sizing'
-        uses: actions/upload-artifact@v4
-        with:
-          name: text-fallback-sizing
-          path: text-fallback-sizing/
-          retention-days: 7
-      - name: Verify native PatBlt
-        if: inputs.probe == 'patblt'
-        run: python scripts/probe-windows-patblt.py
-      - name: Report native layout state
-        if: inputs.probe == 'layout'
-        run: python scripts/probe-windows-layout.py
-      - name: Verify native DIB brushes
-        if: inputs.probe == 'dib-brush'
-        run: python scripts/probe-windows-dib-brush.py
-      - name: Report native drawing paths
-        if: inputs.probe == 'paths'
-        run: python scripts/probe-windows-paths.py
-      - name: Verify native stroke matrix
-        if: inputs.probe == 'strokes'
-        run: python scripts/probe-windows-strokes.py
-      - name: Inspect fractional pen support
-        if: inputs.probe == 'pen-support'
-        run: python scripts/probe-windows-pen-support.py
-      - name: Inspect native ellipse stroke support
-        if: inputs.probe == 'ellipse-support'
-        run: python scripts/probe-windows-ellipse-support.py
-      - name: Inspect native polygon stroke support
-        if: inputs.probe == 'polygon-support'
-        run: python scripts/probe-windows-polygon-support.py
-      - name: Probe native Arc paths
-        if: inputs.probe == 'arcs'
-        run: python scripts/probe-windows-arcs.py
-      - name: Verify native edge cases
-        if: inputs.probe == 'edge-cases'
-        run: python scripts/probe-windows-edge-cases.py
       - name: Render missing reference images
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.preflight.outputs.missing == 'true' }}
         shell: bash
@@ -396,27 +151,6 @@ jobs:
           if [[ "$REFERENCE_SET" == corpus ]]; then root="$root/corpus"; fi
           args=(--root "$root" --size 128x128)
           python scripts/update-goldens.py "${args[@]}"
-      - name: Verify native regions
-        if: inputs.probe == 'regions'
-        run: python scripts/probe-windows-regions.py
-      - name: Verify native region painting
-        if: inputs.probe == 'region-paint'
-        run: python scripts/probe-windows-region-paint.py
-      - name: Probe native inside-frame paths
-        if: inputs.probe == 'insideframe'
-        run: python scripts/probe-windows-insideframe.py
-      - name: Measure native inside-frame insets
-        if: inputs.probe == 'insideframe-inset'
-        run: python scripts/probe-windows-insideframe-inset.py
-      - name: Probe native RoundRect paths
-        if: inputs.probe == 'roundrects'
-        run: python scripts/probe-windows-roundrects.py
-      - name: Probe native Pie paths
-        if: inputs.probe == 'pies'
-        run: python scripts/probe-windows-pies.py
-      - name: Probe native Chord paths
-        if: inputs.probe == 'chords'
-        run: python scripts/probe-windows-chords.py
       - name: Commit reference images
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.preflight.outputs.missing == 'true' }}
         shell: bash
