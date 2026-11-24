@@ -36,3 +36,12 @@ def test_font_build_matches_packaged_bytes(load_script):
     source = (root / "src/fonts/NotoSansSymbols2-Regular.ttf").read_bytes()
     metrics = (root / "src/fonts/wingdings-metrics.txt").read_text()
     assert build(source, metrics) == FontFace.bundled_wingdings().data
+
+
+def test_resource_limit_error_is_exported():
+    import pillow_wmf
+    from pillow_wmf.binary import ResourceLimitError
+
+    assert pillow_wmf.ResourceLimitError is ResourceLimitError
+    assert "ResourceLimitError" in pillow_wmf.__all__
+    assert issubclass(pillow_wmf.ResourceLimitError, pillow_wmf.FormatError)
