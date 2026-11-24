@@ -19,10 +19,9 @@ from .text_encoding import TEXT_CHARSETS, decode_codepage
 def font_paths():
     """Use Fontconfig's configured inventory, or conventional system directories."""
     try:
-        result = subprocess.run(
-            ["fc-list", "--format=%{file}\\n"], capture_output=True, text=True, check=True, timeout=10
-        )
-        paths = {Path(line) for line in result.stdout.splitlines() if line}
+        result = subprocess.run(["fc-list", "--format=%{file}\\n"], capture_output=True, check=True, timeout=10)
+        # File names are bytes; decode as the OS does, never as UTF-8 text.
+        paths = {Path(os.fsdecode(line)) for line in result.stdout.splitlines() if line}
         if paths:
             return sorted(paths)
     except (OSError, subprocess.SubprocessError):
