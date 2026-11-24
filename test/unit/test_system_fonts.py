@@ -1,6 +1,8 @@
 """Automatic font policy tested with controlled inventories, never host fonts."""
 
+import os
 import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -341,3 +343,13 @@ def test_fontconfig_inventory_is_deduplicated(monkeypatch):
         "pillow_wmf.system_fonts.subprocess.run", lambda *a, **k: CompletedProcess(a, 0, "/b.ttf\n/a.ttf\n/b.ttf\n")
     )
     assert font_paths() == [Path("/a.ttf"), Path("/b.ttf")]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="fake fc-list is a POSIX shell script")
+def test_fontconfig_paths_are_os_file_names_not_utf8_text(monkeypatch, tmp_path):
+    fake = tmp_path / "fc-list"
+    fake.write_bytes(b"#!/bin/sh\nprintf '/fonts/caf\\351.ttf\\n/fonts/b.ttf\\n\\n'\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    paths = font_paths()
+    assert [os.fsencode(path) for path in paths] == [b"/fonts/b.ttf", b"/fonts/caf\xe9.ttf"]
