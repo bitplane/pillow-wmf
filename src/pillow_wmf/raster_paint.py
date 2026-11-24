@@ -20,7 +20,7 @@ from .constants import (
     TRANSPARENT,
 )
 from .flood import flood_spans
-from .geometry import DevicePath, Polygon, contains
+from .geometry import DevicePath, Polygon, coverage_spans
 from .paint import pattern_rop2, rop2, rop3
 from .raster_state import Brush, DrawingState
 from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outline, realize_pen, widen_segment
@@ -262,17 +262,20 @@ class RasterPainter:
                         pixels.update(self.contour_pixels((join,)))
         return pixels
 
-    def contour_pixels(self, contours: tuple[Polygon, ...], *, fill_mode=ALTERNATE):
+    def contour_spans(self, contours: tuple[Polygon, ...], *, fill_mode=ALTERNATE):
+        """Yield ``(y, start, end)`` covered runs, clipped to the image."""
         if not contours:
             return
         left = max(0, min(p[0] for contour in contours for p in contour) // 16)
         top = max(0, min(p[1] for contour in contours for p in contour) // 16)
         right = min(self.image.width, max(p[0] for contour in contours for p in contour) // 16 + 1)
         bottom = min(self.image.height, max(p[1] for contour in contours for p in contour) // 16 + 1)
-        for y in range(top, bottom):
-            for x in range(left, right):
-                if contains(contours, x, y, fill_mode=fill_mode):
-                    yield x, y
+        yield from coverage_spans(contours, left, top, right, bottom, fill_mode=fill_mode)
+
+    def contour_pixels(self, contours: tuple[Polygon, ...], *, fill_mode=ALTERNATE):
+        for y, start, end in self.contour_spans(contours, fill_mode=fill_mode):
+            for x in range(start, end):
+                yield x, y
 
     def paint_polygons(self, paths: tuple[DevicePath, ...], *, miter=False, reserve_outline=False, brush=None) -> None:
         brush = self.state.brush if brush is None else brush
@@ -282,10 +285,11 @@ class RasterPainter:
         # Other ROP2 modes and stroke-only paths retain cubic tangents.
         if brush.style != BS_NULL and self.state.rop2 == R2_COPYPEN:
             paths = tuple(path.flattened() for path in paths)
-        fill_pixels = (
-            set()
+        # Fill coverage stays as row runs; only stroke coverage is a pixel set.
+        fill_spans = (
+            ()
             if brush.style == BS_NULL
-            else set(self.contour_pixels(contours, fill_mode=self.state.polygon_fill_mode))
+            else tuple(self.contour_spans(contours, fill_mode=self.state.polygon_fill_mode))
         )
         pen = self.realized_pen
         # Cosmetic strokes are emitted below with pixel multiplicity intact;
@@ -294,17 +298,19 @@ class RasterPainter:
         # Only cosmetic styles need a separate solid outline for fill reservation.
         stroke_pixels = (
             self._stroke_pixels(paths, miter=miter)
-            if fill_pixels and reserve_outline and pen.cosmetic
+            if fill_spans and reserve_outline and pen.cosmetic
             else foreground | gaps
         )
         if pen.cosmetic and not reserve_outline:
             # Cosmetic paths fill first, then emit the outline (including
             # repeated pixels). Wide combined paths exclude stroke coverage.
             stroke_pixels = set()
-        for x, y in fill_pixels - stroke_pixels:
-            color = self.brush_color_at(x, y, brush)
-            if color is not None:
-                self.pixel(x, y, color)
+        for y, start, end in fill_spans:
+            for x in range(start, end):
+                if (x, y) not in stroke_pixels:
+                    color = self.brush_color_at(x, y, brush)
+                    if color is not None:
+                        self.pixel(x, y, color)
         if pen.cosmetic:
             for path in paths:
                 self.stroke_path(path)
