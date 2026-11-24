@@ -3,9 +3,10 @@
 Includes the native colour census and fast replication-run enlargement filter.
 """
 
+import weakref
 from dataclasses import dataclass
 from enum import Enum, auto
-from functools import lru_cache
+from functools import lru_cache, partial
 
 from .gdi import UnsupportedOperation
 from .halftone_power import FD6, round_ratio, tent_power
@@ -13,6 +14,16 @@ from .halftone_scan import ExpansionSamples, ExpansionWindow, ReductionScanReade
 from .limits import MAX_FILTER_TAPS as MAX_FILTER_TAPS
 
 SCALE = 8192
+
+
+def _instance_cache(instance, method):
+    """Bound a pure method's memo without a reference cycle through ``instance``.
+
+    A cache of a bound method stored on its own instance keeps the instance,
+    and every cached value, alive until the cycle collector runs. Binding a
+    weak proxy lets each transfer's caches be freed by reference counting.
+    """
+    return lru_cache(maxsize=2048)(partial(method, weakref.proxy(instance)))
 
 
 class HalftoneMode(Enum):
@@ -117,7 +128,7 @@ class ExpansionAxis:
         for value in self.kernel:
             self.prefix.append(self.prefix[-1] + value)
         self.total = self.prefix[-1] * source
-        self.weights = lru_cache(maxsize=2048)(self._weights)
+        self.weights = _instance_cache(self, type(self)._weights)
 
     def integral(self, position):
         position += self.radius * self.source
@@ -198,9 +209,9 @@ class HalftoneExpansion:
             self.left, self.right = self.source_left, self.source_right
         if not self.y_axis:
             self.top, self.bottom = self.source_top, self.source_bottom
-        self.sharp = lru_cache(maxsize=2048)(self._sharp)
-        self.horizontal = lru_cache(maxsize=2048)(self._horizontal)
-        self.vertical = lru_cache(maxsize=2048)(self._vertical)
+        self.sharp = _instance_cache(self, type(self)._sharp)
+        self.horizontal = _instance_cache(self, type(self)._horizontal)
+        self.vertical = _instance_cache(self, type(self)._vertical)
 
     def _sharp(self, x, y):
         stencil = self.samples.stencil(x, y, self.x_axis is not None, self.y_axis is not None)
@@ -300,8 +311,8 @@ class HalftoneReduction:
         self.shrink_x, self.shrink_y = width < source_width, height < source_height
         self.both = self.shrink_x and self.shrink_y
         self.reader = ReductionScanReader(bitmap, x, y, source_height, height, fixup=fixup)
-        self.horizontal = lru_cache(maxsize=2048)(self._horizontal)
-        self.area = lru_cache(maxsize=2048)(self._area)
+        self.horizontal = _instance_cache(self, type(self)._horizontal)
+        self.area = _instance_cache(self, type(self)._area)
 
     def _horizontal(self, x, y):
         # The native horizontal accumulator starts at zero and closes a

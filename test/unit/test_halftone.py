@@ -250,3 +250,27 @@ def test_fast_run_stencils_partition_the_integer_replication_runs():
 def test_excessive_tap_allocation_is_rejected():
     with pytest.raises(UnsupportedOperation, match="tap limit"):
         ExpansionAxis(1, 1_000_000_000)
+
+
+def test_halftone_transfers_are_freed_without_the_cycle_collector():
+    # Per-transfer caches must not keep each transfer (and its cached
+    # samples) alive until a garbage collection.
+    import gc
+
+    from pillow_wmf.halftone import ExpansionAxis, HalftoneExpansion, HalftoneReduction
+
+    pixels = bytes((x * 29 + y * 7 + c) & 255 for y in range(9) for x in range(11) for c in range(3))
+    source = encode_dib24(RGBBitmap(11, 9, pixels))
+    context = RasterContext(32, 32)
+    context.set_stretch_mode(4)
+    gc.collect()
+    gc.disable()
+    try:
+        context.stretch_dib(0, 0, 5, 4, 0, 0, 11, 9, 0xCC0020, 0, source)
+        context.stretch_dib(8, 8, 23, 19, 0, 0, 11, 9, 0xCC0020, 0, source)
+        live = [o for o in gc.get_objects() if isinstance(o, (ExpansionAxis, HalftoneExpansion, HalftoneReduction))]
+    finally:
+        gc.enable()
+    assert context.image.getpixel((1, 1)) != (255, 255, 255)
+    assert context.image.getpixel((12, 12)) != (255, 255, 255)
+    assert live == []
