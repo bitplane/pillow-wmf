@@ -250,6 +250,11 @@ class SystemFontCollection(FontCollection):
             # Unicode coverage. Only an exact family or a bundled fallback works.
             if entry.symbol and charset not in (1, 2):
                 continue
+            # The Windows Symbol face is a symbol-cmap font. A host face that
+            # merely shares its name cannot decode SYMBOL_CHARSET bytes; use
+            # the bundled face as when Symbol is not installed.
+            if name == "symbol" and not entry.symbol:
+                continue
             if (entry.symbol or charset == 2 or name in {"wingdings", "symbol", "webdings"}) and (
                 entry.family.casefold() != name
             ):

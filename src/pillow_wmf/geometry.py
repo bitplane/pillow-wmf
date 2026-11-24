@@ -287,3 +287,65 @@ def contains(polygons: tuple[Polygon, ...], x: int, y: int, *, fill_mode: int = 
             if cross * direction < 0:
                 winding += direction
     return winding != 0 if fill_mode == 2 else winding % 2 != 0
+
+
+def coverage_spans(polygons: tuple[Polygon, ...], left: int, top: int, right: int, bottom: int, *, fill_mode: int = 1):
+    """Yield ``(y, start, end)`` runs where ``contains`` holds within bounds.
+
+    This is exactly ``contains`` evaluated at every pixel, computed per row.
+    An edge crossing sample row ``py`` satisfies ``cross * direction < 0``
+    precisely for ``16 * x * |dy| < t``, so it contributes its direction to
+    every pixel left of the integer cutoff ``ceil(t / (16 * |dy|))``.
+    Runs are ordered by row, then column, and adjacent runs are merged.
+    """
+    if left >= right:
+        return
+    edges = []
+    for polygon in polygons:
+        for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1], strict=False):
+            if y1 != y2:
+                # ``(y1 > py) != (y2 > py)`` holds for min <= py < max.
+                direction = 1 if y2 > y1 else -1
+                rise = (y2 - y1) * direction
+                edges.append(
+                    (
+                        min(y1, y2),
+                        max(y1, y2),
+                        x1 * rise - y1 * (x2 - x1) * direction,
+                        (x2 - x1) * direction,
+                        16 * rise,
+                        direction,
+                    )
+                )
+    edges.sort(key=lambda edge: edge[0])
+    active = []
+    pending = 0
+    for y in range(top, bottom):
+        py = y * 16
+        while pending < len(edges) and edges[pending][0] <= py:
+            active.append(edges[pending])
+            pending += 1
+        active = [edge for edge in active if edge[1] > py]
+        if not active:
+            if pending == len(edges):
+                return
+            continue
+        cutoffs = sorted((-((-(base + py * run)) // scale), direction) for _, _, base, run, scale, direction in active)
+        winding = sum(direction for _, direction in cutoffs)
+        start = None
+        position = left
+        # The sentinel closes the final interval at the right bound.
+        for cutoff, direction in (*cutoffs, (right, 0)):
+            if cutoff > position:
+                inside = winding != 0 if fill_mode == 2 else winding % 2 != 0
+                if inside and start is None:
+                    start = position
+                elif not inside and start is not None:
+                    yield y, start, position
+                    start = None
+                position = min(cutoff, right)
+                if position == right:
+                    break
+            winding -= direction
+        if start is not None:
+            yield y, start, position
