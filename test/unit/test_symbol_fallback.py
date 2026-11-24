@@ -4,6 +4,7 @@ import hashlib
 from dataclasses import replace
 from importlib.resources import files
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fontTools.ttLib import TTFont
@@ -110,3 +111,44 @@ def test_missing_roman_symbol_renders_like_an_explicit_symbol_request():
         images.append(render(recorder.to_bytes(), (80, 80), fonts=SystemFontCollection(paths=[])))
     assert images[0].tobytes() == images[1].tobytes()
     assert len(set(images[0].get_flattened_data())) > 1
+
+
+def _renamed_font(tmp_path, source, family):
+    root = Path(__file__).resolve().parents[1] / "fonts"
+    with TTFont(root / source) as font:
+        names = font["name"]
+        names.names = [record for record in names.names if record.nameID not in (1, 4, 16, 21)]
+        for name_id in (1, 4):
+            names.setName(family, name_id, 3, 1, 0x409)
+        path = tmp_path / f"{family}-{source}"
+        font.save(path)
+    return path
+
+
+def test_host_face_named_symbol_without_symbol_cmap_uses_bundled_symbol(tmp_path):
+    # Some distributions install a Unicode-cmap face named Symbol. It cannot
+    # decode SYMBOL_CHARSET bytes and must not satisfy the Symbol request.
+    path = _renamed_font(tmp_path, "layout.ttf", "Symbol")
+    fonts = SystemFontCollection(paths=[path])
+    assert [(entry.family, entry.symbol) for entry in fonts.inventory] == [("Symbol", False)]
+    request = Font(height=-20, charset=1, face_name=b"Symbol")
+    face = fonts.resolve(request)
+    assert face is fonts._symbol_face
+    assert fonts.decode(request, face, b"abc") == ""
+    assert fonts.substitutions[-1].reason == "bundled symbol font"
+
+
+def test_host_face_named_symbol_with_symbol_cmap_is_still_selected(tmp_path):
+    path = _renamed_font(tmp_path, "symbols.ttf", "Symbol")
+    fonts = SystemFontCollection(paths=[path])
+    request = Font(height=-20, charset=1, face_name=b"Symbol")
+    face = fonts.resolve(request)
+    assert face.symbol and face is not fonts._symbol_face
+    assert fonts.substitutions == []
+
+
+def test_unsupported_charset_reports_the_effective_charset(tmp_path):
+    face = FontFace.from_path(_renamed_font(tmp_path, "layout.ttf", "Symbol"))
+    request = Font(height=-20, charset=1, face_name=b"Symbol")
+    with pytest.raises(UnsupportedOperation, match="Unsupported text charset: 2$"):
+        FontCollection([face]).decode(request, face, b"abc")
