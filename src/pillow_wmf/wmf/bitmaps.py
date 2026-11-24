@@ -38,6 +38,26 @@ class Blit(Record):
             result += self.source.data
         return result
 
+    def function(self, canonical: bool = False) -> int:
+        """Encode source presence in the function word's size byte.
+
+        Readers detect a source-less blit by a high byte equal to the payload
+        size in words (RecordSize == (RecordFunction >> 8) + 3), so it must
+        count any trailing words too.
+        """
+        function = super().function(canonical)
+        fixed = (9 if self.source is None else 8) + 2 * self.stretch
+        words = fixed + (len(self.source.data) if self.source is not None else 0) // 2 + len(self.trailing) // 2
+        if canonical or self.wire_function is None:
+            if self.source is None:
+                if words > 0xFF:
+                    raise ValueError("Source-less blit payload is too long for its function word")
+                return words << 8 | function & 0xFF
+            return function
+        if (function >> 8 == words) != (self.source is None):
+            raise ValueError("Function word does not match the blit's source presence")
+        return function
+
     @classmethod
     def read(cls, reader: Reader, function: int, limits: Limits):
         without_source = reader.remaining // 2 == function >> 8

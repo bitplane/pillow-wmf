@@ -274,3 +274,36 @@ def test_fixed_records_cannot_consume_the_next_record(cls):
     encoded = Metafile.build([UnknownRecord(cls.kind, payload), fixed.MoveTo(1, 2)]).to_bytes()
     with pytest.raises(FormatError, match="Truncated"):
         Metafile.from_bytes(encoded)
+
+
+BLITS = (bitmaps.BitBlt, bitmaps.DibBitBlt, bitmaps.StretchBlt, bitmaps.DibStretchBlt)
+
+
+@pytest.mark.parametrize("cls", BLITS)
+@pytest.mark.parametrize("trailing", [b"", b"\x01\x02", bytes(range(8))])
+def test_sourceless_blit_trailing_words_survive_canonical_output(cls, trailing):
+    # Readers infer a missing source from the function word's size byte.
+    record = cls(1, 2, 3, 4, 5, 6, 0x00F00021, reserved=0xABCD, trailing=trailing)
+    built = Metafile.build([record])
+    for data in (built.to_bytes(), built.to_bytes(canonical=True), Metafile.from_bytes(built.to_bytes()).to_bytes()):
+        parsed = Metafile.from_bytes(data).records[0]
+        assert parsed.source is None
+        assert replace(parsed, wire_function=None) == record
+        assert parsed.wire_function >> 8 == len(record.payload() + trailing) // 2
+    if not trailing:
+        assert record.function() == int(cls.kind)
+
+
+@pytest.mark.parametrize("cls", BLITS)
+def test_blit_function_word_cannot_misstate_source_presence(cls):
+    words = 9 + 2 * cls.stretch
+    with pytest.raises(ValueError, match="too long"):
+        cls(1, 2, 3, 4, 5, 6, 0x00F00021, trailing=bytes(2 * (256 - words))).to_bytes()
+    with pytest.raises(ValueError, match="source presence"):
+        cls(1, 2, 3, 4, 5, 6, 0x00F00021, wire_function=int(cls.kind), trailing=b"\0\0").to_bytes()
+    source = DIB if cls.bitmap_format == "dib" else BitmapData("bitmap16", bytes(12))
+    sourced = cls(1, 2, 3, 4, 5, 6, 0x00CC0020, source)
+    size = len(sourced.payload()) // 2
+    with pytest.raises(ValueError, match="source presence"):
+        replace(sourced, wire_function=size << 8 | int(cls.kind) & 0xFF).to_bytes()
+    assert Metafile.from_bytes(Metafile.build([sourced]).to_bytes(canonical=True)).records[0].source == source
