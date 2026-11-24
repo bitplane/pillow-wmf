@@ -12,7 +12,7 @@ from pathlib import Path
 from PIL import Image, ImageChops
 
 from pillow_wmf import SystemFontCollection, render
-from pillow_wmf.render import _read_metafile
+from pillow_wmf.wmf.loader import read
 from pillow_wmf.wmf.variable import ExtTextOut, TextOut
 
 
@@ -41,7 +41,7 @@ def compare(relative):
         if not reference.is_file():
             return item | {"status": "missing-reference"}
         data = (ROOT / relative).read_bytes()
-        metafile = _read_metafile(data)
+        metafile = read(data)
         item["has_text"] = any(isinstance(r, (TextOut, ExtTextOut)) and r.text for r in metafile.records)
         with Image.open(reference) as image:
             native = image.convert("RGB")
