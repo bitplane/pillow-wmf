@@ -223,6 +223,9 @@ class FontFace:
             self.descent = font["OS/2"].usWinDescent
             if not self.ascent + self.descent:
                 self.ascent, self.descent = font["hhea"].ascent, -font["hhea"].descent
+            # Realization divides by the em square and the Windows cell height.
+            if self.units_per_em <= 0 or self.ascent + self.descent <= 0:
+                raise UnsupportedOperation("Font has no usable vertical metrics")
             self.average_width = font["OS/2"].xAvgCharWidth
             self.underline_metrics = font["post"].underlinePosition, font["post"].underlineThickness
             self.strikeout_metrics = font["OS/2"].yStrikeoutPosition, font["OS/2"].yStrikeoutSize
