@@ -871,9 +871,6 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _stroke_path(self, path, *, miter=False):
         self._painter().stroke_path(path, miter=miter)
 
-    def _realized_pen(self):
-        return self._painter().realized_pen
-
     def _stroke_fragments(self, paths, *, miter=False):
         return self._painter().stroke_fragments(paths, miter=miter)
 

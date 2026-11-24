@@ -1,8 +1,11 @@
 """Opt-in host font discovery, separate from controlled-font rendering."""
 
 import os
+import struct
 import subprocess
 import sys
+from array import array
+from bisect import bisect_right
 from dataclasses import dataclass, replace
 from functools import cached_property, lru_cache
 from pathlib import Path
@@ -46,6 +49,56 @@ class FontSubstitution:
     reason: str
 
 
+class Coverage:
+    """Immutable set of codepoints, stored as sorted half-open ranges.
+
+    Host inventories can hold millions of mapped codepoints; contiguous
+    blocks keep the shared catalogue small. Membership is a bisection.
+    """
+
+    __slots__ = ("_bounds", "_hash")
+
+    def __init__(self, codepoints=()):
+        bounds = []
+        previous = -2
+        for codepoint in sorted(set(codepoints)):
+            if codepoint != previous + 1:
+                bounds += (previous + 1, codepoint)
+            previous = codepoint
+        # Drop the placeholder end before the first range; close the last.
+        self._bounds = array("I", bounds[1:] + [previous + 1] if bounds else ())
+        self._hash = None
+
+    def __contains__(self, codepoint):
+        return bisect_right(self._bounds, codepoint) % 2 == 1
+
+    def __iter__(self):
+        for start, end in zip(self._bounds[::2], self._bounds[1::2], strict=True):
+            yield from range(start, end)
+
+    def __len__(self):
+        return sum(self._bounds[1::2]) - sum(self._bounds[::2])
+
+    def __eq__(self, other):
+        return isinstance(other, Coverage) and self._bounds == other._bounds
+
+    def __hash__(self):
+        if self._hash is None:
+            self._hash = hash(self._bounds.tobytes())
+        return self._hash
+
+    def intersects(self, codepoints):
+        return any(codepoint in self for codepoint in codepoints)
+
+
+def _fixed_pitch(font):
+    """Read post.isFixedPitch without decoding the table's glyph names."""
+    data = font.reader["post"]
+    if len(data) < 32:
+        return font["post"].isFixedPitch  # Let fontTools report the short table.
+    return struct.unpack_from(">I", data, 12)[0]
+
+
 @dataclass(frozen=True)
 class InstalledFace:
     path: Path
@@ -55,7 +108,7 @@ class InstalledFace:
     italic: bool
     symbol: bool
     category: str
-    coverage: frozenset[int]
+    coverage: Coverage
 
 
 def catalogue(paths):
@@ -74,7 +127,7 @@ def catalogue(paths):
                         continue
                     os2 = font["OS/2"]
                     category = "sans"
-                    if font["post"].isFixedPitch:
+                    if _fixed_pitch(font):
                         category = "mono"
                     elif 1 <= os2.sFamilyClass >> 8 <= 7:
                         category = "serif"
@@ -87,7 +140,7 @@ def catalogue(paths):
                         bool(os2.fsSelection & 1),
                         symbol,
                         category,
-                        frozenset((font.getBestCmap() or {}).keys()),
+                        Coverage((font.getBestCmap() or {}).keys()),
                     )
         except (OSError, TTLibError, KeyError, ValueError):
             # A stale inventory entry or unsupported installed face must not
@@ -146,6 +199,7 @@ class SystemFontCollection(FontCollection):
             self.default_font = self.default_font.to_gdi("create_font")
         self._paths = None if paths is None else tuple(paths)
         self._loaded = {}
+        self._rankings = {}
         self.substitutions: list[FontSubstitution] = []
 
     @cached_property
@@ -174,6 +228,13 @@ class SystemFontCollection(FontCollection):
             category = "mono"
         elif request.pitch_and_family & 0xF0 == 0x10:
             category = "serif"
+        # The inventory is a fixed snapshot, so each ordering is reusable.
+        key = family, category, bool(request.italic), request.weight or 400
+        if key not in self._rankings:
+            self._rankings[key] = self._rank(*key)
+        return self._rankings[key]
+
+    def _rank(self, family, category, italic, weight):
         preferred = tuple(n.casefold() for n in FAMILIES.get(family, GENERICS[category]))
 
         def rank(face):
@@ -182,14 +243,14 @@ class SystemFontCollection(FontCollection):
             return (
                 preference,
                 face.category != category,
-                face.italic != bool(request.italic),
-                abs(face.weight - (request.weight or 400)),
+                face.italic != italic,
+                abs(face.weight - weight),
                 name,
                 str(face.path),
                 face.index,
             )
 
-        return sorted(self.inventory, key=rank)
+        return tuple(sorted(self.inventory, key=rank))
 
     def _load(self, entry):
         if entry not in self._loaded:
@@ -315,7 +376,7 @@ class SystemFontCollection(FontCollection):
             for entry in self._ranked(request):
                 if not missing:
                     break
-                if entry.symbol or not missing.intersection(entry.coverage):
+                if entry.symbol or not entry.coverage.intersects(missing):
                     continue
                 fallback = self._load(entry)
                 if fallback is None or fallback is face:

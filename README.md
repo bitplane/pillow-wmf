@@ -23,6 +23,59 @@ with Image.open("drawing.wmf") as image:
     image.save("drawing.png")
 ```
 
+### Pillow loading
+
+`Image.open()` reads and validates the file but does not rasterize it. Pixels
+are produced by the first `load()`, which accepts keyword options:
+
+* `size=(width, height)` renders onto a canvas of that many pixels.
+* `dpi=d` or `dpi=(x, y)` scales a placeable WMF's bounds from its
+  units-per-inch. It requires valid placeable bounds and cannot be combined
+  with `size`.
+* `fonts=` supplies the font collection (see below).
+
+Without options, a WMF with valid placeable bounds renders at those bounds at
+72 DPI, setting `info["dpi"]` and `info["wmf_bbox"]`; any other WMF renders at
+128×128. Options are only accepted by the first `load()`; reopen the file to
+render it differently. Invalid options raise `ValueError`. Unsupported
+records, invalid playback and resource limits raise `OSError`, and Pillow's
+decompression-bomb limit applies to the output size. EMF files are left to
+Pillow's own handler.
+
+`pillow_wmf.render(data, size, fonts=...)` renders bytes to an RGB image
+without Pillow's file handling. It raises the library's own exceptions.
+
+## Fonts
+
+Text is rendered from TrueType outlines with Windows-compatible metrics, so
+the result depends on which font files are used. There are two collections:
+
+* `FontCollection(faces)` uses only the `FontFace` objects you supply, for
+  example `FontFace.from_path("arial.ttf")`. A request for a family that is not
+  supplied (or mapped with `aliases=`) raises `UnsupportedOperation`. Nothing
+  is read from the host. Use this for reproducible output.
+* `SystemFontCollection()` discovers installed fonts through `fc-list`, or the
+  platform's font directories when Fontconfig is unavailable, and substitutes
+  similar families when the requested one is missing. Pass `paths=` to
+  restrict it to particular files. Substitutions are recorded in its
+  `substitutions` list. Construct one per rendering job. Discovery is cached
+  for the process; call `SystemFontCollection.clear_cache()` after installing
+  or replacing fonts.
+
+The Pillow loader uses a new `SystemFontCollection()` unless `fonts=` is
+given, so its output depends on the fonts installed on the machine. When a
+`SystemFontCollection` renders the image, through either the loader or
+`render()`, `info["wmf_font_substitutions"]` lists its `FontSubstitution`
+records (`requested`, `selected`, `reason`). `render()` uses an empty
+`FontCollection` unless `fonts=` is given, so text records fail rather than
+silently using host fonts.
+
+Only static TrueType (`glyf`) outlines are supported. CFF-flavoured OpenType
+and variable fonts are skipped during discovery and rejected by `FontFace`.
+Both collections can fall back to bundled Wingdings and Symbol substitutes
+(`wingdings_fallback=` and `symbol_fallback=` on `FontCollection`; always on
+for `SystemFontCollection`).
+
 ## Rendering limits
 
 `render(data, size, limits=Limits(...))` bounds input bytes, records, points,
