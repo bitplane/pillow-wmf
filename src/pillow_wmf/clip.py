@@ -4,7 +4,7 @@ The bitmap bounds are applied when pixels are written. They must not trim an
 application clip: a later OffsetClipRgn can move an off-surface clip into view.
 """
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import cached_property
@@ -111,6 +111,96 @@ class RegionMask:
     def intersection(self, other):
         return self.difference(self.difference(other))
 
+    def _edit_rows(self, top, bottom, edit, fill=None):
+        """Apply ``edit`` to each row's endpoints in ``[top, bottom)``.
+
+        Rows outside the range are shared unchanged. Uncovered rows in range
+        receive ``fill`` when given. The result keeps ``from_rectangles``'
+        canonical form: no empty bands and no equal adjacent bands.
+        """
+        bands = self.bands
+        start = max(0, bisect_right(self.tops, top) - 1)
+        if start < len(bands) and bands[start][1] <= top:
+            start += 1
+        end = start
+        edited = []
+        cursor = top
+        while end < len(bands) and bands[end][0] < bottom:
+            band_top, band_bottom, endpoints = bands[end]
+            if band_top < top:
+                edited.append((band_top, top, endpoints))
+                band_top = top
+            if fill is not None and cursor < band_top:
+                edited.append((cursor, band_top, fill))
+            edited.append((band_top, min(band_bottom, bottom), edit(endpoints)))
+            if band_bottom > bottom:
+                edited.append((bottom, band_bottom, endpoints))
+            cursor = band_bottom
+            end += 1
+        if fill is not None and cursor < bottom:
+            edited.append((cursor, bottom, fill))
+        # Re-merge with one unchanged neighbour on each side.
+        head, tail = bands[: max(0, start - 1)], bands[end + 1 :]
+        merged = []
+        for band in (*bands[max(0, start - 1) : start], *edited, *bands[end : end + 1]):
+            if not band[2] or band[0] == band[1]:
+                continue
+            if merged and merged[-1][1] == band[0] and merged[-1][2] == band[2]:
+                merged[-1] = (merged[-1][0], band[1], band[2])
+            else:
+                merged.append(band)
+        return RegionMask((*head, *merged, *tail))
+
+    def with_rectangle(self, rectangle: Rectangle):
+        """Union with one ordered, non-empty half-open rectangle."""
+        left, top, right, bottom = rectangle
+
+        def edit(endpoints):
+            low = bisect_left(endpoints, left)
+            high = bisect_right(endpoints, right)
+            # Touching intervals merge, as in ``from_rectangles``.
+            start = endpoints[low - 1] if low % 2 else left
+            end = endpoints[high] if high % 2 else right
+            return (*endpoints[: low - low % 2], start, end, *endpoints[high + high % 2 :])
+
+        return self._edit_rows(top, bottom, edit, (left, right))
+
+    def without_rectangle(self, rectangle: Rectangle):
+        """Difference with one ordered, non-empty half-open rectangle."""
+        left, top, right, bottom = rectangle
+
+        def edit(endpoints):
+            low = bisect_right(endpoints, left)
+            high = bisect_left(endpoints, right)
+            head = endpoints[:low]
+            if low % 2:
+                head = head[:-1] if head[-1] == left else (*head, left)
+            tail = endpoints[high:]
+            if high % 2:
+                tail = tail[1:] if tail[0] == right else (right, *tail)
+            return (*head, *tail)
+
+        return self._edit_rows(top, bottom, edit)
+
+    def clipped(self, rectangle: Rectangle):
+        """Intersection with one ordered, non-empty half-open rectangle."""
+        left, top, right, bottom = rectangle
+        merged = []
+        for band_top, band_bottom, endpoints in self.bands:
+            band_top, band_bottom = max(band_top, top), min(band_bottom, bottom)
+            if band_top >= band_bottom:
+                continue
+            low = bisect_right(endpoints, left)
+            high = bisect_left(endpoints, right)
+            endpoints = (*((left,) if low % 2 else ()), *endpoints[low:high], *((right,) if high % 2 else ()))
+            if not endpoints:
+                continue
+            if merged and merged[-1][1] == band_top and merged[-1][2] == endpoints:
+                merged[-1] = (merged[-1][0], band_bottom, endpoints)
+            else:
+                merged.append((band_top, band_bottom, endpoints))
+        return RegionMask(tuple(merged))
+
     def frame(self, width, height, *, point=None):
         """Inner rectangular border: subtract the rectangular erosion.
 
@@ -156,36 +246,50 @@ class RegionMask:
 
 @dataclass(frozen=True)
 class ClipRegion:
-    constraints: tuple[tuple[bool, Rectangle], ...] = ()
+    """Application clip: ``mask`` (``None`` is unbounded) less ``excluded``.
+
+    Intersect and exclude rectangles are folded into the band representation
+    when applied, so pixel tests never rescan the clip's history. Clipping is
+    conjunctive, so the folded region is independent of application order.
+    Once ``mask`` is finite, exclusions are subtracted from it directly.
+    Rectangles are half-open; an empty or reversed one contains no pixels.
+    """
+
     mask: RegionMask | None = None
+    excluded: RegionMask = RegionMask()
 
     def within(self, bounds: Rectangle) -> RegionMask:
         """Resolve the application clip inside finite device bounds."""
         region = RegionMask.from_rectangles((bounds,))
         if self.mask is not None:
             region = region.intersection(self.mask)
-        for include, rectangle in self.constraints:
-            other = RegionMask.from_rectangles((rectangle,))
-            region = region.intersection(other) if include else region.difference(other)
+        if self.excluded.bands:
+            region = region.difference(self.excluded)
         return region
 
     def contains(self, x: int, y: int) -> bool:
-        return (self.mask is None or self.mask.contains(x, y)) and all(
-            (left <= x < right and top <= y < bottom) == include
-            for include, (left, top, right, bottom) in self.constraints
-        )
+        if self.mask is not None:
+            return self.mask.contains(x, y)
+        return not self.excluded.contains(x, y)
 
     def intersect(self, rectangle: Rectangle) -> "ClipRegion":
-        return ClipRegion(self.constraints + ((True, rectangle),), self.mask)
+        left, top, right, bottom = rectangle
+        if left >= right or top >= bottom:
+            return ClipRegion(RegionMask())
+        if self.mask is None:
+            return ClipRegion(RegionMask.from_rectangles((rectangle,)).difference(self.excluded))
+        return ClipRegion(self.mask.clipped(rectangle))
 
     def exclude(self, rectangle: Rectangle) -> "ClipRegion":
-        return ClipRegion(self.constraints + ((False, rectangle),), self.mask)
+        left, top, right, bottom = rectangle
+        if left >= right or top >= bottom:
+            return self
+        if self.mask is None:
+            return ClipRegion(None, self.excluded.with_rectangle(rectangle))
+        return ClipRegion(self.mask.without_rectangle(rectangle))
 
     def offset(self, dx: int, dy: int) -> "ClipRegion":
         return ClipRegion(
-            tuple(
-                (include, (left + dx, top + dy, right + dx, bottom + dy))
-                for include, (left, top, right, bottom) in self.constraints
-            ),
             self.mask.offset(dx, dy) if self.mask is not None else None,
+            self.excluded.offset(dx, dy),
         )
