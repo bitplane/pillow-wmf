@@ -193,10 +193,8 @@ class RasterPainter:
                     if mark == foreground:
                         self.pixel(x, y, self.state.pen.color if foreground else self.state.background_color)
             return
-        foreground, gaps = self.stroke_fragments((path,), miter=miter)
-        for x, y in gaps:
-            self.pixel(x, y, self.state.background_color)
-        for x, y in foreground:
+        # Geometric pens have no style gaps; their footprint is one set.
+        for x, y in self._stroke_pixels((path,), miter=miter):
             self.pixel(x, y, self.state.pen.color)
 
     @cached_property
@@ -298,12 +296,10 @@ class RasterPainter:
         pen = self.realized_pen
         # Cosmetic strokes are emitted below with pixel multiplicity intact;
         # their deduplicated coverage sets would not be used.
-        foreground, gaps = (set(), set()) if pen.cosmetic else self.stroke_fragments(paths, miter=miter)
+        outline = set() if pen.cosmetic else self._stroke_pixels(paths, miter=miter)
         # Only cosmetic styles need a separate solid outline for fill reservation.
         stroke_pixels = (
-            self._stroke_pixels(paths, miter=miter)
-            if fill_spans and reserve_outline and pen.cosmetic
-            else foreground | gaps
+            self._stroke_pixels(paths, miter=miter) if fill_spans and reserve_outline and pen.cosmetic else outline
         )
         if pen.cosmetic and not reserve_outline:
             # Cosmetic paths fill first, then emit the outline (including
@@ -320,9 +316,7 @@ class RasterPainter:
             for path in paths:
                 self.stroke_path(path)
             return
-        for x, y in gaps:
-            self.pixel(x, y, self.state.background_color)
-        for x, y in foreground:
+        for x, y in outline:
             self.pixel(x, y, self.state.pen.color)
 
     def _solid_color(self, brush: Brush | None) -> tuple[int, int, int] | None:
