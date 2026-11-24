@@ -1,6 +1,6 @@
 """Pinned font bytes, device metrics, FreeType realization and glyph masks."""
 
-from ctypes import byref
+from ctypes import byref, string_at
 from dataclasses import dataclass, field
 from fractions import Fraction
 from importlib.resources import files
@@ -10,6 +10,7 @@ from pathlib import Path
 
 import freetype as ft
 from fontTools.ttLib import TTFont
+from PIL import Image
 
 from .gdi import UnsupportedOperation
 from .mapping import fixed, rounded
@@ -28,6 +29,39 @@ class Glyph:
     channels: int = 1
     ink_span: tuple[int, int] = (0, 0)
     background_ink_span: tuple[int, int] = (0, 0)
+
+
+GLYPH_CACHE_BYTES = 4 << 20
+
+
+class GlyphCache(dict):
+    """Least-recently-used glyph masks for one realized font, bounded in bytes.
+
+    Evicted glyphs are re-rendered identically on demand. The most recent
+    glyph is always retained, even when it alone exceeds the budget.
+    """
+
+    def __init__(self, glyphs=(), *, limit=GLYPH_CACHE_BYTES):
+        super().__init__()
+        self.limit = limit
+        self.size = 0
+        for index, glyph in dict(glyphs).items():
+            self.store(index, glyph)
+
+    def lookup(self, index):
+        glyph = super().pop(index, None)
+        if glyph is not None:
+            super().__setitem__(index, glyph)
+        return glyph
+
+    def store(self, index, glyph):
+        previous = super().pop(index, None)
+        if previous is not None:
+            self.size -= len(previous.pixels)
+        super().__setitem__(index, glyph)
+        self.size += len(glyph.pixels)
+        while self.size > self.limit and len(self) > 1:
+            self.size -= len(super().pop(next(iter(self))).pixels)
 
 
 @dataclass
@@ -51,7 +85,11 @@ class RasterFont:
     synthetic_italic: bool = False
     decorations: tuple[tuple[int, int], ...] = ()
     background_cell: tuple[int, int] = (0, 0)
-    _glyphs: dict[int, Glyph] = field(default_factory=dict)
+    _glyphs: dict[int, Glyph] = field(default_factory=GlyphCache)
+
+    def __post_init__(self):
+        if not isinstance(self._glyphs, GlyphCache):
+            self._glyphs = GlyphCache(self._glyphs)
 
     def shape(self, characters, max_pixels, *, raw=False):
         return tuple(self.glyph(character, max_pixels) for character in characters)
@@ -69,7 +107,8 @@ class RasterFont:
         """Realize a physical glyph without character mapping or font linking."""
         if not 0 <= index < self.font.num_glyphs:
             index = 0
-        if index not in self._glyphs:
+        glyph = self._glyphs.lookup(index)
+        if glyph is None:
             # Honour TrueType instructions without inventing auto-hints for
             # unhinted glyphs. Keep bitmap strikes outside this outline slice.
             target = {3: ft.FT_LOAD_TARGET_MONO, 4: ft.FT_LOAD_TARGET_NORMAL}.get(self.quality, ft.FT_LOAD_TARGET_LCD)
@@ -111,26 +150,18 @@ class RasterFont:
                 {3: ft.FT_RENDER_MODE_MONO, 4: ft.FT_RENDER_MODE_NORMAL}.get(self.quality, ft.FT_RENDER_MODE_LCD)
             )
             bitmap = slot.bitmap
-            packed = bitmap.buffer
             channels = 1 if self.quality in (3, 4) else 3
             expected_mode = {3: ft.FT_PIXEL_MODE_MONO, 4: ft.FT_PIXEL_MODE_GRAY}.get(self.quality, ft.FT_PIXEL_MODE_LCD)
             if bitmap.pixel_mode != expected_mode:
                 raise UnsupportedOperation("Unexpected glyph bitmap format")
-            if self.quality == 3:
-                pixels = bytes(
-                    255 if packed[y * bitmap.pitch + x // 8] & (128 >> (x % 8)) else 0
-                    for y in range(bitmap.rows)
-                    for x in range(bitmap.width)
-                )
-            else:
-                pixels = bytes(packed[y * bitmap.pitch + x] for y in range(bitmap.rows) for x in range(bitmap.width))
+            pixels = _unpack_bitmap(bitmap, mono=self.quality == 3)
             ink_span = rounded(Fraction(ink_bounds.xMin, 64)), rounded(Fraction(ink_bounds.xMax, 64))
             # Unhinted oblique realization encloses ink in whole pixels;
             # decoration placement retains its separate nearest-pixel span.
             background_ink_span = (
                 (ink_bounds.xMin // 64, ceil(Fraction(ink_bounds.xMax, 64))) if self.escapement % 900 else ink_span
             )
-            self._glyphs[index] = Glyph(
+            glyph = Glyph(
                 (bitmap.width // channels, bitmap.rows),
                 (slot.bitmap_left, -slot.bitmap_top),
                 pixels,
@@ -140,10 +171,29 @@ class RasterFont:
                 ink_span=ink_span,
                 background_ink_span=background_ink_span,
             )
-        glyph = self._glyphs[index]
+            self._glyphs.store(index, glyph)
         if glyph.size[0] * glyph.size[1] > max_pixels:
             raise ValueError("Glyph pixel limit exceeded")
         return glyph
+
+
+def _unpack_bitmap(bitmap, *, mono):
+    """Copy a rendered FreeType bitmap to one byte per sample, row-major.
+
+    Monochrome bits become 0 or 255. Read the raw buffer once rather than
+    through freetype-py's per-byte ``buffer`` list.
+    """
+    width, rows, pitch = bitmap.width, bitmap.rows, bitmap.pitch
+    if not width or not rows:
+        return b""
+    if pitch <= 0:
+        raise UnsupportedOperation("Unexpected glyph bitmap format")
+    data = string_at(bitmap._FT_Bitmap.buffer, rows * pitch)
+    if mono:
+        return Image.frombytes("1", (width, rows), data, "raw", "1", pitch).convert("L").tobytes()
+    if pitch == width:
+        return data
+    return b"".join(data[row : row + width] for row in range(0, rows * pitch, pitch))
 
 
 class FontFace:
