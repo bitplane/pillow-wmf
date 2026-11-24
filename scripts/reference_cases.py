@@ -1,7 +1,7 @@
 """Filesystem-only reference discovery, shared by Linux preflight and tests.
 
-Each directory containing WMFs has WIDTHxHEIGHT reference subdirectories.
-Every active profile requires every local WMF.
+Each directory containing metafiles (WMF or EMF) has WIDTHxHEIGHT reference
+subdirectories. Every active profile requires every local metafile.
 """
 
 import argparse
@@ -15,19 +15,22 @@ def image_size(value):
     return tuple(map(int, value.split("x")))
 
 
+METAFILE_SUFFIXES = (".wmf", ".emf")
+
+
 def sources(root):
-    return sorted(p for p in Path(root).rglob("*") if p.is_file() and p.suffix.lower() == ".wmf")
+    return sorted(p for p in Path(root).rglob("*") if p.is_file() and p.suffix.lower() in METAFILE_SUFFIXES)
 
 
 def reference_cases(root, size=None):
-    """Yield (WMF, PNG, generation size), including absent expected PNGs."""
+    """Yield (metafile, PNG, generation size), including absent expected PNGs."""
     inputs = sources(root)
     groups = {}
     for source in inputs:
         groups.setdefault(source.parent, []).append(source)
     for directory, local_sources in sorted(groups.items()):
         if len({p.stem.casefold() for p in local_sources}) != len(local_sources):
-            raise ValueError(f"Ambiguous WMF basenames in {directory}")
+            raise ValueError(f"Ambiguous metafile basenames in {directory}")
         if size is not None:
             profiles = [(directory / f"{size[0]}x{size[1]}", size)]
         else:
@@ -48,7 +51,7 @@ def discover_pairs(root):
     expected = {png for _, png in pairs}
     orphans = sorted(p for p in Path(root).rglob("*") if p.suffix.lower() == ".png" and p not in expected)
     if orphans:
-        raise ValueError(f"PNG without a matching WMF/profile: {orphans[0]}")
+        raise ValueError(f"PNG without a matching metafile/profile: {orphans[0]}")
     return pairs
 
 

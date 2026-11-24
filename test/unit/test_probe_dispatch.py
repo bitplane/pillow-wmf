@@ -185,7 +185,12 @@ def test_workflow_choices_dispatch_through_one_step(dispatcher):
     # Pushes still only react to reference inputs; probes need a dispatch.
     assert triggers["push"] == {
         "branches": ["master"],
-        "paths": ["test/compatibility/wmf/**/*.wmf", "test/compatibility/wmf/**/*.png"],
+        "paths": [
+            "test/compatibility/wmf/**/*.wmf",
+            "test/compatibility/wmf/**/*.png",
+            "test/compatibility/emf/**/*.emf",
+            "test/compatibility/emf/**/*.png",
+        ],
     }
     update = workflow["jobs"]["update"]
     assert "inputs.probe != 'none'" in update["if"]
