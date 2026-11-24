@@ -66,6 +66,7 @@ on:
           - pies
           - chords
           - emf-frame
+          - emf-transforms
   push:
     branches: [master]
     paths:

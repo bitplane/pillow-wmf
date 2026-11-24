@@ -154,6 +154,7 @@ EXPECTED = {
     "pies": ("scripts/probe-windows-pies.py", None, False, None),
     "chords": ("scripts/probe-windows-chords.py", None, False, None),
     "emf-frame": ("scripts/probe-windows-emf-frame.py", "emf-frame", True, True),
+    "emf-transforms": ("scripts/probe-windows-emf-transforms.py", "emf-transforms", True, True),
 }
 
 

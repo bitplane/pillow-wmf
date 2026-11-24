@@ -117,6 +117,7 @@ PROBES = {
     "pies": _printed("probe-windows-pies.py"),
     "chords": _printed("probe-windows-chords.py"),
     "emf-frame": Probe("probe-windows-emf-frame.py", output="emf-frame"),
+    "emf-transforms": Probe("probe-windows-emf-transforms.py", output="emf-transforms"),
 }
 
 
