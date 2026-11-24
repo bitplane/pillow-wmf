@@ -1,12 +1,13 @@
 """Native-observed RTL state and coordinate-space contracts."""
 
+from dataclasses import replace
 from fractions import Fraction
 
 import pytest
 
 from pillow_wmf import RasterContext, UnsupportedOperation
 from pillow_wmf.ellipse import arc_cubics, ellipse_cubics
-from pillow_wmf.mapping import Mapping
+from pillow_wmf.mapping import Mapping, ReferenceDevice
 from pillow_wmf.stroke import frame_footprint
 
 
@@ -156,3 +157,46 @@ def test_clockwise_arc_matches_native_28_4_controls():
         ((1536, 1216), (1713, 1216), (1856, 1273), (1856, 1344)),
         ((1856, 1344), (1856, 1388), (1800, 1429), (1706, 1452)),
     )
+
+
+@pytest.mark.parametrize(
+    "mode,window",
+    [
+        (2, (2709, 2032)),
+        (3, (27093, 20320)),
+        (4, (1067, 800)),
+        (5, (10667, 8000)),
+        (6, (15360, 11520)),
+        (7, (2709, 2032)),
+    ],
+)
+def test_physical_modes_use_the_reference_bitmap_device(mode, window):
+    mapping = Mapping()
+    mapping.set_mode(mode)
+    assert (mapping.window_extent, mapping.viewport_extent) == (window, (1024, -768))
+
+
+def test_physical_modes_follow_the_mapping_device():
+    device = ReferenceDevice(pixels=(1920, 1200), millimetres=(508, 318), dpi=(96, 96))
+    mapping = Mapping(device=device)
+    mapping.set_mode(2)
+    assert (mapping.window_extent, mapping.viewport_extent) == ((5080, 3175), (1920, -1200))
+    saved = replace(mapping)
+    assert saved.device is device
+
+
+def test_isotropic_fit_uses_the_device_pixel_shape():
+    # Pixels twice as tall as wide: the same viewport is twice as tall physically.
+    mapping = Mapping(
+        mode=7,
+        window_extent=(100, 100),
+        viewport_extent=(100, 100),
+        device=ReferenceDevice(pixels=(1000, 500), millimetres=(250, 250), dpi=(96, 96)),
+    )
+    mapping._fix_isotropic()
+    assert mapping.viewport_extent == (100, 50)
+
+
+def test_device_capabilities_must_be_positive():
+    with pytest.raises(ValueError, match="must be positive"):
+        ReferenceDevice(pixels=(0, 768))
