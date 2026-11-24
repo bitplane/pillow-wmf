@@ -38,3 +38,16 @@ def test_freetype_error_retains_cause(face):
     with pytest.raises(UnsupportedOperation) as caught:
         face.at_size(6_000_000)
     assert isinstance(caught.value.__cause__, ft.FT_Exception)
+
+
+def test_realized_size_cache_evicts_least_recently_used(face):
+    first = face.at_size(10)
+    for size in range(11, 42):
+        face.at_size(size)
+    assert len(face._sizes) == 32
+    # Reusing the oldest size protects it; the next oldest is evicted.
+    assert face.at_size(10) is first
+    face.at_size(42)
+    assert len(face._sizes) == 32
+    assert face.at_size(10) is first
+    assert all(key[0] != 11 for key in face._sizes)
