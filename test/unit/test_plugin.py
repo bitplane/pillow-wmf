@@ -8,7 +8,17 @@ from pathlib import Path
 import pytest
 from PIL import Image, UnidentifiedImageError, WmfImagePlugin
 
-from pillow_wmf import FontCollection, FontFace, Metafile, PlaceableHeader, Recorder, UnsupportedOperation, render
+import pillow_wmf.plugin
+from pillow_wmf import (
+    FontCollection,
+    FontFace,
+    FormatError,
+    Metafile,
+    PlaceableHeader,
+    Recorder,
+    UnsupportedOperation,
+    render,
+)
 from pillow_wmf.binary import ResourceLimitError
 from pillow_wmf.plugin import WmfImageFile
 from pillow_wmf.wmf.objects import Font
@@ -163,3 +173,34 @@ def test_freetype_glyph_failures_are_unsupported_not_escaped():
     with Image.open(BytesIO(data)) as image, pytest.raises(OSError) as caught:
         image.load(size=(16, 16), fonts=FontCollection([face]))
     assert isinstance(caught.value.__cause__, UnsupportedOperation)
+
+
+def test_open_reads_headers_and_load_parses_records(monkeypatch):
+    recorder = Recorder()
+    recorder.set_pixel(2, 3, 255)
+    data = PlaceableHeader(0, 0, 32, 16, 1440).to_bytes() + recorder.to_bytes()
+    parses = []
+    original = pillow_wmf.plugin._read_metafile
+
+    def parse(data, *args):
+        parses.append(len(data))
+        return original(data, *args)
+
+    monkeypatch.setattr(pillow_wmf.plugin, "_read_metafile", parse)
+    with Image.open(BytesIO(data)) as image:
+        assert image.size == (1, 1) and image.info["wmf_bbox"] == (0, 0, 32, 16)
+        assert parses == []
+        image.load(size=(8, 8))
+        assert parses == [len(data)]
+
+
+def test_corrupt_records_are_reported_by_load():
+    data = bytearray(Recorder().to_bytes())
+    data[18:22] = (1).to_bytes(4, "little")  # A record smaller than its header.
+    with Image.open(BytesIO(bytes(data))) as image, pytest.raises(OSError, match="Invalid record size") as caught:
+        assert image.size == (128, 128)
+        image.load()
+    assert isinstance(caught.value.__cause__, FormatError)
+    for header in (bytes(data[:10]), b"\x01\x00\x09\x00\x00\x02" + bytes(12)):
+        with pytest.raises(UnidentifiedImageError):
+            Image.open(BytesIO(header), formats=["WMF"])
