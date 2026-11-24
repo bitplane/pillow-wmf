@@ -11,6 +11,7 @@ from .objects import (
     PaletteUpdate,
     RegionGeometry,
 )
+from .playback import Omission, PlaybackError
 from .plugin import register as _register
 from .raster import RasterContext
 from .recording import RecordingContext
@@ -20,7 +21,7 @@ from .text import FontCollection, FontFace
 from .trace import TraceContext
 from .wmf import FormatError, Limits, Metafile, PlaceableHeader
 from .wmf.objects import Font
-from .wmf.player import Omission, PlaybackError, play
+from .wmf.player import play
 from .wmf.recorder import Recorder
 
 _register()

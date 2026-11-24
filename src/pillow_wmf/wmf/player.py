@@ -1,25 +1,16 @@
 """Translate WMF records to backend calls without rasterizing or decoding text."""
 
 import heapq
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
+from ..playback import Omission as Omission
+from ..playback import Omissions, PlaybackError, SaveLevels
 from .binary import Limits
 from .bindings import BY_KIND
 from .constants import RecordType
 from .file import CREATION_TYPES, Metafile
 from .records import UnknownRecord
-
-
-class PlaybackError(ValueError):
-    """A stream's handle references or backend results are invalid."""
-
-
-@dataclass(frozen=True)
-class Omission:
-    record_index: int
-    function: int
-    reason: str
 
 
 def play(
@@ -39,19 +30,14 @@ def play(
     slots = [empty] * metafile.header.object_count
     free = list(range(len(slots)))
     free_slots = set(free)
-    omissions = []
-    saved = []
-    backend_saved = []
+    omissions = Omissions(strict=strict)
+    omit = omissions.omit
+    levels = SaveLevels()
 
     def release(slot):
         if slot not in free_slots:
             heapq.heappush(free, slot)
             free_slots.add(slot)
-
-    def omit(index, function, reason):
-        if strict:
-            raise UnsupportedOperation(f"Record {index}: {reason}")
-        omissions.append(Omission(index, function, reason))
 
     for index, record in enumerate(metafile.records):
         if isinstance(record, UnknownRecord):
@@ -62,20 +48,18 @@ def play(
         if record.kind == RecordType.SETRELABS:
             continue  # Required-ignore, even in strict mode.
         name, binding = BY_KIND[record.kind]
-        if name == "save_dc" and max(len(saved), len(backend_saved)) >= limits.max_saved_states:
+        if name == "save_dc" and levels.depth >= limits.max_saved_states:
             raise PlaybackError(f"Record {index}: saved-state limit exceeded")
         if name == "restore_dc":
             level = record.saved_dc
-            target = level if level > 0 else len(saved) + level + 1
-            if level == 0 or target < 1 or target > len(saved):
+            native_saved = levels.restore(level)
+            if native_saved is SaveLevels.MISSING:
                 continue  # Native WMF ignores failed RestoreDC without popping.
-            native_saved = saved[target - 1]
-            del saved[target - 1 :]
             if native_saved is None:
                 omit(index, record.function(), "Saved DC was unsupported")
                 continue
         elif name == "save_dc":
-            saved.append(None)
+            levels.save()
         if name in {"select_object", "delete_object"} and record.object_index >= len(slots):
             continue  # A failed native object lookup leaves the DC unchanged.
         if name in {"fill_region", "frame_region", "invert_region", "paint_region"} and any(
@@ -115,10 +99,7 @@ def play(
             arguments["font"] = replace(arguments["font"], charset=1)
 
         if name == "restore_dc":
-            # File save levels include omitted saves. Backend levels do not,
-            # and may also include frames left by a rejected restore.
-            native_index = backend_saved.index(native_saved)
-            arguments["saved_dc"] = native_saved if level > 0 else native_index - len(backend_saved)
+            arguments["saved_dc"] = levels.backend_level(native_saved, level)
 
         slot = None
         if record.kind in CREATION_TYPES:
@@ -154,13 +135,11 @@ def play(
             if backend.is_null_object(result):
                 release(slot)
         if name == "save_dc":
-            if not isinstance(result, int) or isinstance(result, bool) or result <= 0 or result in backend_saved:
+            if not levels.saved(result):
                 raise PlaybackError(f"Record {index}: save did not return a valid saved DC identifier")
-            saved[-1] = result
-            backend_saved.append(result)
         elif name == "restore_dc":
-            del backend_saved[native_index:]
+            levels.restored(native_saved)
         if record.kind == RecordType.DELETEOBJECT:
             slots[record.object_index] = empty
             release(record.object_index)
-    return tuple(omissions)
+    return omissions.result()
