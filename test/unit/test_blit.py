@@ -282,3 +282,31 @@ def test_stretch_mode_is_saved_and_restored():
     context.set_stretch_mode(2)
     context.dib_stretch_blt(2, 0, 1, 1, 0, 0, 3, 1, 0xCC0020, source)
     assert list(context.image.get_flattened_data()) == [(0, 0, 0), (8, 16, 32), (9, 18, 36)]
+
+
+@pytest.mark.parametrize("stretch_mode", (1, 2, 3))
+@pytest.mark.parametrize("extents", ((13, 9, 5, 7), (-13, 9, 5, 7), (4, -6, 11, 9), (9, 9, 9, 9)))
+def test_copy_fast_path_matches_generic_source_composition(stretch_mode, extents):
+    # SRCPAINT onto black is S | 0 = S through the generic ROP3 path.
+    width, height, source_width, source_height = extents
+    pixels = bytes((x * 37 + y * 11 + c * 5) & 255 for y in range(9) for x in range(11) for c in range(3))
+    source = encode_dib24(RGBBitmap(11, 9, pixels))
+    images = []
+    for rop, background in ((0xCC0020, (40, 50, 60)), (0xEE0086, (0, 0, 0))):
+        context = RasterContext(16, 12, background=background)
+        context.set_stretch_mode(stretch_mode)
+        context.exclude_clip_rect(3, 2, 6, 5)
+        context.stretch_dib(7, 1, width, height, 1, 1, source_width, source_height, rop, 0, source)
+        images.append(context.image)
+    copy, generic = images
+    painted = 0
+    for y in range(12):
+        for x in range(16):
+            # No source colour equals either background.
+            if copy.getpixel((x, y)) == (40, 50, 60):
+                assert generic.getpixel((x, y)) == (0, 0, 0), (x, y)
+            else:
+                assert copy.getpixel((x, y)) == generic.getpixel((x, y)), (x, y)
+                painted += 1
+    assert painted
+    assert copy.getpixel((4, 3)) == (40, 50, 60)
