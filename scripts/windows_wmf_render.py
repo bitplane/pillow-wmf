@@ -1,4 +1,4 @@
-"""Minimal native WMF oracle: PlayMetaFile into a top-down 32-bit DIB."""
+"""Minimal native metafile oracle: PlayMetaFile or PlayEnhMetaFile into a top-down 32-bit DIB."""
 
 from __future__ import annotations
 
@@ -136,3 +136,62 @@ def render_wmf(source: bytes, width: int, height: int) -> Image.Image:
             return Image.frombytes("RGB", (width, height), pixels, "raw", "BGRX")
         finally:
             delete_meta(metafile)
+
+
+def render_emf(source: bytes, width: int, height: int) -> Image.Image:
+    """Render EMF bytes with PlayEnhMetaFile, fitting the picture frame to the canvas.
+
+    The target rectangle is the whole canvas in the reference DC's 1:1
+    logical units, as Pillow loading fits the frame to the requested size.
+    """
+    if not source:
+        raise ValueError("Expected nonempty EMF bytes")
+    with reference_surface(width, height) as (gdi, dc, bits):
+        ptr = ctypes.c_void_p
+        set_bits = bind(gdi, "SetEnhMetaFileBits", ptr, wintypes.UINT, ptr)
+        delete_meta = bind(gdi, "DeleteEnhMetaFile", wintypes.BOOL, ptr)
+        play = bind(gdi, "PlayEnhMetaFile", wintypes.BOOL, ptr, ptr, ctypes.POINTER(wintypes.RECT))
+        flush = bind(gdi, "GdiFlush", wintypes.BOOL)
+        source_buffer = ctypes.create_string_buffer(source)
+        metafile = check(set_bits(len(source), source_buffer), "SetEnhMetaFileBits")
+        try:
+            check(play(dc, metafile, ctypes.byref(wintypes.RECT(0, 0, width, height))), "PlayEnhMetaFile")
+            check(flush(), "GdiFlush")
+            pixels = ctypes.string_at(bits, width * height * 4)
+            return Image.frombytes("RGB", (width, height), pixels, "raw", "BGRX")
+        finally:
+            delete_meta(metafile)
+
+
+def module_versions(names=("gdi32.dll", "gdi32full.dll", "win32u.dll", "gdiplus.dll")) -> dict[str, str]:
+    """File versions of the native graphics modules, to notice oracle changes."""
+    version = ctypes.WinDLL("version", use_last_error=True)
+    size_of = bind(version, "GetFileVersionInfoSizeW", wintypes.DWORD, ctypes.c_wchar_p, ctypes.c_void_p)
+    info_of = bind(
+        version, "GetFileVersionInfoW", wintypes.BOOL, ctypes.c_wchar_p, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p
+    )
+    query = bind(
+        version,
+        "VerQueryValueW",
+        wintypes.BOOL,
+        ctypes.c_void_p,
+        ctypes.c_wchar_p,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.UINT),
+    )
+    result = {}
+    for name in names:
+        size = size_of(name, None)
+        buffer = ctypes.create_string_buffer(size)
+        value, length = ctypes.c_void_p(), wintypes.UINT()
+        if (
+            not size
+            or not info_of(name, 0, size, buffer)
+            or not query(buffer, "\\", ctypes.byref(value), ctypes.byref(length))
+        ):
+            result[name] = "unavailable"
+            continue
+        # VS_FIXEDFILEINFO: signature, struct version, then file version MS and LS.
+        ms, ls = ctypes.cast(value, ctypes.POINTER(wintypes.DWORD))[2:4]
+        result[name] = f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+    return result

@@ -65,6 +65,7 @@ on:
           - roundrects
           - pies
           - chords
+          - emf-frame
   push:
     branches: [master]
     paths:

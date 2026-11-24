@@ -116,6 +116,7 @@ PROBES = {
     "roundrects": _printed("probe-windows-roundrects.py"),
     "pies": _printed("probe-windows-pies.py"),
     "chords": _printed("probe-windows-chords.py"),
+    "emf-frame": Probe("probe-windows-emf-frame.py", output="emf-frame"),
 }
 
 
