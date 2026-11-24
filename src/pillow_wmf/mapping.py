@@ -1,4 +1,4 @@
-"""Logical-to-device coordinate state for the Windows reference bitmap profile."""
+"""Logical-to-device coordinate state; the default device is the Windows reference bitmap."""
 
 from dataclasses import dataclass
 from fractions import Fraction
@@ -35,15 +35,43 @@ def scaled(value: int, numerator: int, denominator: int) -> int:
     return sign * (abs(product) // abs(denominator))
 
 
-# Extents for the reference bitmap device; independent of the canvas size.
-PHYSICAL_EXTENTS = {
-    MM_LOMETRIC: ((2709, 2032), (1024, -768)),
-    MM_HIMETRIC: ((27093, 20320), (1024, -768)),
-    MM_LOENGLISH: ((1067, 800), (1024, -768)),
-    MM_HIENGLISH: ((10667, 8000), (1024, -768)),
-    MM_TWIPS: ((15360, 11520), (1024, -768)),
-    MM_ISOTROPIC: ((2709, 2032), (1024, -768)),
+# Logical units per inch of each physical mapping mode. A new isotropic
+# mapping starts from the low-metric extents.
+UNITS_PER_INCH = {
+    MM_LOMETRIC: 254,
+    MM_HIMETRIC: 2540,
+    MM_LOENGLISH: 100,
+    MM_HIENGLISH: 1000,
+    MM_TWIPS: 1440,
+    MM_ISOTROPIC: 254,
 }
+
+
+@dataclass(frozen=True)
+class ReferenceDevice:
+    """Device capabilities behind the physical mapping modes.
+
+    These describe the device a DC belongs to, not the canvas being drawn.
+    The default is the Windows reference bitmap device, the only profile
+    with native references; others follow the same arithmetic unverified.
+    """
+
+    pixels: tuple[int, int] = (1024, 768)
+    millimetres: tuple[int, int] = (271, 203)
+    dpi: tuple[int, int] = (96, 96)
+
+    def __post_init__(self):
+        if any(value <= 0 for value in (*self.pixels, *self.millimetres, *self.dpi)):
+            raise ValueError("Device capabilities must be positive")
+
+    def extents(self, mode: int) -> tuple[tuple[int, int], tuple[int, int]]:
+        """Window and viewport extents selected by a physical mapping mode."""
+        units = UNITS_PER_INCH[mode]
+        window = tuple(rounded(pixels * units / dpi) for pixels, dpi in zip(self.pixels, self.dpi, strict=True))
+        return window, (self.pixels[0], -self.pixels[1])
+
+
+REFERENCE_DEVICE = ReferenceDevice()
 
 
 @dataclass
@@ -55,6 +83,7 @@ class Mapping:
     viewport_extent: tuple[int, int] = (128, 128)
     layout: int = 0
     surface_width: int = 128
+    device: ReferenceDevice = REFERENCE_DEVICE
 
     @property
     def rtl(self):
@@ -178,8 +207,8 @@ class Mapping:
         if mode == MM_TEXT:
             self.window_extent = (1, 1)
             self.viewport_extent = (1, 1)
-        elif mode in PHYSICAL_EXTENTS:
-            self.window_extent, self.viewport_extent = PHYSICAL_EXTENTS[mode]
+        elif mode in UNITS_PER_INCH:
+            self.window_extent, self.viewport_extent = self.device.extents(mode)
 
     def set_extent(self, *, window: bool, x: int, y: int) -> None:
         if self.mode not in (MM_ISOTROPIC, MM_ANISOTROPIC) or not x or not y:
@@ -208,8 +237,9 @@ class Mapping:
             return
         wx, wy = self.window_extent
         vx, vy = self.viewport_extent
-        xdim = abs(vx * 271 / (1024 * wx))
-        ydim = abs(vy * 203 / (768 * wy))
+        (width_mm, height_mm), (width, height) = self.device.millimetres, self.device.pixels
+        xdim = abs(vx * width_mm / (width * wx))
+        ydim = abs(vy * height_mm / (height * wy))
         if xdim > ydim:
             vx = rounded(vx * ydim / xdim)
             vx = vx or (1 if self.viewport_extent[0] > 0 else -1)
