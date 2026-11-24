@@ -57,6 +57,13 @@ accepts this option for its own history, independently of its two backends.
 `render()` and the Pillow loader disable call history because they only return
 pixels. `TraceContext` remains the backend for collecting a command trace.
 
+## Threads
+
+`FontFace` and `FontCollection` objects can be shared by renders running in
+different threads; glyph rasterization is serialized per realized font size.
+A `RasterContext`, `Recorder` or `SystemFontCollection` serves one rendering
+job at a time.
+
 ## License
 
 pillow-wmf is WTFPL with one additional clause:
