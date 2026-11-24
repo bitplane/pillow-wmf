@@ -9,6 +9,7 @@ import pytest
 from PIL import Image, UnidentifiedImageError, WmfImagePlugin
 
 from pillow_wmf import FontCollection, FontFace, Metafile, PlaceableHeader, Recorder, UnsupportedOperation, render
+from pillow_wmf.binary import ResourceLimitError
 from pillow_wmf.plugin import WmfImageFile
 from pillow_wmf.wmf.objects import Font
 
@@ -134,3 +135,31 @@ def test_output_size_obeys_pillow_bomb_limit(monkeypatch):
         monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
         with pytest.raises(Image.DecompressionBombError):
             image.load(size=(100, 100))
+
+
+def _text_wmf(font):
+    recorder = Recorder()
+    recorder.select_object(recorder.create_font(font))
+    recorder.text_out(0, 0, b"AB")
+    return recorder.to_bytes()
+
+
+def test_glyph_limits_are_resource_errors_reported_as_oserror():
+    face = FontFace.from_path(Path(__file__).resolve().parents[1] / "fonts/layout.ttf")
+    data = _text_wmf(Font(height=-32000, face_name=b"Pillow WMF Test"))
+    with pytest.raises(ResourceLimitError, match="Glyph pixel limit"):
+        render(data, (16, 16), fonts=FontCollection([face]), max_bitmap_pixels=100_000)
+    with Image.open(BytesIO(data)) as image, pytest.raises(OSError) as caught:
+        image.load(size=(16, 16), fonts=FontCollection([face]))
+    assert isinstance(caught.value.__cause__, ResourceLimitError)
+
+
+def test_freetype_glyph_failures_are_unsupported_not_escaped():
+    # FreeType accepts this extreme width as a size but rejects its outlines.
+    face = FontFace.from_path(Path(__file__).resolve().parents[1] / "fonts/layout.ttf")
+    data = _text_wmf(Font(height=-16, width=30000, face_name=b"Pillow WMF Test"))
+    with pytest.raises(UnsupportedOperation, match="Cannot realize glyph"):
+        render(data, (16, 16), fonts=FontCollection([face]))
+    with Image.open(BytesIO(data)) as image, pytest.raises(OSError) as caught:
+        image.load(size=(16, 16), fonts=FontCollection([face]))
+    assert isinstance(caught.value.__cause__, UnsupportedOperation)

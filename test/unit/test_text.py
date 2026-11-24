@@ -8,6 +8,7 @@ import pytest
 from PIL import ImageFont
 
 from pillow_wmf import FontCollection, FontFace, RasterContext, UnsupportedOperation
+from pillow_wmf.binary import ResourceLimitError
 from pillow_wmf.text import Glyph, layout_text
 from pillow_wmf.wmf.objects import Font
 
@@ -107,7 +108,7 @@ def test_glyph_budget_applies_before_rendering_and_to_cached_masks(cached):
     dc = RasterContext(80, 60, fonts=FontCollection([face]), max_bitmap_pixels=1)
     dc.select_object(dc.create_font(REQUEST))
     before = list(dc.calls)
-    with pytest.raises(ValueError, match="Glyph pixel limit"):
+    with pytest.raises(ResourceLimitError, match="Glyph pixel limit"):
         dc.text_out(0, 20, b"A")
     assert dc.calls == before
 

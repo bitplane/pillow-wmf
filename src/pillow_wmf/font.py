@@ -12,6 +12,7 @@ import freetype as ft
 from fontTools.ttLib import TTFont
 from PIL import Image
 
+from .binary import ResourceLimitError
 from .gdi import UnsupportedOperation
 from .mapping import fixed, rounded
 from .numeric import float32
@@ -105,6 +106,14 @@ class RasterFont:
 
     def glyph_index(self, index, max_pixels):
         """Realize a physical glyph without character mapping or font linking."""
+        try:
+            return self._glyph_index(index, max_pixels)
+        except ft.FT_Exception as error:
+            # FreeType rejects some degenerate outlines, e.g. at extreme
+            # widths; the glyph is unrenderable, not an internal failure.
+            raise UnsupportedOperation(f"Cannot realize glyph {index}: {error}") from error
+
+    def _glyph_index(self, index, max_pixels):
         if not 0 <= index < self.font.num_glyphs:
             index = 0
         glyph = self._glyphs.lookup(index)
@@ -145,7 +154,7 @@ class RasterFont:
             bounds = slot.get_glyph().get_cbox(ft.FT_GLYPH_BBOX_PIXELS)
             padding = 0 if self.quality in (3, 4) else 2  # LCD filtering can extend the mask horizontally.
             if (max(1, bounds.xMax - bounds.xMin) + padding) * max(1, bounds.yMax - bounds.yMin) > max_pixels:
-                raise ValueError("Glyph pixel limit exceeded")
+                raise ResourceLimitError("Glyph pixel limit exceeded")
             slot.render(
                 {3: ft.FT_RENDER_MODE_MONO, 4: ft.FT_RENDER_MODE_NORMAL}.get(self.quality, ft.FT_RENDER_MODE_LCD)
             )
@@ -173,7 +182,7 @@ class RasterFont:
             )
             self._glyphs.store(index, glyph)
         if glyph.size[0] * glyph.size[1] > max_pixels:
-            raise ValueError("Glyph pixel limit exceeded")
+            raise ResourceLimitError("Glyph pixel limit exceeded")
         return glyph
 
 
