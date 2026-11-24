@@ -34,7 +34,10 @@ Actions write permission and allow its push, or use a dedicated reference-image
 branch and merge the generated commit manually.
 
 The workflow generates only 128×128 references. Linux preflight skips Windows
-when no PNGs are missing and no native probe was requested. Larger-size corpus
+when no PNGs are missing and no native probe was requested. Each named probe's
+script, arguments and uploaded output directory are defined in
+[`scripts/run-probe.py`](../../../scripts/run-probe.py); a new probe needs an
+entry there and the same name in the workflow's `probe` choices. Larger-size corpus
 testing belongs in the external test-data releases; the comparison tools still
 read dimensions from each PNG.
 Run exact comparisons against one or more local corpus roots with:
