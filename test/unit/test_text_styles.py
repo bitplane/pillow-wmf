@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from pillow_wmf import FontCollection, FontFace, RasterContext, UnsupportedOperation
+from pillow_wmf.binary import ResourceLimitError
 from pillow_wmf.wmf.objects import Font
 
 REQUEST = Font(height=-24, weight=400, quality=3, face_name=b"Pillow WMF Test")
@@ -43,7 +44,7 @@ def test_style_and_rotation_caches_do_not_mutate_regular_glyphs(face):
         other = face.realize(replace(REQUEST, **change), (1, 1))
         assert other is not regular
         assert other.glyph("A", 10000) != before
-        with pytest.raises(ValueError, match="pixel limit"):
+        with pytest.raises(ResourceLimitError, match="pixel limit"):
             other.glyph("A", 1)
     assert regular.glyph("A", 10000) == before
 

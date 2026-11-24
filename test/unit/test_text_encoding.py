@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from pillow_wmf import FontCollection, FontFace, RasterContext, SystemFontCollection, UnsupportedOperation
+from pillow_wmf.binary import ResourceLimitError
 from pillow_wmf.text import FontRun, decode_single_byte, layout_text
 from pillow_wmf.wmf.objects import Font
 
@@ -185,7 +186,7 @@ def test_fallback_fills_only_missing_glyphs_and_preserves_base_metrics(face):
     assert (run.ascent, run.descent, run.break_character) == (22, 7, 32)
     with pytest.raises(UnsupportedOperation, match="Missing glyph"):
         FontCollection([base, face]).realize(request, base, (1, 1)).glyph("\xe9", 10000)
-    with pytest.raises(ValueError, match="pixel limit"):
+    with pytest.raises(ResourceLimitError, match="pixel limit"):
         run.glyph("\xe9", 1)
 
 
