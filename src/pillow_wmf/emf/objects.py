@@ -57,3 +57,16 @@ def read_palette_entries(reader: Reader, count: int) -> tuple[tuple[int, int, in
 
 def pack_palette_entries(entries) -> bytes:
     return b"".join(pack("4B", *entry) for entry in entries)
+
+
+RDH_RECTANGLES = 1
+REGION_HEADER_SIZE = 32
+
+
+def region_rectangles(data: bytes) -> tuple[tuple[int, int, int, int], ...]:
+    """Rectangles of a RegionData object, MS-EMF 2.2.24, in device units."""
+    reader = Reader(data)
+    size, kind, count, _, *_ = reader.unpack("4I4i")
+    if size != REGION_HEADER_SIZE or kind != RDH_RECTANGLES or count > reader.remaining // 16:
+        raise FormatError("Invalid region data")
+    return tuple(reader.unpack("4i") for _ in range(count))
