@@ -362,7 +362,10 @@ class FontFace:
             underline,
             strikeout,
         )
-        if key not in self._sizes:
+        if key in self._sizes:
+            # Least recently used: a hit moves the size to the end of eviction.
+            self._sizes[key] = self._sizes.pop(key)
+        else:
             # Bound the cache independently of the number of WMF font objects.
             if len(self._sizes) >= 32:
                 self._sizes.pop(next(iter(self._sizes)))
