@@ -1,9 +1,7 @@
-"""Pixel painting against an image and explicitly supplied drawing state."""
+"""Pixel painting against a surface and explicitly supplied drawing state."""
 
 from dataclasses import dataclass
 from functools import cached_property
-
-from PIL import Image
 
 from .bitmap import DIBLayout
 from .constants import (
@@ -24,18 +22,19 @@ from .geometry import DevicePath, Polygon, coverage_spans
 from .paint import pattern_rop2, rop2, rop3
 from .raster_state import Brush, DrawingState
 from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outline, realize_pen, widen_segment
+from .surface import Surface
 
 
 @dataclass
 class RasterPainter:
     """Paint one operation against stable pen/mapping state; never retain across calls."""
 
-    image: Image.Image
+    surface: Surface
     state: DrawingState
 
     def __post_init__(self):
-        self._pixels = self.image.load()
-        self._width, self._height = self.image.size
+        self._pixels = self.surface.pixels()
+        self._width, self._height = self.surface.width, self.surface.height
 
     def source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
         coverage = getattr(bitmap, "coverage", None)
@@ -99,15 +98,18 @@ class RasterPainter:
         # brush or transparent hatch gaps. A solid brush is one colour.
         constant = (0, 0, 0) if operation in (1, 6, 11, 16) else self._solid_color(self.state.brush)
         for py in range(max(0, top), min(self._height, bottom)):
+            if constant:
+                self.span(py, left, right, constant, operation=operation)
+                continue
             for px in range(max(0, left), min(self._width, right)):
-                paint = constant or self.brush_color_at(px, py, self.state.brush, opaque=True)
+                paint = self.brush_color_at(px, py, self.state.brush, opaque=True)
                 if paint is not None:
                     self.pixel(px, py, paint, operation=operation)
 
     def flood_fill(self, seed, color, mode):
         if self.state.brush.style == BS_NULL:
             return
-        pixels = self.image.load()
+        pixels = self._pixels
 
         def eligible(x, y):
             return self.state.clip.contains(x, y) and ((pixels[x, y] == color) == (mode == 1))
@@ -117,8 +119,11 @@ class RasterPainter:
         spans = flood_spans(self._width, self._height, seed, eligible)
         solid = self._solid_color(self.state.brush)
         for y, left, right in spans:
+            if solid:
+                self.span(y, left, right, solid)
+                continue
             for x in range(left, right):
-                paint = solid or self.brush_color_at(x, y, self.state.brush)
+                paint = self.brush_color_at(x, y, self.state.brush)
                 if paint is not None:
                     self.pixel(x, y, paint)
 
@@ -132,9 +137,8 @@ class RasterPainter:
         def fill(bounds):
             if bounds is not None:
                 left, top, right, bottom = bounds
-                for y in range(max(0, top), min(self.image.height, bottom)):
-                    for x in range(max(0, left), min(self.image.width, right)):
-                        self.pixel(x, y, self.state.background_color, operation=13)
+                for y in range(max(0, top), min(self._height, bottom)):
+                    self.span(y, left, right, self.state.background_color, operation=R2_COPYPEN)
 
         if options & ETO_OPAQUE:
             fill(rectangle)
@@ -142,8 +146,8 @@ class RasterPainter:
             self.text_contour(layout.background, self.state.background_color, rectangle, options)
         for left, top, glyph in layout.glyphs:
             width, height = glyph.size
-            for y in range(max(0, top), min(self.image.height, top + height)):
-                for x in range(max(0, left), min(self.image.width, left + width)):
+            for y in range(max(0, top), min(self._height, top + height)):
+                for x in range(max(0, left), min(self._width, left + width)):
                     if options & ETO_CLIPPED and not (
                         rectangle[0] <= x < rectangle[2] and rectangle[1] <= y < rectangle[3]
                     ):
@@ -157,13 +161,13 @@ class RasterPainter:
                             (glyph.pixels[index],) * 3 if glyph.channels == 1 else glyph.pixels[index : index + 3]
                         )
                         foreground = self.state.palette.colorref(self.state.text_color)
-                        background = self.image.getpixel((x, y))
+                        background = self._pixels[x, y]
                         color = tuple(
                             (f * a + b * (255 - a) + 127) // 255
                             for f, b, a in zip(foreground, background, coverage, strict=True)
                         )
                         if self.state.clip.contains(x, y):
-                            self.image.putpixel((x, y), color)
+                            self._pixels[x, y] = color
 
     def decorations(self, layout, rectangle, options):
         for contour in layout.decorations:
@@ -178,6 +182,32 @@ class RasterPainter:
                 return
             destination = self._pixels[x, y]
             self._pixels[x, y] = rop2(operation, color, destination)
+
+    def span(self, y: int, start: int, end: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
+        """Paint the row run ``[start, end)`` in one colour, as ``pixel`` would each pixel."""
+        if not 0 <= y < self._height:
+            return
+        start, end = max(0, start), min(self._width, end)
+        operation = self.state.rop2 if operation is None else operation
+        if operation != R2_COPYPEN:
+            for x in range(start, end):
+                self.pixel(x, y, color, operation=operation)
+            return
+        color = self.state.palette.colorref(color)
+        for left, right in self.state.clip.spans(y, start, end):
+            self.surface.fill_span(y, left, right, color)
+
+    def fill_box(self, left: int, top: int, right: int, bottom: int, brush: Brush | None) -> None:
+        """Brush a half-open device rectangle with the current ROP2."""
+        solid = self._solid_color(brush)
+        for y in range(max(0, top), min(self._height, bottom)):
+            if solid:
+                self.span(y, left, right, solid)
+                continue
+            for x in range(max(0, left), min(self._width, right)):
+                color = self.brush_color_at(x, y, brush)
+                if color is not None:
+                    self.pixel(x, y, color)
 
     def stroke_path(self, path: DevicePath, *, miter=False) -> None:
         if self.realized_pen.cosmetic:
@@ -215,7 +245,7 @@ class RasterPainter:
                 major = 1 if abs(end[1] - start[1]) > abs(end[0] - start[0]) else 0
                 if not span:
                     continue
-                for pixel in cosmetic_line(start, end, self.image.width, self.image.height):
+                for pixel in cosmetic_line(start, end, self._width, self._height):
                     phase = position + span.step * (pixel[major] - span.start)
                     if self.state.pen.style in (0, 6) or dash_is_foreground(self.state.pen.style, phase):
                         yield pixel, True
@@ -245,7 +275,7 @@ class RasterPainter:
             for index, segment in enumerate(path.segments):
                 start, end = segment.start, segment.end
                 if pen.cosmetic:
-                    pixels.update(cosmetic_line(start, end, self.image.width, self.image.height))
+                    pixels.update(cosmetic_line(start, end, self._width, self._height))
                 else:
                     outline = widen_segment(
                         segment,
@@ -270,8 +300,8 @@ class RasterPainter:
             return
         left = max(0, min(p[0] for contour in contours for p in contour) // 16)
         top = max(0, min(p[1] for contour in contours for p in contour) // 16)
-        right = min(self.image.width, max(p[0] for contour in contours for p in contour) // 16 + 1)
-        bottom = min(self.image.height, max(p[1] for contour in contours for p in contour) // 16 + 1)
+        right = min(self._width, max(p[0] for contour in contours for p in contour) // 16 + 1)
+        bottom = min(self._height, max(p[1] for contour in contours for p in contour) // 16 + 1)
         yield from coverage_spans(contours, left, top, right, bottom, fill_mode=fill_mode)
 
     def contour_pixels(self, contours: tuple[Polygon, ...], *, fill_mode=ALTERNATE):
@@ -307,9 +337,18 @@ class RasterPainter:
             stroke_pixels = set()
         solid = self._solid_color(brush)
         for y, start, end in fill_spans:
+            if solid:
+                # A constant colour paints the runs between reserved stroke pixels.
+                run = start
+                for x in range(start, end) if stroke_pixels else ():
+                    if (x, y) in stroke_pixels:
+                        self.span(y, run, x, solid)
+                        run = x + 1
+                self.span(y, run, end, solid)
+                continue
             for x in range(start, end):
                 if (x, y) not in stroke_pixels:
-                    color = solid or self.brush_color_at(x, y, brush)
+                    color = self.brush_color_at(x, y, brush)
                     if color is not None:
                         self.pixel(x, y, color)
         if pen.cosmetic:

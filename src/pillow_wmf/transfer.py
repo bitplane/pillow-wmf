@@ -3,8 +3,6 @@
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 
-from PIL import Image
-
 from .bitmap import RGBBitmap, read_dib
 from .bitmap16 import read_bitmap16
 from .blit import BlitAxis, StretchAxis
@@ -22,6 +20,7 @@ from .halftone_fixup import fixup_bitmap
 from .mapping import Mapping
 from .paint import pattern_rop2
 from .palette import LogicalPalette, PaletteIndex
+from .surface import Surface
 
 
 class TransferAction(Enum):
@@ -52,11 +51,11 @@ def accepts_dib(layout):
 class TransferPreparation:
     """Inputs from the current DC, valid during one preparation operation.
 
-    The image is read only here; self-blits snapshot it before execution.
+    The surface is read only here; self-blits snapshot it before execution.
     Mapping, palette and clipping retain their current native semantics.
     """
 
-    image: Image.Image
+    surface: Surface
     mapping: Mapping
     palette: LogicalPalette
     clip: ClipRegion
@@ -112,7 +111,7 @@ class TransferPreparation:
             return TransferAction.PATTERN
         # Without embedded bits Windows uses the destination DC as source.
         # Snapshot before painting so overlapping transfers read original data.
-        bitmap = RGBBitmap(self.image.width, self.image.height, self.image.tobytes())
+        bitmap = self.surface.snapshot()
         if name == "bit_blt":
             # Equal transforms order both half-open rectangles, then use the
             # destination size and source's low corner. Fractional rounding
@@ -201,8 +200,8 @@ class TransferPreparation:
         """Clip compressed runs at the transfer boundary, before RGB realization."""
         left = max(0, horizontal.destination)
         top = max(0, vertical.destination)
-        right = min(self.image.width, horizontal.destination + horizontal.length)
-        bottom = min(self.image.height, vertical.destination + vertical.length)
+        right = min(self.surface.width, horizontal.destination + horizontal.length)
+        bottom = min(self.surface.height, vertical.destination + vertical.length)
         clip = RegionMask()
         if left < right and top < bottom:
             clip = self.clip.within((left, top, right, bottom)).offset(
