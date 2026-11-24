@@ -353,3 +353,46 @@ def test_fontconfig_paths_are_os_file_names_not_utf8_text(monkeypatch, tmp_path)
     monkeypatch.setenv("PATH", str(tmp_path))
     paths = font_paths()
     assert [os.fsencode(path) for path in paths] == [b"/fonts/b.ttf", b"/fonts/caf\xe9.ttf"]
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_compact_coverage_is_the_same_codepoint_set(seed):
+    import random
+
+    from pillow_wmf.system_fonts import Coverage
+
+    generator = random.Random(seed)
+    codepoints = {generator.randrange(0x110000) for _ in range(generator.randrange(200))}
+    codepoints |= set(range(generator.randrange(0x3000), generator.randrange(0x3000, 0x3400)))
+    coverage = Coverage(codepoints)
+    assert set(coverage) == codepoints and len(coverage) == len(codepoints)
+    probes = codepoints | {c + 1 for c in codepoints} | {c - 1 for c in codepoints} | {0, 0x10FFFF}
+    assert {c for c in probes if c in coverage} == codepoints & probes
+    sample = set(generator.sample(sorted(probes), min(5, len(probes))))
+    assert coverage.intersects(sample) == bool(sample & codepoints)
+    assert coverage == Coverage(sorted(codepoints)) and hash(coverage) == hash(Coverage(codepoints))
+    assert coverage != Coverage(codepoints | {0x110000})
+
+
+@pytest.mark.parametrize("fixed", (0, 1))
+def test_fixed_pitch_is_read_from_the_post_header(tmp_path, fixed):
+    from pillow_wmf.system_fonts import _fixed_pitch
+
+    path = tmp_path / "pitch.ttf"
+    with TTFont(SOURCE) as font:
+        font["post"].isFixedPitch = fixed
+        font.save(path)
+    with TTFont(path, lazy=True) as font:
+        assert _fixed_pitch(font) == fixed == font["post"].isFixedPitch
+    entry = SystemFontCollection(paths=[path]).inventory[0]
+    assert entry.category == ("mono" if fixed else "sans")
+
+
+def test_rankings_are_reused_for_equivalent_requests(installed):
+    paths = [installed("Liberation Sans"), installed("Liberation Sans", italic=True), installed("Other", weight=700)]
+    fonts = SystemFontCollection(paths=paths)
+    plain = fonts._ranked(request())
+    assert fonts._ranked(request(weight=400)) is plain
+    italic = fonts._ranked(request(italic=1))
+    assert italic is not plain and italic[0].italic and not plain[0].italic
+    assert fonts._ranked(request("Other", weight=700))[0].family == "Other"
