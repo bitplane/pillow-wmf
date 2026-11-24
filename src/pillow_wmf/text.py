@@ -174,7 +174,7 @@ class FontCollection:
             return self.mac_codepage, 29
         if encoding := TEXT_CHARSETS.get(charset):
             return encoding
-        raise UnsupportedOperation(f"Unsupported text charset: {request.charset}")
+        raise UnsupportedOperation(f"Unsupported text charset: {charset}")
 
     def decode(self, request, face, data):
         return self.decode_run(request, face, data).text
