@@ -272,6 +272,23 @@ class ClipRegion:
             return self.mask.contains(x, y)
         return not self.excluded.contains(x, y)
 
+    def spans(self, y: int, start: int, end: int):
+        """Visible half-open runs of ``[start, end)`` on one scan line."""
+        if self.mask is not None:
+            for left, right in self.mask.spans(y):
+                left, right = max(left, start), min(right, end)
+                if left < right:
+                    yield left, right
+            return
+        for left, right in self.excluded.spans(y):
+            if start < left:
+                yield start, min(left, end)
+            start = max(start, right)
+            if start >= end:
+                return
+        if start < end:
+            yield start, end
+
     def intersect(self, rectangle: Rectangle) -> "ClipRegion":
         left, top, right, bottom = rectangle
         if left >= right or top >= bottom:

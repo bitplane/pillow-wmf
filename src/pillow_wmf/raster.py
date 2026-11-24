@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from fractions import Fraction
 
-from PIL import Image
-
 from .binary import FormatError, ResourceLimitError
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, read_dib
 from .bitmap16 import read_bitmap16
@@ -58,6 +56,7 @@ from .raster_state import Pen as Pen
 from .raster_state import SavedDC as SavedDC
 from .raster_state import TextState as TextState
 from .stroke import frame_footprint
+from .surface import Surface
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
 from .transfer import SourceTransfer as SourceTransfer
@@ -149,17 +148,20 @@ class RasterContext(ExecutionContext[DrawingState]):
     ):
         super().__init__(max_objects=max_objects, max_saved_states=max_saved_states, trace_calls=trace_calls)
         self._geometry_budget = GeometryBudget(max_geometry_points)
-        if width <= 0 or height <= 0:
-            raise ValueError("Image dimensions must be positive")
+        self.surface = Surface(width, height, background)
         if max_bitmap_pixels < 0:
             raise ValueError("Bitmap pixel limit must be nonnegative")
         self.max_bitmap_pixels = max_bitmap_pixels
         self.fonts = fonts if fonts is not None else FontCollection()
-        self.image = Image.new("RGB", (width, height), background)
         self._objects: dict[Handle, Pen | Brush | FontRequest | RegionMask | LogicalPalette | None] = {}
         self._state = DrawingState(
             Mapping(window_extent=(width, height), viewport_extent=(width, height), surface_width=width)
         )
+
+    @property
+    def image(self):
+        """The live canvas owned by ``surface``."""
+        return self.surface.image
 
     @property
     def mapping(self):
@@ -177,7 +179,7 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _clip_mask(self, region):
         if region is not None and self.mapping.rtl:
-            return region.transformed(lambda x, y: (self.image.width - x, y))
+            return region.transformed(lambda x, y: (self.surface.width - x, y))
         return region
 
     def _mapped_path(self, points) -> Polygon:
@@ -635,11 +637,11 @@ class RasterContext(ExecutionContext[DrawingState]):
                 region = region.transformed(self._point)
             brush = self._objects[a["brush"]] if "brush" in a else self._state.brush
             for left, top, right, bottom in region.rectangles():
-                for y in range(max(0, top), min(self.image.height, bottom)):
-                    for x in range(max(0, left), min(self.image.width, right)):
-                        color = (0, 0, 0) if name == "invert_region" else painter.brush_color_at(x, y, brush)
-                        if color is not None:
-                            painter.pixel(x, y, color, operation=R2_NOT if name == "invert_region" else None)
+                if name == "invert_region":
+                    for y in range(max(0, top), min(self.surface.height, bottom)):
+                        painter.span(y, left, right, (0, 0, 0), operation=R2_NOT)
+                else:
+                    painter.fill_box(left, top, right, bottom, brush)
 
     _apply_paint_region = _apply_fill_region
     _apply_invert_region = _apply_fill_region
@@ -744,7 +746,7 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _transfer_preparation(self):
         return TransferPreparation(
-            image=self.image,
+            surface=self.surface,
             mapping=self.mapping,
             palette=self._state.palette,
             clip=self._state.clip,
@@ -764,7 +766,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         return self._transfer_preparation().prepare_dib(name, args)
 
     def _painter(self):
-        return RasterPainter(self.image, self._state)
+        return RasterPainter(self.surface, self._state)
 
     def _source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
         self._painter().source_blt(bitmap, horizontal, vertical, operation, pad_bounds=pad_bounds)
