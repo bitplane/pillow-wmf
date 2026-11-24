@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from itertools import groupby
+from threading import Lock
 
 from .dbcs import DecodedText
 from .environment_codepages import MAC_CODECS, OEM_CODECS, OEM_COVERAGE_BITS
@@ -60,6 +61,8 @@ class FontCollection:
         self.wingdings_fallback = wingdings_fallback
         self.symbol_fallback = symbol_fallback
         self.default_font = default_font.to_gdi("create_font") if hasattr(default_font, "to_gdi") else default_font
+        # Decoding compares faces by identity: create each bundled face once.
+        self._lock = Lock()
         self._wingdings_face = None
         self._symbol_face = None
         self.aliases = {name.casefold(): target.casefold() for name, target in (aliases or {}).items()}
@@ -128,8 +131,9 @@ class FontCollection:
             and family == "wingdings"
             and (key[1:] == (400, False) or self.synthesize_styles and key[1] in (400, 700))
         ):
-            if self._wingdings_face is None:
-                self._wingdings_face = FontFace.bundled_wingdings()
+            with self._lock:
+                if self._wingdings_face is None:
+                    self._wingdings_face = FontFace.bundled_wingdings()
             face = self._wingdings_face
         if (
             face is None
@@ -137,12 +141,20 @@ class FontCollection:
             and family == "symbol"
             and (key[1:] == (400, False) or self.synthesize_styles and key[1] in (400, 700))
         ):
-            if self._symbol_face is None:
-                self._symbol_face = FontFace.bundled_symbol()
+            with self._lock:
+                if self._symbol_face is None:
+                    self._symbol_face = FontFace.bundled_symbol()
             face = self._symbol_face
         if face is None:
             raise UnsupportedOperation(f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}")
         return face
+
+    def __getstate__(self):
+        return {key: value for key, value in vars(self).items() if key != "_lock"}
+
+    def __setstate__(self, state):
+        vars(self).update(state)
+        self._lock = Lock()
 
     def _select_face(self, key):
         face = self._faces.get(key)
