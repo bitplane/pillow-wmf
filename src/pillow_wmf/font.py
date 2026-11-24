@@ -7,6 +7,7 @@ from importlib.resources import files
 from io import BytesIO
 from math import ceil
 from pathlib import Path
+from threading import Lock, RLock
 
 import freetype as ft
 from fontTools.ttLib import TTFont
@@ -18,6 +19,17 @@ from .mapping import fixed, rounded
 from .numeric import float32
 from .symbol import WINDOWS_SYMBOL_BYTES
 from .text_math import text_rotation
+
+# freetype-py shares one FT_Library, whose face list is not thread-safe:
+# creating and destroying faces is serialized. Faces are destroyed by the
+# garbage collector in whichever thread releases them, hence re-entrancy.
+_FREETYPE = RLock()
+
+
+class _Face(ft.Face):
+    def __del__(self):
+        with _FREETYPE:
+            super().__del__()
 
 
 @dataclass(frozen=True)
@@ -87,6 +99,9 @@ class RasterFont:
     decorations: tuple[tuple[int, int], ...] = ()
     background_cell: tuple[int, int] = (0, 0)
     _glyphs: dict[int, Glyph] = field(default_factory=GlyphCache)
+    # One FreeType face has one glyph slot: glyph realization is serialized.
+    # Copies made with dataclasses.replace share the face, cache and lock.
+    _lock: Lock = field(default_factory=Lock, repr=False, compare=False)
 
     def __post_init__(self):
         if not isinstance(self._glyphs, GlyphCache):
@@ -107,7 +122,8 @@ class RasterFont:
     def glyph_index(self, index, max_pixels):
         """Realize a physical glyph without character mapping or font linking."""
         try:
-            return self._glyph_index(index, max_pixels)
+            with self._lock:
+                return self._glyph_index(index, max_pixels)
         except ft.FT_Exception as error:
             # FreeType rejects some degenerate outlines, e.g. at extreme
             # widths; the glyph is unrenderable, not an internal failure.
@@ -257,6 +273,16 @@ class FontFace:
                         self.device_metrics = dict(sorted(table.groups[ratio["groupIndex"]].items()))
                         break
         self._sizes = {}
+        self._lock = Lock()
+
+    def __getstate__(self):
+        # Realized sizes hold FreeType handles; they are rebuilt on demand.
+        return {key: value for key, value in vars(self).items() if key not in ("_sizes", "_lock")}
+
+    def __setstate__(self, state):
+        vars(self).update(state)
+        self._sizes = {}
+        self._lock = Lock()
 
     @classmethod
     def from_path(cls, path, *, index=0):
@@ -362,62 +388,66 @@ class FontFace:
             underline,
             strikeout,
         )
-        if key not in self._sizes:
-            # Bound the cache independently of the number of WMF font objects.
-            if len(self._sizes) >= 32:
-                self._sizes.pop(next(iter(self._sizes)))
-            try:
-                font = ft.Face.from_bytes(self.data, index=self.index)
-                # Glyph IDs come from the selected cmap; FreeType only rasterizes.
-                font.set_char_size(max(1, int(mask_width * 64)), max(1, rounded(size) * 64), 72, 72)
-            except ft.FT_Exception as error:
-                raise UnsupportedOperation(f"Cannot realize font {self.family!r} at {size} pixels: {error}") from error
+        with self._lock:
+            if key not in self._sizes:
+                # Bound the cache independently of the number of WMF font objects.
+                if len(self._sizes) >= 32:
+                    self._sizes.pop(next(iter(self._sizes)))
+                try:
+                    with _FREETYPE:
+                        font = _Face.from_bytes(self.data, index=self.index)
+                    # Glyph IDs come from the selected cmap; FreeType only rasterizes.
+                    font.set_char_size(max(1, int(mask_width * 64)), max(1, rounded(size) * 64), 72, 72)
+                except ft.FT_Exception as error:
+                    raise UnsupportedOperation(
+                        f"Cannot realize font {self.family!r} at {size} pixels: {error}"
+                    ) from error
 
-            def metric(units):
-                return (units * size * 2 + self.units_per_em) // (2 * self.units_per_em)
+                def metric(units):
+                    return (units * size * 2 + self.units_per_em) // (2 * self.units_per_em)
 
-            ascent, bottom = self.device_metrics.get(rounded(size), (metric(self.ascent), -metric(self.descent)))
-            background_cell = ascent, -bottom
-            if escapement % 1800:
-                # General transforms bound the font's ink with an em/64
-                # safety margin. Quarter turns retain the Windows cell;
-                # oblique transforms use the font-wide outline bounding box.
-                cell = self.outline_cell if escapement % 900 else (self.ascent, self.descent)
-                margin = self.units_per_em // 64
-                background_cell = tuple(
-                    ceil(Fraction(fixed(float32((units + margin) * float32(size / self.units_per_em))), 16))
-                    for units in cell
+                ascent, bottom = self.device_metrics.get(rounded(size), (metric(self.ascent), -metric(self.descent)))
+                background_cell = ascent, -bottom
+                if escapement % 1800:
+                    # General transforms bound the font's ink with an em/64
+                    # safety margin. Quarter turns retain the Windows cell;
+                    # oblique transforms use the font-wide outline bounding box.
+                    cell = self.outline_cell if escapement % 900 else (self.ascent, self.descent)
+                    margin = self.units_per_em // 64
+                    background_cell = tuple(
+                        ceil(Fraction(fixed(float32((units + margin) * float32(size / self.units_per_em))), 16))
+                        for units in cell
+                    )
+                self._sizes[key] = RasterFont(
+                    font,
+                    ascent,
+                    -bottom,
+                    self.hinted,
+                    self.design_advances,
+                    float32(width / self.units_per_em),
+                    quality,
+                    self.break_character,
+                    self.cmap,
+                    self.symbol,
+                    missing_glyph,
+                    em_width=width,
+                    escapement=escapement,
+                    background_cell=background_cell,
+                    synthetic_bold=synthetic_bold,
+                    synthetic_italic=synthetic_italic,
+                    decorations=tuple(
+                        (
+                            rounded(position * size / self.units_per_em),
+                            # Axis-aligned rules have a one-pixel minimum. An
+                            # oblique rule is a filled contour: a thickness that
+                            # realizes to zero remains degenerate and paints nothing.
+                            max(int(escapement % 900 == 0), rounded(thickness * size / self.units_per_em)),
+                        )
+                        for enabled, (position, thickness) in (
+                            (underline, self.underline_metrics),
+                            (strikeout, self.strikeout_metrics),
+                        )
+                        if enabled
+                    ),
                 )
-            self._sizes[key] = RasterFont(
-                font,
-                ascent,
-                -bottom,
-                self.hinted,
-                self.design_advances,
-                float32(width / self.units_per_em),
-                quality,
-                self.break_character,
-                self.cmap,
-                self.symbol,
-                missing_glyph,
-                em_width=width,
-                escapement=escapement,
-                background_cell=background_cell,
-                synthetic_bold=synthetic_bold,
-                synthetic_italic=synthetic_italic,
-                decorations=tuple(
-                    (
-                        rounded(position * size / self.units_per_em),
-                        # Axis-aligned rules have a one-pixel minimum. An
-                        # oblique rule is a filled contour: a thickness that
-                        # realizes to zero remains degenerate and paints nothing.
-                        max(int(escapement % 900 == 0), rounded(thickness * size / self.units_per_em)),
-                    )
-                    for enabled, (position, thickness) in (
-                        (underline, self.underline_metrics),
-                        (strikeout, self.strikeout_metrics),
-                    )
-                    if enabled
-                ),
-            )
-        return self._sizes[key]
+            return self._sizes[key]
