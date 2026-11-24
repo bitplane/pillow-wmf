@@ -35,6 +35,7 @@ class RasterPainter:
 
     def __post_init__(self):
         self._pixels = self.image.load()
+        self._width, self._height = self.image.size
 
     def source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
         coverage = getattr(bitmap, "coverage", None)
@@ -43,42 +44,47 @@ class RasterPainter:
         # this per-transfer; the saved DC stretch mode must remain unchanged.
         mode = COLORONCOLOR if self.state.stretch_mode == HALFTONE and table != 0xCC else self.state.stretch_mode
         needs_pattern = (table & 15) != (table >> 4)
+        reduce = (lambda a, b: a & b) if self.state.stretch_mode == BLACKONWHITE else (lambda a, b: a | b)
         left, top, right, bottom = pad_bounds or (
             horizontal.destination,
             vertical.destination,
             horizontal.destination + horizontal.length,
             vertical.destination + vertical.length,
         )
-        for y in range(max(0, top), min(self.image.height, bottom)):
-            for x in range(max(0, left), min(self.image.width, right)):
-                if not self.state.clip.contains(x, y):
+        source_left, source_right = horizontal.destination, horizontal.destination + horizontal.length
+        source_top, source_bottom = vertical.destination, vertical.destination + vertical.length
+        width, height = bitmap.width, bitmap.height
+        clip, pixels = self.state.clip, self._pixels
+        # Sample selection depends on one axis only; resolve each column once.
+        columns = range(max(0, left), min(self._width, right))
+        column_samples = [tuple(sx for sx in horizontal.samples(x, mode) if 0 <= sx < width) for x in columns]
+        for y in range(max(0, top), min(self._height, bottom)):
+            row_samples = tuple(sy for sy in vertical.samples(y, mode) if 0 <= sy < height)
+            in_rows = source_top <= y < source_bottom
+            for x, xs in zip(columns, column_samples, strict=True):
+                if not clip.contains(x, y):
                     continue
                 samples = (
                     bitmap.pixel(sx, sy)
-                    for sy in vertical.samples(y, mode)
-                    for sx in horizontal.samples(x, mode)
-                    if 0 <= sx < bitmap.width
-                    and 0 <= sy < bitmap.height
-                    and (coverage is None or coverage[sy * bitmap.width + sx])
+                    for sy in row_samples
+                    for sx in xs
+                    if coverage is None or coverage[sy * width + sx]
                 )
                 source = next(samples, None)
                 if source is not None:
                     for sample in samples:
-                        source = tuple(
-                            a & b if self.state.stretch_mode == BLACKONWHITE else a | b
-                            for a, b in zip(source, sample, strict=True)
-                        )
-                in_source = (
-                    source is not None
-                    and horizontal.destination <= x < horizontal.destination + horizontal.length
-                    and vertical.destination <= y < vertical.destination + vertical.length
-                )
+                        source = tuple(reduce(a, b) for a, b in zip(source, sample, strict=True))
+                in_source = source is not None and in_rows and source_left <= x < source_right
                 if not in_source and pad_bounds is None:
                     continue
                 source = source if in_source else (0, 0, 0)
+                if table == 0xCC:
+                    # SRCCOPY's truth table selects the source in every channel.
+                    pixels[x, y] = tuple(channel & 255 for channel in source)
+                    continue
                 pattern = self.brush_color_at(x, y, self.state.brush, opaque=True) if needs_pattern else (0, 0, 0)
                 if pattern is not None:
-                    self.image.putpixel((x, y), rop3(operation, pattern, source, self.image.getpixel((x, y))))
+                    pixels[x, y] = rop3(operation, pattern, source, pixels[x, y])
 
     def pat_blt(self, x, y, width, height, rop):
         operation = pattern_rop2(rop)
@@ -89,15 +95,12 @@ class RasterPainter:
         # PatBlt orders mapped rectangle edges (unlike mirrored source blits).
         left, right = sorted((left, right))
         top, bottom = sorted((top, bottom))
-        for py in range(max(0, top), min(self.image.height, bottom)):
-            for px in range(max(0, left), min(self.image.width, right)):
-                # Pattern-independent functions do not need a brush, including
-                # a null brush or transparent hatch gaps.
-                paint = (
-                    (0, 0, 0)
-                    if operation in (1, 6, 11, 16)
-                    else self.brush_color_at(px, py, self.state.brush, opaque=True)
-                )
+        # Pattern-independent functions do not need a brush, including a null
+        # brush or transparent hatch gaps. A solid brush is one colour.
+        constant = (0, 0, 0) if operation in (1, 6, 11, 16) else self._solid_color(self.state.brush)
+        for py in range(max(0, top), min(self._height, bottom)):
+            for px in range(max(0, left), min(self._width, right)):
+                paint = constant or self.brush_color_at(px, py, self.state.brush, opaque=True)
                 if paint is not None:
                     self.pixel(px, py, paint, operation=operation)
 
@@ -111,10 +114,11 @@ class RasterPainter:
 
         # Finish discovery before applying the brush/ROP: neither transparent
         # gaps nor a result equal to the source may affect connectivity.
-        spans = flood_spans(self.image.width, self.image.height, seed, eligible)
+        spans = flood_spans(self._width, self._height, seed, eligible)
+        solid = self._solid_color(self.state.brush)
         for y, left, right in spans:
             for x in range(left, right):
-                paint = self.brush_color_at(x, y, self.state.brush)
+                paint = solid or self.brush_color_at(x, y, self.state.brush)
                 if paint is not None:
                     self.pixel(x, y, paint)
 
@@ -166,7 +170,7 @@ class RasterPainter:
             self.text_contour(contour, self.state.text_color, rectangle, options)
 
     def pixel(self, x: int, y: int, color: tuple[int, int, int], *, operation: int | None = None) -> None:
-        if 0 <= x < self.image.width and 0 <= y < self.image.height and self.state.clip.contains(x, y):
+        if 0 <= x < self._width and 0 <= y < self._height and self.state.clip.contains(x, y):
             color = self.state.palette.colorref(color)
             operation = self.state.rop2 if operation is None else operation
             if operation == R2_COPYPEN:
@@ -305,10 +309,11 @@ class RasterPainter:
             # Cosmetic paths fill first, then emit the outline (including
             # repeated pixels). Wide combined paths exclude stroke coverage.
             stroke_pixels = set()
+        solid = self._solid_color(brush)
         for y, start, end in fill_spans:
             for x in range(start, end):
                 if (x, y) not in stroke_pixels:
-                    color = self.brush_color_at(x, y, brush)
+                    color = solid or self.brush_color_at(x, y, brush)
                     if color is not None:
                         self.pixel(x, y, color)
         if pen.cosmetic:
@@ -319,6 +324,12 @@ class RasterPainter:
             self.pixel(x, y, self.state.background_color)
         for x, y in foreground:
             self.pixel(x, y, self.state.pen.color)
+
+    def _solid_color(self, brush: Brush | None) -> tuple[int, int, int] | None:
+        """The constant colour of a solid brush; otherwise None."""
+        if brush is not None and brush.style == BS_SOLID:
+            return self.state.palette.colorref(brush.color)
+        return None
 
     def brush_color_at(
         self, x: int, y: int, brush: Brush | None, *, opaque: bool = False
