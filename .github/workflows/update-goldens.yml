@@ -89,6 +89,7 @@ on:
           - color-engine
           - module-ids
           - color-engine-phase
+          - coordinate-limits
   push:
     branches: [master]
     paths:
