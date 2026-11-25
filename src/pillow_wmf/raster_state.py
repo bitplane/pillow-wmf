@@ -23,6 +23,8 @@ class Pen:
     # Extended styles as alternating dash and gap lengths: logical units for
     # geometric pens, device pixels for cosmetic pens. Empty is unstyled.
     pattern: tuple = ()
+    # A hatched or pattern brush that fills a geometric pen's footprint.
+    brush: "Brush | None" = None
 
 
 @dataclass(frozen=True)

@@ -97,3 +97,37 @@ def test_scaled_square_caps_round_twice():
     assert square_vector(scaled, (201, 362)) == (20, 35)
     assert square_vector(scaled, (200, 362)) == (19, 35)
     assert square_vector(scaled, (200, 321)) == (21, 34)
+
+
+def drawn(**pen):
+    from pillow_wmf.raster import RasterContext
+
+    context = RasterContext(24, 12, background=(255, 255, 255), trace_calls=False)
+    context.select_object(context.ext_create_pen(**pen))
+    context.set_background_mode(1)
+    context.polyline(((2, 6), (22, 6)))
+    return context.image.convert("RGB")
+
+
+def test_hatched_pens_fill_their_footprint_with_the_hatch():
+    image = drawn(style=0x00010200, width=6, color=0x0000FF, brush_style=2, hatch=3)
+    marks = {(x, y) for x in range(24) for y in range(12) if image.getpixel((x, y)) == (255, 0, 0)}
+    # Backward diagonals at (x + y) % 8 == 7 within the flat-capped body.
+    assert marks and all((x + y) % 8 == 7 and 2 <= x < 22 and 3 <= y < 9 for x, y in marks)
+
+
+@pytest.mark.parametrize(
+    ("pen", "error"),
+    [
+        ({"style": 0x00010000, "width": 6, "color": 0, "brush_style": 3}, "UnsupportedOperation"),
+        ({"style": 0x00000000, "width": 1, "color": 0, "brush_style": 2, "hatch": 1}, "InvalidOperation"),
+        ({"style": 0x00010008, "width": 3, "color": 0}, "InvalidOperation"),  # Geometric alternate.
+        ({"style": 0x00000007, "width": 1, "color": 0}, "InvalidOperation"),  # User style without entries.
+    ],
+)
+def test_extended_pens_that_cannot_be_created(pen, error):
+    from pillow_wmf.raster import RasterContext
+
+    with pytest.raises(Exception) as caught:
+        RasterContext(4, 4).ext_create_pen(**pen)
+    assert type(caught.value).__name__ == error

@@ -279,7 +279,17 @@ class RasterPainter:
             return
         # Geometric pens have no style gaps; their footprint is one set.
         for x, y in self._stroke_pixels((path,), miter=miter):
+            self.pen_pixel(x, y)
+
+    def pen_pixel(self, x: int, y: int) -> None:
+        """Paint one pixel of a geometric pen footprint, through its brush if any."""
+        brush = self.state.pen.brush
+        if brush is None:
             self.pixel(x, y, self.state.pen.color)
+            return
+        color = self.brush_color_at(x, y, brush)
+        if color is not None:
+            self.pixel(x, y, color)
 
     @cached_property
     def realized_pen(self):
@@ -455,7 +465,7 @@ class RasterPainter:
                 self.stroke_path(path)
             return
         for x, y in outline:
-            self.pixel(x, y, self.state.pen.color)
+            self.pen_pixel(x, y)
 
     def _solid_color(self, brush: Brush | None) -> tuple[int, int, int] | None:
         """The constant colour of a solid brush; otherwise None."""

@@ -410,9 +410,19 @@ class GDI:
         return self.invoke(Call.make("create_pen", style=style, width=width, color=color))
 
     def ext_create_pen(
-        self, style: int, width: int, color: int, brush_style: int = 0, hatch: int = 0, entries: tuple[int, ...] = ()
+        self,
+        style: int,
+        width: int,
+        color: int,
+        brush_style: int = 0,
+        hatch: int = 0,
+        entries: tuple[int, ...] = (),
+        bitmap: BitmapData | None = None,
     ) -> Handle:
-        """ExtCreatePen: type, style, end cap and join bits, with its LOGBRUSH and user style."""
+        """ExtCreatePen: type, style, end cap and join bits, with its LOGBRUSH and user style.
+
+        A DIB pattern pen carries its packed DIB; ``color`` is then its colour usage.
+        """
         return self.invoke(
             Call.make(
                 "ext_create_pen",
@@ -422,6 +432,7 @@ class GDI:
                 brush_style=brush_style,
                 hatch=hatch,
                 entries=tuple(entries),
+                bitmap=bitmap,
             )
         )
 

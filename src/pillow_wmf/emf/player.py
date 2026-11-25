@@ -282,9 +282,8 @@ def _mono_brush(record):
 
 
 def _ext_create_pen(record):
-    """Pens with a solid LOGBRUSH; patterned brushes are not yet supported."""
-    if record.brush_style != 0:
-        raise Unsupported("Extended pen brushes are not yet supported")
+    """A pen with its LOGBRUSH; DIB pattern pens carry the record's bitmap."""
+    pattern = record.brush_style in (BS_DIBPATTERN, BS_DIBPATTERN + 1)
     return "ext_create_pen", {
         "style": record.style,
         "width": record.width,
@@ -292,6 +291,7 @@ def _ext_create_pen(record):
         "brush_style": record.brush_style,
         "hatch": record.hatch,
         "entries": tuple(record.style_entries),
+        "bitmap": _dib(record) if pattern and record.bitmap_size else None,
     }
 
 

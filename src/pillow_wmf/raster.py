@@ -84,6 +84,7 @@ def rgb(colorref: int) -> tuple[int, int, int]:
 # Geometric predefined styles, in multiples of the pen width.
 GEOMETRIC_DASHES = {1: (3, 1), 2: (1, 1), 3: (3, 1, 1, 1), 4: (3, 1, 1, 1, 1, 1)}
 PS_USERSTYLE, PS_ALTERNATE = 7, 8
+BS_DIBPATTERN, BS_DIBPATTERNPT = 5, 6
 
 
 def logical_color(colorref):
@@ -584,9 +585,20 @@ class RasterContext(ExecutionContext[DrawingState]):
             raise InvalidOperation("Unrecognized extended pen style")
         if (line_style == PS_USERSTYLE) != bool(entries) or len(entries) > 16 or any(e < 0 for e in entries):
             raise InvalidOperation("User styles need between one and sixteen entries")
-        if a["brush_style"] != BS_SOLID:
-            raise UnsupportedOperation("Extended pen brushes are not yet supported")
         color = logical_color(a["color"])
+        brush = None
+        if a["brush_style"] == BS_HATCHED:
+            brush = self._prepare_create_brush({"style": BS_HATCHED, "color": a["color"], "hatch": a["hatch"]})
+        elif a["brush_style"] in (BS_DIBPATTERN, BS_DIBPATTERNPT) and a["bitmap"] is not None:
+            # The LOGBRUSH colour of a DIB pattern pen is its colour usage.
+            arguments = {"style": BS_DIBPATTERN, "color_usage": a["color"], "bitmap": a["bitmap"]}
+            brush = self._prepare_create_dib_pattern_brush(arguments)
+            if brush is None:
+                raise InvalidOperation("Unusable pattern pen bitmap")
+        elif a["brush_style"] != BS_SOLID:
+            raise UnsupportedOperation("Extended pen brush style is not supported")
+        if brush is not None and not kind:
+            raise InvalidOperation("Cosmetic pens need a solid brush")
         if not kind:
             if line_style == PS_INSIDEFRAME:
                 raise InvalidOperation("Cosmetic pens cannot be inside-frame")
@@ -600,7 +612,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             pattern = entries
         else:
             pattern = tuple(a["width"] * factor for factor in GEOMETRIC_DASHES.get(line_style, ()))
-        return Pen(color, a["width"], line_style, geometric=True, cap=cap, join=join, pattern=pattern)
+        return Pen(color, a["width"], line_style, geometric=True, cap=cap, join=join, pattern=pattern, brush=brush)
 
     _apply_ext_create_pen = _store_object
 
@@ -1180,7 +1192,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                     )
             if covered:
                 for x, y in painter.contour_pixels((path.vertices,)):
-                    painter.pixel(x, y, self._state.pen.color)
+                    painter.pen_pixel(x, y)
             elif self._state.recording_path:
                 self._record_figure(path if name == "arc" else replace(path, closed=True))
             elif name == "arc":

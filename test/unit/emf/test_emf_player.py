@@ -210,18 +210,18 @@ def test_palette_edits_name_their_palette():
 def test_unsupported_creations_are_reported_once_selected():
     _, omissions = run(
         [
-            bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x10000, 5, 2, 0, 1),  # Hatched brush.
+            bitmaps.CreateMonoBrush(1, 0, 0, 0, 0, 0, b""),  # No bitmap header.
             fixed.SelectObject(1),
         ]
     )
     assert [(o.record_index, o.reason) for o in omissions] == [
-        (0, "Extended pen brushes are not yet supported"),
+        (0, "Monochrome brushes need a BITMAPINFOHEADER"),
         (1, "Object creation was unsupported"),
     ]
 
 
-def ext_pen_call(style, width, color=0, entries=()):
-    fields = {"brush_style": 0, "hatch": 0, "entries": entries}
+def ext_pen_call(style, width, color=0, entries=(), brush_style=0, hatch=0):
+    fields = {"brush_style": brush_style, "hatch": hatch, "entries": entries, "bitmap": None}
     return Call.make("ext_create_pen", style=style, width=width, color=color, **fields)
 
 
@@ -232,13 +232,13 @@ def ext_pen_call(style, width, color=0, entries=()):
         (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00011200, 5, 0, 0xFF, 0), ext_pen_call(0x11200, 5, 0xFF)),
         (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00010001, 5, 0, 0, 0), ext_pen_call(0x10001, 5)),
         (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00000007, 1, 0, 0, 0, (1, 2)), ext_pen_call(7, 1, 0, (1, 2))),
-        (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00010000, 5, 2, 0, 1), None),  # Hatched brush.
+        (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00010000, 5, 2, 0, 1), ext_pen_call(0x10000, 5, 0, (), 2, 1)),
     ],
 )
 def test_extended_pens_translate_with_their_style(pen, call):
     calls, omissions = run([pen])
-    assert calls == ([call] if call else [])
-    assert bool(omissions) == (call is None)
+    assert calls == [call]
+    assert not omissions
 
 
 def test_relative_save_levels():

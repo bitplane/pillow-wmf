@@ -131,7 +131,7 @@ the codec and reference columns against the code and fixtures.
 | `POLYDRAW16` | typed | full | yes |  |
 | `CREATEMONOBRUSH` | typed | full | yes | Colours come from the text and background colours. |
 | `CREATEDIBPATTERNBRUSHPT` | typed | full | yes |  |
-| `EXTCREATEPEN` | typed | partial | yes | Cosmetic, alternate, user-styled and geometric pens with any cap, join or dash; hatched and pattern brushes are missing. |
+| `EXTCREATEPEN` | typed | full | yes | Cosmetic, alternate and user-styled pens; geometric pens with any cap, join, dash, hatch or DIB pattern. |
 | `POLYTEXTOUTA` | typed | no | no |  |
 | `POLYTEXTOUTW` | typed | no | no |  |
 | `SETICMMODE` | typed | full | yes | No effect on a bitmap DC. |
@@ -183,7 +183,11 @@ point:
   figures. Round and square caps pull each dash end back by one width, so
   dots become zero-length dashes.
 - Cosmetic alternate and user styles step through device pixels, user style
-  entries in units of three pixels like the predefined styles.
+  entries in units of three pixels like the predefined styles. Cosmetic pens
+  are always one pixel wide and solid.
+- Hatched and DIB pattern pens fill the widened footprint with the brush,
+  tiled from the brush origin like any brush; a DIB pattern pen's LOGBRUSH
+  colour is its colour usage.
 
 ## Playback behaviours not yet modelled
 
