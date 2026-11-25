@@ -80,6 +80,7 @@ on:
           - emf-recording
           - rotated-regions
           - rotated-transfers
+          - rotated-blends
   push:
     branches: [master]
     paths:
