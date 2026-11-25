@@ -1183,6 +1183,8 @@ class Recorder(TraceContext):
     def _record_mask_blt(self, a, state, records):
         if a["source"] is None:
             raise UnsupportedOperation("EMF recording of source-less MaskBlt is not yet supported")
+        if a.get("src_size") is not None:
+            raise UnsupportedOperation("EMF recording of MaskBlt with a stretched source is not yet supported")
         mask = mask_bitmap(a["mask"]) if a["mask"] is not None else None
         extra = {"rop": a["rop"], "mask_x": a["mask_x"], "mask_y": a["mask_y"], "mask_usage": 2}
         self._blit(bitmaps.MaskBlt, a, state, records, extra=extra, mask=mask)

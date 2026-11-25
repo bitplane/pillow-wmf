@@ -1223,6 +1223,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         foreground = a["rop"] & 0x00FFFFFF
         background = ((a["rop"] >> 24) & 255) << 16
         arguments = {key: a[key] for key in ("x", "y", "width", "height", "src_x", "src_y", "source")}
+        source_width, source_height = a.get("src_size") or (a["width"], a["height"])
+        name = "dib_bit_blt"
+        if (source_width, source_height) != (a["width"], a["height"]):
+            name = "dib_stretch_blt"
+            arguments |= {"src_width": source_width, "src_height": source_height}
         if a["source"] is None:
             if pattern_rop2(foreground) is None or (a["mask"] is not None and pattern_rop2(background) is None):
                 raise UnsupportedOperation("mask_blt: source-less operation uses its source")
@@ -1232,9 +1237,9 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self.mapping.rotated:
             return self._prepare_rotated_mask_blt(a, arguments, foreground, background), foreground, None
         if a["mask"] is None:
-            return self._prepare_transfer("dib_bit_blt", {**arguments, "rop": foreground}), foreground, None
+            return self._prepare_transfer(name, {**arguments, "rop": foreground}), foreground, None
         # Realize the source as for a copy; each pixel's ROP3 is chosen later.
-        transfer = self._prepare_transfer("dib_bit_blt", {**arguments, "rop": SRCCOPY})
+        transfer = self._prepare_transfer(name, {**arguments, "rop": SRCCOPY})
         if not isinstance(transfer, SourceTransfer):
             return transfer, foreground, None
         scaled = any(isinstance(axis, StretchAxis) for axis in (transfer.horizontal, transfer.vertical))
@@ -1250,8 +1255,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         if mask.depth != 1 or not mask.complete:
             raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
         # Source samples are top-down; place the mask's rectangle over the source's.
-        source_top = a["src_y"] if source.top_down else source.height - a["src_y"] - a["height"]
-        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - a["height"]
+        source_top = a["src_y"] if source.top_down else source.height - a["src_y"] - source_height
+        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - source_height
 
         def sample(x, y):
             mx, my = x - a["src_x"] + a["mask_x"], y - source_top + mask_top
@@ -1266,7 +1271,9 @@ class RasterContext(ExecutionContext[DrawingState]):
         mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
         if mask.depth != 1 or not mask.complete:
             raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
-        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - a["height"]
+        mask_top = (
+            a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - arguments.get("src_height", a["height"])
+        )
         left, top = transfer.rectangle[:2]
 
         def sample(x, y):

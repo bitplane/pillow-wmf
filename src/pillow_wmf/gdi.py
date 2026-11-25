@@ -777,10 +777,14 @@ class GDI:
         mask_x: int = 0,
         mask_y: int = 0,
         mask_usage: int = 0,
+        src_size: tuple[int, int] | None = None,
     ) -> None:
         """MaskBlt: ROP4's foreground ROP3 where the 1-bpp mask is 1, background elsewhere.
 
         ``mask_usage`` 2 (DIB_PAL_INDICES) marks a mask without a colour table.
+        ``src_size`` gives a source rectangle other than the destination size,
+        as when playback maps it through a scaled source DC; the mask covers
+        the source rectangle and stretches with it.
         """
         return self.invoke(
             Call.make(
@@ -797,6 +801,7 @@ class GDI:
                 mask_x=mask_x,
                 mask_y=mask_y,
                 mask_usage=mask_usage,
+                src_size=src_size,
             )
         )
 

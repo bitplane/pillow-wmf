@@ -119,13 +119,8 @@ def _source_blit(record):
         }
     stretch = isinstance(record, bitmaps.StretchBlt)
     width, height = (record.src_width, record.src_height) if stretch else (record.width, record.height)
-    source = (record.src_x, record.src_y, width, height)
-    transform = _source_transform(record)
-    if transform is not None:
-        source = transform(*source)
+    source = _source_rectangle(record, record.src_x, record.src_y, width, height)
     if source is None:
-        # Playback selects the bitmap into a DC with the recorded world
-        # transform; GDI refuses a rotated or sheared source DC.
         return None, None
     arguments = {
         "x": record.x,
@@ -142,32 +137,22 @@ def _source_blit(record):
     return "dib_bit_blt", arguments
 
 
-def _source_transform(record):
-    """Map a logical source rectangle through the recorded source transform.
+def _source_rectangle(record, x, y, width, height):
+    """A logical source rectangle mapped through the recorded source transform.
 
-    Returns None for the identity, else a function giving the source
-    rectangle in bitmap pixels, or None when the transform rotates or
-    shears. Scales and mirrors stretch the transfer.
+    Playback selects the bitmap into a DC with that world transform. Scales
+    and mirrors give a bitmap-pixel rectangle with each edge rounded half up,
+    stretching the transfer; GDI refuses a rotated or sheared source DC, so
+    the record draws nothing and this returns None.
     """
-    m11, m12, m21, m22, dx, dy = (
-        record.src_m11,
-        record.src_m12,
-        record.src_m21,
-        record.src_m22,
-        record.src_dx,
-        record.src_dy,
-    )
+    m11, m12, m21, m22, dx, dy = (getattr(record, name) for name in bitmaps.SOURCE_XFORM)
     if (m11, m12, m21, m22, dx, dy) == IDENTITY:
+        return x, y, width, height
+    if m12 or m21:
         return None
-
-    def transform(x, y, width, height):
-        if m12 or m21:
-            return None
-        left, top = _round_half_up(m11 * x + dx), _round_half_up(m22 * y + dy)
-        right, bottom = _round_half_up(m11 * (x + width) + dx), _round_half_up(m22 * (y + height) + dy)
-        return left, top, right - left, bottom - top
-
-    return transform
+    left, top = _round_half_up(m11 * x + dx), _round_half_up(m22 * y + dy)
+    right, bottom = _round_half_up(m11 * (x + width) + dx), _round_half_up(m22 * (y + height) + dy)
+    return left, top, right - left, bottom - top
 
 
 def _round_half_up(value):
@@ -202,27 +187,18 @@ def _source_dib(record) -> BitmapData:
     return BitmapData("dib", info[:header_size] + colors + record.bits)
 
 
-def _identity_source(record):
-    source_transform = (record.src_m11, record.src_m12, record.src_m21, record.src_m22, record.src_dx, record.src_dy)
-    if source_transform != IDENTITY:
-        raise Unsupported("Transformed blit sources are not yet supported")
-    if record.usage != DIB_RGB_COLORS:
-        raise Unsupported("Palette-indexed blit sources are not yet supported")
-
-
 def _transparent_blt(record):
-    _identity_source(record)
+    source = _source_rectangle(record, record.src_x, record.src_y, record.src_width, record.src_height)
+    if source is None:
+        return None, None
     return "transparent_blt", {
         "x": record.x,
         "y": record.y,
         "width": record.width,
         "height": record.height,
-        "src_x": record.src_x,
-        "src_y": record.src_y,
-        "src_width": record.src_width,
-        "src_height": record.src_height,
+        **dict(zip(("src_x", "src_y", "src_width", "src_height"), source, strict=True)),
         "transparent": record.transparent,
-        "source": _dib(record),
+        "source": _source_dib(record),
     }
 
 
@@ -233,38 +209,43 @@ def _gradient_fill(record):
 
 
 def _alpha_blend(record):
-    _identity_source(record)
+    source = _source_rectangle(record, record.src_x, record.src_y, record.src_width, record.src_height)
+    if source is None:
+        return None, None
     return "alpha_blend", {
         "x": record.x,
         "y": record.y,
         "width": record.width,
         "height": record.height,
-        "src_x": record.src_x,
-        "src_y": record.src_y,
-        "src_width": record.src_width,
-        "src_height": record.src_height,
+        **dict(zip(("src_x", "src_y", "src_width", "src_height"), source, strict=True)),
         "blend": record.blend,
-        "source": _dib(record),
+        "source": _source_dib(record),
     }
 
 
 def _mask_blt(record):
+    source = (record.src_x, record.src_y, record.width, record.height)
     if record.bitmap_size:
-        _identity_source(record)
+        source = _source_rectangle(record, *source)
+        if source is None:
+            return None, None
+    # The mask covers the mapped source rectangle and stretches with it.
+    sized = {} if source[2:] == (record.width, record.height) else {"src_size": source[2:]}
     mask = BitmapData("dib", record.mask_info + record.mask_bits) if record.mask_size else None
     return "mask_blt", {
         "x": record.x,
         "y": record.y,
         "width": record.width,
         "height": record.height,
-        "src_x": record.src_x,
-        "src_y": record.src_y,
+        "src_x": source[0],
+        "src_y": source[1],
         "rop": record.rop,
-        "source": _dib(record) if record.bitmap_size else None,
+        "source": _source_dib(record) if record.bitmap_size else None,
         "mask": mask,
         "mask_x": record.mask_x,
         "mask_y": record.mask_y,
         "mask_usage": record.mask_usage,
+        **sized,
     }
 
 
@@ -289,15 +270,17 @@ def _color_adjustment(record):
 def _plg_blt(record):
     if not record.bitmap_size:
         raise Unsupported("PlgBlt without a bitmap")
-    _identity_source(record)
+    rectangle = (record.src_x, record.src_y, record.src_width, record.src_height)
+    source = _source_rectangle(record, *rectangle)
+    if source is None:
+        return None, None
+    if record.mask_size and source != rectangle:
+        raise Unsupported("Masked PlgBlt with a scaled or offset source transform")
     mask = BitmapData("dib", record.mask_info + record.mask_bits) if record.mask_size else None
     return "plg_blt", {
         "points": ((record.x0, record.y0), (record.x1, record.y1), (record.x2, record.y2)),
-        "src_x": record.src_x,
-        "src_y": record.src_y,
-        "src_width": record.src_width,
-        "src_height": record.src_height,
-        "source": _dib(record),
+        **dict(zip(("src_x", "src_y", "src_width", "src_height"), source, strict=True)),
+        "source": _source_dib(record),
         "mask": mask,
         "mask_x": record.mask_x,
         "mask_y": record.mask_y,
