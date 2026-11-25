@@ -29,6 +29,13 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   turns) and then, for each turn, the arc from the remainder's end round to
   the start followed by the remainder again; a zero remainder is one
   zero-length Bezier. The current position ends at the final angle.
+- `BitBlt` and `StretchBlt` map their logical source rectangle through the
+  recorded source transform, rounding each edge half up to a bitmap pixel. A
+  scaled or mirrored source becomes a stretch of that rectangle onto the
+  destination (in the DC's stretch mode); a rotated or sheared source draws
+  nothing, as GDI rejects such a source DC. A `DIB_PAL_COLORS` colour table
+  indexes the default palette, whatever palette the metafile selected, with
+  indexes wrapping modulo its 20 entries.
 
 The raster refuses operations whose `GM_ADVANCED` output has no native
 references yet (`UNVERIFIED_IN_ADVANCED_MODE` in `raster.py`), and the player
@@ -118,8 +125,8 @@ the codec and reference columns against the code and fixtures.
 | `INVERTRGN` | typed | full | yes | As FILLRGN. |
 | `PAINTRGN` | typed | full | yes | As FILLRGN. |
 | `EXTSELECTCLIPRGN` | typed | full | yes | Device-space regions fitted like points; a missing clip combines with the whole surface. |
-| `BITBLT` | typed | partial | yes | Source transforms and palette-indexed sources are missing. |
-| `STRETCHBLT` | typed | partial | yes | As BITBLT. |
+| `BITBLT` | typed | full | yes | Scaled and mirrored source transforms stretch; `DIB_PAL_COLORS` sources use the default palette. |
+| `STRETCHBLT` | typed | full | yes | As BITBLT. |
 | `MASKBLT` | typed | full | yes | Per-pixel ROP3 from the mask; scaled transfers pad as their foreground ROP decides. |
 | `PLGBLT` | typed | full | yes | Identity source transforms and RGB sources. |
 | `SETDIBITSTODEVICE` | typed | partial | yes | Partial bands are unverified under scaling. |

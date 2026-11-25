@@ -20,6 +20,9 @@ from pillow_wmf.objects import (
 
 DIB = bytes.fromhex("28000000 01000000 01000000 0100 1800 00000000 04000000 00000000 00000000 00000000 00000000")
 PIXEL = bytes.fromhex("0000ff00")
+MONO = bytes.fromhex("28000000 01000000 01000000 0100 0100 00000000 04000000 00000000 00000000 02000000 00000000")
+PALETTE_DIB = MONO + bytes.fromhex("0900 1600") + bytes.fromhex("80000000")
+RESOLVED_DIB = MONO + bytes.fromhex("f0caa600 00800000") + bytes.fromhex("80000000")
 WHITE_BRUSH = 0x80000000
 NULL_PEN = 0x80000008
 SYSTEM_FONT = 0x8000000D
@@ -343,8 +346,9 @@ def test_blits():
             bitmaps.BitBlt(**blit),
             bitmaps.BitBlt(**sourced),
             bitmaps.StretchBlt(**stretch),
-            bitmaps.BitBlt(**sourced | {"src_m11": 2.0}),
-            bitmaps.BitBlt(**sourced | {"usage": 1}),
+            bitmaps.BitBlt(**sourced | {"src_m11": 2.0, "src_dx": 0.5}),
+            bitmaps.BitBlt(**sourced | {"src_m12": 0.5}),
+            bitmaps.BitBlt(**sourced | {"usage": 1, "bitmap_size": 44, "bits_offset": 144, "data": PALETTE_DIB}),
         ]
     )
     source = BitmapData("dib", DIB + PIXEL)
@@ -353,11 +357,15 @@ def test_blits():
         Call.make("pat_blt", x=1, y=2, width=3, height=4, rop=0x00F00021),
         Call.make("dib_bit_blt", **arguments, rop=0x00CC0020, source=source),
         Call.make("dib_stretch_blt", **arguments, src_width=5, src_height=6, rop=0x00CC0020, source=source),
+        # A scaled source DC stretches its rectangle, rounding edges half up.
+        Call.make(
+            "dib_stretch_blt", **arguments | {"src_x": 1}, src_width=6, src_height=4, rop=0x00CC0020, source=source
+        ),
+        # A rotated source DC fails without drawing; WORD palette indexes
+        # resolve against the default palette, wrapping.
+        Call.make("dib_bit_blt", **arguments, rop=0x00CC0020, source=BitmapData("dib", RESOLVED_DIB)),
     ]
-    assert [o.reason for o in omissions] == [
-        "Transformed blit sources are not yet supported",
-        "Palette-indexed blit sources are not yet supported",
-    ]
+    assert omissions == ()
 
 
 def test_dib_transfers_join_the_header_and_bits():

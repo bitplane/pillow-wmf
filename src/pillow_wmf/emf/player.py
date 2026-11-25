@@ -9,6 +9,7 @@ partial one. Comments never draw; EMF+ drawing is reported only when a file
 has no GDI fallback for it.
 """
 
+import math
 import struct
 from collections.abc import Callable
 
@@ -19,6 +20,7 @@ from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
 from ..objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, PaletteUpdate, RegionGeometry
+from ..palette import DEFAULT_COLORS
 from ..playback import Omission as Omission
 from ..playback import Omissions, PlaybackError, SaveLevels
 from . import bitmaps, fixed, system, text, variable
@@ -32,6 +34,7 @@ STOCK_OBJECT = 0x80000000
 BS_NULL = 1
 BS_DIBPATTERN = 5
 DIB_RGB_COLORS = 0
+DIB_PAL_COLORS = 1
 SRCCOPY = 0x00CC0020
 GM_COMPATIBLE = 1
 ETO_NO_RECT = text.ETO_NO_RECT
@@ -114,24 +117,89 @@ def _source_blit(record):
             "height": record.height,
             "rop": record.rop,
         }
-    source_transform = (record.src_m11, record.src_m12, record.src_m21, record.src_m22, record.src_dx, record.src_dy)
-    if source_transform != IDENTITY:
-        raise Unsupported("Transformed blit sources are not yet supported")
-    if record.usage != DIB_RGB_COLORS:
-        raise Unsupported("Palette-indexed blit sources are not yet supported")
+    stretch = isinstance(record, bitmaps.StretchBlt)
+    width, height = (record.src_width, record.src_height) if stretch else (record.width, record.height)
+    source = (record.src_x, record.src_y, width, height)
+    transform = _source_transform(record)
+    if transform is not None:
+        source = transform(*source)
+    if source is None:
+        # Playback selects the bitmap into a DC with the recorded world
+        # transform; GDI refuses a rotated or sheared source DC.
+        return None, None
     arguments = {
         "x": record.x,
         "y": record.y,
         "width": record.width,
         "height": record.height,
-        "src_x": record.src_x,
-        "src_y": record.src_y,
+        "src_x": source[0],
+        "src_y": source[1],
         "rop": record.rop,
-        "source": _dib(record),
+        "source": _source_dib(record),
     }
-    if isinstance(record, bitmaps.StretchBlt):
-        return "dib_stretch_blt", arguments | {"src_width": record.src_width, "src_height": record.src_height}
+    if stretch or source[2:] != (record.width, record.height):
+        return "dib_stretch_blt", arguments | {"src_width": source[2], "src_height": source[3]}
     return "dib_bit_blt", arguments
+
+
+def _source_transform(record):
+    """Map a logical source rectangle through the recorded source transform.
+
+    Returns None for the identity, else a function giving the source
+    rectangle in bitmap pixels, or None when the transform rotates or
+    shears. Scales and mirrors stretch the transfer.
+    """
+    m11, m12, m21, m22, dx, dy = (
+        record.src_m11,
+        record.src_m12,
+        record.src_m21,
+        record.src_m22,
+        record.src_dx,
+        record.src_dy,
+    )
+    if (m11, m12, m21, m22, dx, dy) == IDENTITY:
+        return None
+
+    def transform(x, y, width, height):
+        if m12 or m21:
+            return None
+        left, top = _round_half_up(m11 * x + dx), _round_half_up(m22 * y + dy)
+        right, bottom = _round_half_up(m11 * (x + width) + dx), _round_half_up(m22 * (y + height) + dy)
+        return left, top, right - left, bottom - top
+
+    return transform
+
+
+def _round_half_up(value):
+    return math.floor(value + 0.5)
+
+
+def _source_dib(record) -> BitmapData:
+    """The record's DIB with any palette-index colour table resolved.
+
+    Playback realizes DIB_PAL_COLORS sources in a memory DC holding the
+    default palette, whatever palette the metafile selected; indexes wrap.
+    """
+    if record.usage == DIB_RGB_COLORS:
+        return _dib(record)
+    if record.usage != DIB_PAL_COLORS:
+        raise Unsupported("Palette-indexed blit sources are not yet supported")
+    info = record.bitmap_info
+    header_size = struct.unpack_from("<I", info)[0] if len(info) >= 4 else 0
+    if header_size < 40 or len(info) < 16:
+        raise Unsupported("DIB_PAL_COLORS sources need a BITMAPINFOHEADER")
+    depth, used = struct.unpack_from("<H", info, 14)[0], struct.unpack_from("<I", info, 32)[0]
+    if depth > 8:
+        return _dib(record)
+    count = min(used or 1 << depth, 1 << depth)
+    table = info[header_size : header_size + 2 * count]
+    if len(table) < 2 * count:
+        raise Unsupported("Truncated DIB_PAL_COLORS colour table")
+    colors = b"".join(
+        bytes((*reversed(DEFAULT_COLORS[index % len(DEFAULT_COLORS)]), 0))
+        for index in struct.unpack(f"<{count}H", table)
+    )
+    return BitmapData("dib", info[:header_size] + colors + record.bits)
 
 
 def _identity_source(record):
@@ -786,6 +854,8 @@ def play(
                 slots[record.object_index] = unavailable
             omissions.omit(index, kind, str(reason))
             continue
+        if name is None:
+            continue  # The record fails natively without drawing.
         ok, result = invoke(index, kind, name, arguments)
         if creation:
             if ok and not isinstance(result, Handle):
