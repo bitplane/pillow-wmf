@@ -8,6 +8,7 @@ up, down, and up by a non-integer factor.
 """
 
 import argparse
+import runpy
 import struct
 from pathlib import Path
 
@@ -338,6 +339,7 @@ def cases():
             draw(drawing)
             yield f"emf-{content}-{scale}", drawing.metafile()
     yield from page_cases()
+    yield from runpy.run_path(str(Path(__file__).with_name("emf_feature_fixtures.py")))["cases"](Drawing)
 
 
 def main(argv=None):

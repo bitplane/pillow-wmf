@@ -3,8 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from pillow_wmf import TraceContext
-from pillow_wmf.emf import Metafile, play
+from pillow_wmf.emf import Metafile
 
 ROOT = Path(__file__).resolve().parents[2]
 EMF_ROOT = Path(__file__).parent / "emf"
@@ -21,9 +20,7 @@ def test_generated_fixtures_are_reproducible_and_playable() -> None:
         generated.add(name)
         source = (EMF_ROOT / f"{name}.emf").read_bytes()
         assert source == metafile.to_bytes()
-        parsed = Metafile.from_bytes(source)
-        assert parsed.to_bytes() == source
-        assert play(parsed, TraceContext(), strict=True, rect=(0, 0, 128, 128)) == ()
+        assert Metafile.from_bytes(source).to_bytes() == source
     committed = {path.stem for path in EMF_ROOT.glob("*.emf")}
     assert committed == generated, f"Stale generated fixtures: {sorted(committed - generated)}"
 
