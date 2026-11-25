@@ -70,13 +70,14 @@ from .raster_state import DrawingState
 from .raster_state import Pen as Pen
 from .raster_state import SavedDC as SavedDC
 from .raster_state import TextState as TextState
-from .stroke import frame_footprint, realize_pen
+from .stroke import frame_footprint
 from .surface import Surface
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
+from .widen import CAP_FLAT, CAP_ROUND, JOIN_BEVEL, JOIN_ROUND
 
 
 def rgb(colorref: int) -> tuple[int, int, int]:
@@ -168,6 +169,9 @@ class ParallelogramTransfer:
     blend: object = None
 
 
+# Geometric pen (cap, join) pairs modelled under a rotating transform.
+ROTATED_GEOMETRIC_PENS = frozenset({(CAP_ROUND, JOIN_ROUND), (CAP_FLAT, JOIN_BEVEL)})
+
 # Operations whose geometry assumes axis-aligned mapping. A rotating or
 # shearing world transform refuses them rather than drawing them unrotated.
 AXIS_ALIGNED_ONLY = frozenset(
@@ -175,7 +179,6 @@ AXIS_ALIGNED_ONLY = frozenset(
         "frame_region",
         "text_out",
         "ext_text_out",
-        "widen_path",
     }
 )
 
@@ -319,26 +322,25 @@ class RasterContext(ExecutionContext[DrawingState]):
             raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
         if self.mapping.rotated and (
             call.name in AXIS_ALIGNED_ONLY
-            or (call.name in PEN_STROKES and self._state.pen.geometric and not self._state.recording_path)
             or (
                 call.name in {"rectangle", "ellipse", "round_rect", "arc", "chord", "pie"}
                 and self._state.pen.style == PS_INSIDEFRAME
             )
         ):
             raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
+        pen = self._state.pen
         if (
             self.mapping.rotated
-            and call.name in PEN_STROKES
-            and self._state.pen.style != PS_NULL
+            and call.name in PEN_STROKES | {"widen_path"}
+            and pen.geometric
             and not self._state.recording_path
+            and pen.style != PS_NULL
+            and ((pen.cap, pen.join) not in ROTATED_GEOMETRIC_PENS or pen.style & 15 != PS_SOLID)
         ):
-            try:
-                scale = self.mapping.rotated_pen_scale(self._state.pen.width)
-            except ValueError as error:
-                raise UnsupportedOperation(str(error)) from error
-            if realize_pen(self._state.pen.width, *scale).expanded:
-                # Pens beyond the small-pen table are built in world space.
-                raise UnsupportedOperation("Pens wider than the small-pen table under a rotating transform")
+            raise UnsupportedOperation(
+                "Under a rotating transform only solid round-capped round-joined "
+                "and flat-capped bevel-joined geometric pens are modelled"
+            )
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
@@ -1806,8 +1808,9 @@ class RasterContext(ExecutionContext[DrawingState]):
         self._state.path = tuple(figures)
 
     def _prepare_widen_path(self, a):
-        if self._completed_path() and self._painter().pen_shape is None:
-            raise UnsupportedOperation("widen_path: only extended geometric pens other than round caps and joins")
+        pen = self._state.pen
+        if self._completed_path() and not pen.geometric and pen.style not in (PS_SOLID, PS_INSIDEFRAME):
+            raise UnsupportedOperation("widen_path: styled CreatePen pens")
 
     def _apply_widen_path(self, call, prepared, result):
         if not self._completed_path():

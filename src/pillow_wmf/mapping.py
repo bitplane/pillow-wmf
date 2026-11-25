@@ -110,29 +110,30 @@ class Mapping:
         """Whether the world transform mixes the axes (rotates or shears)."""
         return bool(self.world[1] or self.world[2])
 
+    @property
+    def uniform_rotation(self) -> bool:
+        """Whether the world transform keeps circles round: orthogonal axes of equal length."""
+        m11, m12, m21, m22 = self.world[:4]
+        lengths = (hypot(m11, m12), hypot(m21, m22))
+        return (
+            abs(m11 * m21 + m12 * m22) <= 1e-3 * lengths[0] * lengths[1]
+            and abs(lengths[0] - lengths[1]) <= 1e-3 * lengths[0]
+        )
+
     def rotated_pen_scale(self, width: int) -> tuple[Fraction, Fraction]:
-        """Device scales realizing a pen of ``width`` under a rotating transform.
+        """Device scales realizing a pen of ``width`` under a uniform rotation.
 
         Each device axis takes the logical width vector along that axis,
         rounds both components to 28.4 and truncates its length, so a pen
-        narrows slightly at oblique angles. Hairlines (realized narrower than
-        one and a half pixels) are realized under any transform; wider pens
-        only under transforms that keep circles round.
+        narrows slightly at oblique angles.
         """
         m11, m12, m21, m22 = self.world[:4]
         if not width:
             return self.linear_scale
-        scales = tuple(
+        return tuple(
             Fraction(floor(hypot(floor(width * a * 16 + 0.5), floor(width * b * 16 + 0.5))), 16 * width)
             for a, b in ((m11, m21), (m12, m22))
         )
-        if max(scales) * width * 16 < 24:
-            return scales  # A hairline.
-        lengths = (hypot(m11, m12), hypot(m21, m22))
-        orthogonal = abs(m11 * m21 + m12 * m22) <= 1e-3 * lengths[0] * lengths[1]
-        if not orthogonal or abs(lengths[0] - lengths[1]) > 1e-3 * lengths[0]:
-            raise ValueError("Wide pens under a non-uniform rotating transform")
-        return scales
 
     @property
     def identity_page(self) -> bool:

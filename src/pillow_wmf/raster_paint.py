@@ -24,7 +24,16 @@ from .flood import flood_spans
 from .geometry import DevicePath, Polygon, coverage_spans
 from .paint import pattern_rop2, rop2, rop3
 from .raster_state import Brush, DrawingState
-from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outline, realize_pen, widen_segment
+from .stroke import (
+    cosmetic_line,
+    cosmetic_span,
+    dash_is_foreground,
+    join_outline,
+    realize_pen,
+    realize_transformed_pen,
+    support_outlines,
+    widen_segment,
+)
 from .surface import Surface
 from .widen import CAP_FLAT, CAP_ROUND, JOIN_MITER, JOIN_ROUND, PenShape, dash_figures, perpendicular
 from .widen import outline as widen_outline
@@ -454,8 +463,10 @@ class RasterPainter:
     @cached_property
     def realized_pen(self):
         mapping = self.state.mapping
-        scale = mapping.rotated_pen_scale(self.state.pen.width) if mapping.rotated else mapping.linear_scale
-        pen = realize_pen(self.state.pen.width, *scale)
+        if mapping.rotated:
+            pen = realize_transformed_pen(self.state.pen.width, mapping, geometric=self.state.pen.geometric)
+        else:
+            pen = realize_pen(self.state.pen.width, *mapping.linear_scale)
         # Geometric pens are widened even below the cosmetic hairline width.
         return replace(pen, cosmetic=False) if self.state.pen.geometric else pen
 
@@ -539,14 +550,15 @@ class RasterPainter:
         else:
             yield path.segments, path.closed
 
-    def widened_outlines(self, paths: tuple[DevicePath, ...]) -> list[Polygon] | None:
-        """WidenPath's closed outlines, or None for pens without outline construction."""
-        if self.pen_shape is None:
-            return None
+    def widened_outlines(self, paths: tuple[DevicePath, ...]) -> list[Polygon]:
+        """WidenPath's closed outlines: perpendicular bodies or support-vertex sweeps."""
         outlines: list[Polygon] = []
         for path in paths:
             for segments, closed in self._pen_figures(path.flattened()):
-                outlines.extend(widen_outline(self.pen_shape, segments, closed))
+                if self.pen_shape is None:
+                    outlines.extend(support_outlines(segments, self.realized_pen, closed))
+                else:
+                    outlines.extend(widen_outline(self.pen_shape, segments, closed))
         return outlines
 
     def _figure_pixels(self, segments, closed, *, miter=False):
@@ -568,9 +580,10 @@ class RasterPainter:
                 # A box frame takes one perpendicular per box axis, from the
                 # left-top corner, for both of its parallel edges.
                 top, left, bottom, right = segments
-                horizontal = perpendicular(shape.pen, bottom.direction)
+                # The two edges leaving that corner give the vectors.
+                horizontal = perpendicular(shape.pen, top.direction)
                 vertical = perpendicular(shape.pen, left.direction)
-                perps = [(-horizontal[0], -horizontal[1]), vertical, horizontal, (-vertical[0], -vertical[1])]
+                perps = [horizontal, vertical, (-horizontal[0], -horizontal[1]), (-vertical[0], -vertical[1])]
             outline = widen_outline(shape, segments, closed, perps=perps)
             return set(self.contour_pixels(tuple(outline), fill_mode=WINDING))
         if self.pen_shape is not None:

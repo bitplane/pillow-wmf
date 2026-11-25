@@ -103,7 +103,7 @@ the codec and reference columns against the code and fixtures.
 | `STROKEANDFILLPATH` | typed | full | yes |  |
 | `STROKEPATH` | typed | full | yes |  |
 | `FLATTENPATH` | typed | full | yes |  |
-| `WIDENPATH` | typed | partial | yes | Extended geometric pens other than round caps with round joins; other pens are refused. |
+| `WIDENPATH` | typed | partial | yes | Solid and geometric pens; styled cosmetic `CreatePen` pens are refused. |
 | `SELECTCLIPPATH` | typed | full | yes | The path interior becomes a region by its fill coverage. |
 | `ABORTPATH` | typed | full | yes |  |
 | `COMMENT` | typed | partial | yes | GDIC multi-format comments play their embedded EMF; EMF+ is not rendered. |
@@ -250,9 +250,16 @@ point:
   entries in units of three pixels like the predefined styles. Cosmetic pens
   are always one pixel wide and solid.
 - `WidenPath` flattens each figure and replaces it with these outlines as
-  closed polygon figures, one per dash for patterned pens. Round caps with
-  round joins, and pens that are not extended geometric pens, have no outline
-  construction and are refused.
+  closed polygon figures, one per dash for patterned pens.
+- For `CreatePen` pens and geometric pens with round caps and joins,
+  `WidenPath` stitches one outline per open figure: the start cap, the far
+  side forward, the end cap and the near side back. A closed figure gives
+  its two sides as two figures. The outer side of a joint sweeps the pen
+  between the two body supports and the inner side passes through the
+  vertex. Every support index comes from the forward segment directions, the
+  near side taking the opposite pen vertex, and a forward sweep that ends at
+  the head of the pen's second half also emits that vertex before the body
+  point. Styled cosmetic `CreatePen` pens are refused.
 - Hatched and DIB pattern pens fill the widened footprint with the brush,
   tiled from the brush origin like any brush; a DIB pattern pen's LOGBRUSH
   colour is its colour usage.
@@ -320,13 +327,25 @@ products plus the 28.4 translation.
   constructions as their special case: edge midpoints take floored halves,
   the circle-constant insets round per device component, and the lower half
   reflects the upper through the right-top and left-bottom corners.
-- A CreatePen pen keeps its device-aligned small-pen shape. Each device axis
+- Under a uniform rotation (orthogonal axes of equal length) a pen within
+  the small-pen table keeps its device-aligned shape. Each device axis
   rounds the logical width vector along it to 28.4 and truncates its length,
   so a pen narrows slightly at oblique angles.
+- Wider pens, and every pen under a transform that does not keep circles
+  round, are cubic ellipses on the transformed logical radius vectors: each
+  component's full diameter is rounded to 28.4 and halved outward, the
+  second vector is the image of the negative logical y radius, and both
+  quarters of the semicircle are flattened outward from the first vector's
+  axis. The axis-aligned wide pens are the special case.
+- Under a non-uniform transform a `CreatePen` pen is a hairline when its
+  transformed x diameter is below 1.5 pixels; a geometric pen never is.
 - `Rectangle` frames are mitred: each body lies on the pen perpendicular
-  used by geometric pens, one per box axis taken from the left-top corner and
-  shared by both parallel edges. Other figures keep the support-vertex
-  bodies of wide `CreatePen` strokes.
+  used by geometric pens, one per box axis, taken from the two edges that
+  leave the left-top corner and shared by both parallel edges. Other figures
+  keep the support-vertex bodies of wide `CreatePen` strokes.
+- Geometric pens are modelled with round caps and joins, or flat caps and
+  bevel joins, solid; flat and bevel bodies use the perpendicular of the
+  realized pen.
 - `PatBlt` and the DIB transfers (`BitBlt`, `StretchBlt`, `StretchDIBits`
   and `MaskBlt` records, any ROP3) cover the polygon fill of their
   destination rectangle's three 28.4 corners and the reflected fourth. Each
@@ -371,10 +390,9 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
-- Under rotating or shearing transforms: text, `FrameRgn`, `WidenPath`,
-  strokes with extended geometric pens, pens wider than the small-pen table,
-  and wide pens under non-uniform transforms are refused. Hairline pens are
-  realized under any transform, and paths record with any pen selected.
+- Under rotating or shearing transforms: text, `FrameRgn`, and strokes or
+  `WidenPath` with styled geometric pens or with square caps or mitre joins
+  are refused. Paths record with any pen selected.
   Eroding the region by the frame size in logical units, as a box, comes
   within a few dozen pixels of native `FrameRgn` output but is not exact.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
