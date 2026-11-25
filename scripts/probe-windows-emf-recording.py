@@ -713,6 +713,22 @@ def gap_scenarios():
 
         yield f"clip-path-{variant}", None, clip_path
 
+    def angle_arc_turns(dc):
+        # Sweeps of a full turn or more: the bounds and current position.
+        for x, y, radius, start, sweep in (
+            (60, 60, 10, 30.0, 360.0),
+            (60, 60, 10, 90.0, 1080.0),
+            (50, 50, 17, 45.0, 400.0),
+            (50, 50, 17, 300.0, -540.0),
+        ):
+            move_to(dc, 0, 0, None)
+            angle_arc(dc, x, y, radius, start, sweep)
+            polyline_to(dc, *points((300, 300)))
+        move_to(dc, 70, 70, None)
+        angle_arc(dc, 70, 70, 20, 10.0, 725.0)
+
+    yield "angle-arc-turns", None, angle_arc_turns
+
 
 def records(data):
     position = 0
