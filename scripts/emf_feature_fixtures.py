@@ -533,6 +533,41 @@ def scan_bands(d):
         d.add(bitmaps.SetDIBitsToDevice(0, 0, 0, 0, *placement, *blocks, info + bits))
 
 
+def offset_ties(d):
+    """OffsetClipRgn offsets that scale to exact half pixels, one cell each.
+
+    A clip rectangle is set and offset under a scaling world transform, then
+    a cell-sized rectangle is filled through it under the identity.
+    """
+    d.pen(PS_NULL, 0, 0)
+    d.brush(BS_SOLID, 0x2060C0)
+    cases = (
+        # (m11, m22, offset x, offset y)
+        (0.5, 0.5, 1, 1),
+        (0.5, 0.5, -1, -1),
+        (0.5, 0.5, 3, -3),
+        (0.5, 0.5, 5, 7),
+        (2.5, 1.5, 1, 1),
+        (2.5, 1.5, -1, -1),
+        (2.5, 1.5, 3, 3),
+        (-0.5, 0.5, 1, 1),
+        (1.5, -2.5, -1, 3),
+        (1.25, 0.75, 2, -2),
+        (0.25, 0.25, 2, 6),
+        (0.25, 0.25, -2, -6),
+    )
+    for index, (m11, m22, offset_x, offset_y) in enumerate(cases):
+        left, top = 4 + 31 * (index % 4), 4 + 40 * (index // 4)
+        # The clip covers device (left + 6, top + 6) to (left + 18, top + 22).
+        corners = [((left + 6 + dx) / m11, (top + 6 + dy) / m22) for dx, dy in ((0, 0), (12, 16))]
+        (x0, y0), (x1, y1) = (tuple(round(value) for value in corner) for corner in corners)
+        d.add(fixed.SaveDC(), fixed.SetWorldTransform(m11, 0.0, 0.0, m22, 0.0, 0.0))
+        d.add(fixed.IntersectClipRect(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+        d.add(fixed.OffsetClipRgn(offset_x, offset_y))
+        d.add(fixed.SetWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+        d.add(fixed.Rectangle(left, top, left + 30, top + 36), fixed.RestoreDC(-1))
+
+
 def gradients(d):
     vertices = ((d.u(4), d.u(4), 0xFF00, 0, 0, 0), (d.u(60), d.u(40), 0, 0, 0xFF00, 0))
     d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
@@ -708,6 +743,7 @@ FEATURES = (
     ("palette-sources", palette_sources, (128,)),
     ("blend-sources", blend_sources, (128,)),
     ("scan-bands", scan_bands, (128, 51)),
+    ("offset-ties", offset_ties, (128,)),
     ("gradientfill", gradients, (128, 51)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
