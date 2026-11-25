@@ -177,6 +177,7 @@ EXPECTED = {
     "color-engine": ("scripts/probe-windows-color-engine.py", "color-engine", True, True),
     "module-ids": ("scripts/probe-windows-module-ids.py", "module-ids", True, True),
     "color-engine-phase": ("scripts/probe-windows-color-engine-phase.py", "color-engine-phase", True, True),
+    "coordinate-limits": ("scripts/probe-windows-coordinate-limits.py", "coordinate-limits", True, True),
 }
 
 
