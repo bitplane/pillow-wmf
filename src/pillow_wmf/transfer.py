@@ -7,6 +7,7 @@ from .bitmap import RGBBitmap, read_dib
 from .bitmap16 import read_bitmap16
 from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
+from .color_adjustment import AdjustedBitmap, ColorAdjustment
 from .constants import HALFTONE
 from .halftone import (
     HalftoneExpansion,
@@ -60,6 +61,7 @@ class TransferPreparation:
     palette: LogicalPalette
     clip: ClipRegion
     stretch_mode: int
+    color_adjustment: ColorAdjustment
     text_color: tuple[int, int, int] | PaletteIndex
     background_color: tuple[int, int, int] | PaletteIndex
     max_bitmap_pixels: int
@@ -247,12 +249,17 @@ class TransferPreparation:
             if filtered is not HalftoneMode.REPLICATE:
                 if not filtered.valid:
                     return TransferAction.NOOP
+                if not self.color_adjustment.neutral:
+                    filtered = AdjustedBitmap(filtered, self.color_adjustment)
                 return SourceTransfer(
                     filtered,
                     BlitAxis(hx.destination, abs(dw) - 1 if hx.mirrored else 0, abs(dw), -1 if hx.mirrored else 1),
                     BlitAxis(hy.destination, abs(dh) - 1 if hy.mirrored else 0, abs(dh), -1 if hy.mirrored else 1),
                     a["rop"],
                 )
+        if scaled and halftone and not self.color_adjustment.neutral:
+            # Replicated HALFTONE enlargements are colour-adjusted too.
+            bitmap = AdjustedBitmap(bitmap, self.color_adjustment)
         if scaled:
             horizontal = StretchAxis.create(x, dw, a["src_x"], sw, bitmap.width)
             vertical = StretchAxis.create(y, dh, sy, sh, bitmap.height)

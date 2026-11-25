@@ -6,7 +6,7 @@ application clip: a later OffsetClipRgn can move an off-surface clip into view.
 
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from itertools import pairwise
 from math import ceil, floor
@@ -110,6 +110,12 @@ class RegionMask:
 
     def intersection(self, other):
         return self.difference(self.difference(other))
+
+    def union(self, other):
+        return RegionMask.from_rectangles((*self.rectangles(), *other.rectangles()))
+
+    def symmetric_difference(self, other):
+        return self.union(other).difference(self.intersection(other))
 
     def _edit_rows(self, top, bottom, edit, fill=None):
         """Apply ``edit`` to each row's endpoints in ``[top, bottom)``.
@@ -257,23 +263,35 @@ class ClipRegion:
 
     mask: RegionMask | None = None
     excluded: RegionMask = RegionMask()
+    # SetMetaRgn's region, intersected with every subsequent clip.
+    meta: RegionMask | None = None
 
     def within(self, bounds: Rectangle) -> RegionMask:
-        """Resolve the application clip inside finite device bounds."""
+        """Resolve the effective clip, meta region included, inside device bounds."""
         region = RegionMask.from_rectangles((bounds,))
         if self.mask is not None:
             region = region.intersection(self.mask)
         if self.excluded.bands:
             region = region.difference(self.excluded)
+        if self.meta is not None:
+            region = region.intersection(self.meta)
         return region
 
     def contains(self, x: int, y: int) -> bool:
+        if self.meta is not None and not self.meta.contains(x, y):
+            return False
         if self.mask is not None:
             return self.mask.contains(x, y)
         return not self.excluded.contains(x, y)
 
     def spans(self, y: int, start: int, end: int):
         """Visible half-open runs of ``[start, end)`` on one scan line."""
+        if self.meta is not None:
+            for left, right in self.meta.spans(y):
+                left, right = max(left, start), min(right, end)
+                if left < right:
+                    yield from replace(self, meta=None).spans(y, left, right)
+            return
         if self.mask is not None:
             for left, right in self.mask.spans(y):
                 left, right = max(left, start), min(right, end)
@@ -292,21 +310,45 @@ class ClipRegion:
     def intersect(self, rectangle: Rectangle) -> "ClipRegion":
         left, top, right, bottom = rectangle
         if left >= right or top >= bottom:
-            return ClipRegion(RegionMask())
+            return ClipRegion(RegionMask(), meta=self.meta)
         if self.mask is None:
-            return ClipRegion(RegionMask.from_rectangles((rectangle,)).difference(self.excluded))
-        return ClipRegion(self.mask.clipped(rectangle))
+            return ClipRegion(RegionMask.from_rectangles((rectangle,)).difference(self.excluded), meta=self.meta)
+        return ClipRegion(self.mask.clipped(rectangle), meta=self.meta)
 
     def exclude(self, rectangle: Rectangle) -> "ClipRegion":
         left, top, right, bottom = rectangle
         if left >= right or top >= bottom:
             return self
         if self.mask is None:
-            return ClipRegion(None, self.excluded.with_rectangle(rectangle))
-        return ClipRegion(self.mask.without_rectangle(rectangle))
+            return ClipRegion(None, self.excluded.with_rectangle(rectangle), self.meta)
+        return ClipRegion(self.mask.without_rectangle(rectangle), meta=self.meta)
 
     def offset(self, dx: int, dy: int) -> "ClipRegion":
+        """Move the clip; the meta region stays where it is."""
         return ClipRegion(
             self.mask.offset(dx, dy) if self.mask is not None else None,
             self.excluded.offset(dx, dy),
+            self.meta,
         )
+
+    def select(self, region: RegionMask | None) -> "ClipRegion":
+        """Replace the clip, keeping the meta region; None selects no clip."""
+        return ClipRegion(region, meta=self.meta)
+
+    def combine(self, region: RegionMask, mode: int, bounds: Rectangle) -> "ClipRegion":
+        """ExtSelectClipRgn's RGN_AND, RGN_OR, RGN_XOR and RGN_DIFF.
+
+        Without a clip, the current region is the whole device surface.
+        """
+        current = replace(self, meta=None).within(bounds)
+        combined = {
+            1: current.intersection,
+            2: current.union,
+            3: current.symmetric_difference,
+            4: current.difference,
+        }[mode](region)
+        return ClipRegion(combined, meta=self.meta)
+
+    def with_meta(self, bounds: Rectangle) -> "ClipRegion":
+        """SetMetaRgn: the effective clip becomes the meta region; the clip is reset."""
+        return ClipRegion(meta=self.within(bounds))

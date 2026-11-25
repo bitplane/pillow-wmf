@@ -153,6 +153,18 @@ EXPECTED = {
     "roundrects": ("scripts/probe-windows-roundrects.py", None, False, None),
     "pies": ("scripts/probe-windows-pies.py", None, False, None),
     "chords": ("scripts/probe-windows-chords.py", None, False, None),
+    "emf-frame": ("scripts/probe-windows-emf-frame.py", "emf-frame", True, True),
+    "emf-transforms": ("scripts/probe-windows-emf-transforms.py", "emf-transforms", True, True),
+    "advanced-paths": ("scripts/probe-windows-advanced-paths.py", "advanced-paths", True, True),
+    "emf-record": ("scripts/probe-windows-emf-record.py", "emf-record", True, True),
+    "pen-widen": ("scripts/probe-windows-pen-widen.py", "pen-widen", True, True),
+    "gradient": ("scripts/probe-windows-gradient.py", "gradient", True, True),
+    "rotated-paths": ("scripts/probe-windows-rotated-paths.py", "rotated-paths", True, True),
+    "rotated-pens": ("scripts/probe-windows-rotated-pens.py", "rotated-pens", True, True),
+    "rotated-strokes": ("scripts/probe-windows-rotated-strokes.py", "rotated-strokes", True, True),
+    "emf-layout": ("scripts/probe-windows-emf-layout.py", "emf-layout", True, True),
+    "color-adjustment": ("scripts/probe-windows-color-adjustment.py", "color-adjustment", True, True),
+    "color-match": ("scripts/probe-windows-color-match.py", "color-match", True, True),
 }
 
 
@@ -183,7 +195,12 @@ def test_workflow_choices_dispatch_through_one_step(dispatcher):
     # Pushes still only react to reference inputs; probes need a dispatch.
     assert triggers["push"] == {
         "branches": ["master"],
-        "paths": ["test/compatibility/wmf/**/*.wmf", "test/compatibility/wmf/**/*.png"],
+        "paths": [
+            "test/compatibility/wmf/**/*.wmf",
+            "test/compatibility/wmf/**/*.png",
+            "test/compatibility/emf/**/*.emf",
+            "test/compatibility/emf/**/*.png",
+        ],
     }
     update = workflow["jobs"]["update"]
     assert "inputs.probe != 'none'" in update["if"]

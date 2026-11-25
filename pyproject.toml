@@ -1,6 +1,6 @@
 [project]
 name = "pillow_wmf"
-description = "A Windows MetaFile loader for Pillow"
+description = "A Windows Metafile (WMF and EMF) loader for Pillow"
 version = "0.2.1"
 authors = [
     { name = "Gareth Davidson", email = "gaz@bitplane.net" }

@@ -1,4 +1,4 @@
-"""Bitmap transfers, bitmap brushes and extended pens.
+"""Bitmap transfers, masked and blended transfers, bitmap brushes and extended pens.
 
 Each record addresses a BitmapInfo header and pixel bits by record offset.
 Both stay undecoded bytes here.
@@ -28,7 +28,20 @@ class BitmapRecord(OffsetRecord):
         return self.blob(self.bits_offset, self.bits_size)
 
 
+class MaskedBitmapRecord(BitmapRecord):
+    @property
+    def mask_info(self) -> bytes:
+        """The mask's BitmapInfo, or b"" when the record has no mask."""
+        return self.blob(self.mask_offset, self.mask_size)
+
+    @property
+    def mask_bits(self) -> bytes:
+        return self.blob(self.mask_bits_offset, self.mask_bits_size)
+
+
 BLIT = (*BOUNDS, "x", "y", "width", "height", "rop", "src_x", "src_y", *SOURCE_XFORM, "background", "usage", *SOURCE)
+SOURCE_BLOCK = (*SOURCE_XFORM, "background", "usage", *SOURCE)
+MASK = ("mask_x", "mask_y", "mask_usage", "mask_offset", "mask_size", "mask_bits_offset", "mask_bits_size")
 
 # (class name, record type, struct layout, field names), MS-EMF 2.3.1 and 2.3.7
 TABLE = (
@@ -52,6 +65,39 @@ TABLE = (
 
 for _row in TABLE:
     globals()[_row[0]] = define(__name__, *_row, base=BitmapRecord)
+
+MaskBlt = define(
+    __name__,
+    "MaskBlt",
+    RecordType.MASKBLT,
+    "4i4iI2i6fII4I2iI4I",
+    (*BOUNDS, "x", "y", "width", "height", "rop", "src_x", "src_y", *SOURCE_BLOCK, *MASK),
+    base=MaskedBitmapRecord,
+)
+PlgBlt = define(
+    __name__,
+    "PlgBlt",
+    RecordType.PLGBLT,
+    "4i6i4i6fII4I2iI4I",
+    (*BOUNDS, "x0", "y0", "x1", "y1", "x2", "y2", "src_x", "src_y", "src_width", "src_height", *SOURCE_BLOCK, *MASK),
+    base=MaskedBitmapRecord,
+)
+AlphaBlend = define(
+    __name__,
+    "AlphaBlend",
+    RecordType.ALPHABLEND,
+    "4i4iI2i6fII4I2i",
+    (*BOUNDS, "x", "y", "width", "height", "blend", "src_x", "src_y", *SOURCE_BLOCK, "src_width", "src_height"),
+    base=BitmapRecord,
+)
+TransparentBlt = define(
+    __name__,
+    "TransparentBlt",
+    RecordType.TRANSPARENTBLT,
+    "4i4iI2i6fII4I2i",
+    (*BOUNDS, "x", "y", "width", "height", "transparent", "src_x", "src_y", *SOURCE_BLOCK, "src_width", "src_height"),
+    base=BitmapRecord,
+)
 
 
 @register

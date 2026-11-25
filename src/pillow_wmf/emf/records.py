@@ -113,7 +113,8 @@ def define(module: str, name: str, kind: RecordType, layout: str, names: tuple[s
         fields,
         bases=(base,),
         frozen=True,
-        namespace={"kind": kind, "wire_layout": layout, "fields": names, "__module__": module},
+        namespace={"kind": kind, "wire_layout": layout, "fields": names},
+        module=module,
     )
     return register(cls)
 

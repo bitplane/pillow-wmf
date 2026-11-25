@@ -116,6 +116,18 @@ PROBES = {
     "roundrects": _printed("probe-windows-roundrects.py"),
     "pies": _printed("probe-windows-pies.py"),
     "chords": _printed("probe-windows-chords.py"),
+    "emf-frame": Probe("probe-windows-emf-frame.py", output="emf-frame"),
+    "emf-transforms": Probe("probe-windows-emf-transforms.py", output="emf-transforms"),
+    "advanced-paths": Probe("probe-windows-advanced-paths.py", output="advanced-paths"),
+    "emf-record": Probe("probe-windows-emf-record.py", output="emf-record"),
+    "pen-widen": Probe("probe-windows-pen-widen.py", output="pen-widen"),
+    "gradient": Probe("probe-windows-gradient.py", output="gradient"),
+    "rotated-paths": Probe("probe-windows-rotated-paths.py", output="rotated-paths"),
+    "rotated-pens": Probe("probe-windows-rotated-pens.py", output="rotated-pens"),
+    "rotated-strokes": Probe("probe-windows-rotated-strokes.py", output="rotated-strokes"),
+    "emf-layout": Probe("probe-windows-emf-layout.py", output="emf-layout"),
+    "color-adjustment": Probe("probe-windows-color-adjustment.py", output="color-adjustment"),
+    "color-match": Probe("probe-windows-color-match.py", output="color-match"),
 }
 
 

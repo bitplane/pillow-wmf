@@ -1,4 +1,4 @@
-"""Render WMF fixtures missing a Windows reference image."""
+"""Render WMF and EMF fixtures missing a Windows reference image."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from reference_cases import image_size, reference_cases
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = ROOT / "test" / "compatibility" / "wmf"
+FIXTURES = ROOT / "test" / "compatibility"
 
 
 def main(argv=None) -> int:
@@ -20,7 +20,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     cases = list(reference_cases(args.root, args.size))
     if not cases:
-        parser.error("No WMF fixtures found")
+        parser.error("No metafile fixtures found")
     missing = [(source, png, size) for source, png, size in cases if not png.is_file()]
     if args.check:
         print(f"{len(missing)} missing Windows reference images")
@@ -30,11 +30,12 @@ def main(argv=None) -> int:
         return 0
     if os.name != "nt":
         raise SystemExit("Native reference rendering requires Windows")
-    from windows_wmf_render import private_fonts, render_wmf
+    from windows_wmf_render import private_fonts, render_emf, render_wmf
 
     with private_fonts(sorted((ROOT / "test/fonts").glob("*.ttf"))):
         for fixture, png, size in missing:
-            image = render_wmf(fixture.read_bytes(), *size)
+            render = render_emf if fixture.suffix.lower() == ".emf" else render_wmf
+            image = render(fixture.read_bytes(), *size)
             png.parent.mkdir(parents=True, exist_ok=True)
             image.save(png, format="PNG")
             print(f"rendered: {png}")

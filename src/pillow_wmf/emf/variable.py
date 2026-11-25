@@ -286,3 +286,117 @@ class Eof(Record):
         # Entries away from their usual offset decode here, but the record
         # does not re-encode identically and therefore stays opaque.
         return cls(entries, offset, size_last, trailing=middle[4 * count :])
+
+
+@dataclass(frozen=True)
+class RegionRecord(Record):
+    """Bounds, optional fixed fields, then RegionData bytes (MS-EMF 2.2.24)."""
+
+    region_layout: ClassVar[str] = ""
+    region_fields: ClassVar[tuple[str, ...]] = ()
+
+    def payload(self) -> bytes:
+        values = (getattr(self, name) for name in self.region_fields)
+        prefix = pack("4iI", *self.bounds, len(self.region))
+        return prefix + pack(self.region_layout, *values) + self.region
+
+    @classmethod
+    def read(cls, reader: Reader, limits: Limits):
+        *bounds, size = reader.unpack("4iI")
+        values = dict(zip(cls.region_fields, reader.unpack(cls.region_layout), strict=True))
+        return cls(bounds=tuple(bounds), region=reader.take(size), **values, trailing=reader.rest())
+
+
+@register
+@dataclass(frozen=True, kw_only=True)
+class FillRgn(RegionRecord):
+    kind: ClassVar[RecordType] = RecordType.FILLRGN
+    region_layout: ClassVar[str] = "I"
+    region_fields: ClassVar[tuple[str, ...]] = ("brush",)
+    bounds: Rect
+    brush: int
+    region: bytes
+
+
+@register
+@dataclass(frozen=True, kw_only=True)
+class FrameRgn(RegionRecord):
+    kind: ClassVar[RecordType] = RecordType.FRAMERGN
+    region_layout: ClassVar[str] = "Iii"
+    region_fields: ClassVar[tuple[str, ...]] = ("brush", "width", "height")
+    bounds: Rect
+    brush: int
+    width: int
+    height: int
+    region: bytes
+
+
+@register
+@dataclass(frozen=True, kw_only=True)
+class InvertRgn(RegionRecord):
+    kind: ClassVar[RecordType] = RecordType.INVERTRGN
+    bounds: Rect
+    region: bytes
+
+
+@register
+@dataclass(frozen=True, kw_only=True)
+class PaintRgn(RegionRecord):
+    kind: ClassVar[RecordType] = RecordType.PAINTRGN
+    bounds: Rect
+    region: bytes
+
+
+GRADIENT_FILL_RECT_H, GRADIENT_FILL_RECT_V, GRADIENT_FILL_TRIANGLE = 0, 1, 2
+
+
+@register
+@dataclass(frozen=True)
+class GradientFill(Record):
+    """TriVertex objects (x, y, red, green, blue, alpha) and rectangle or triangle indexes.
+
+    Native recording reserves twelve bytes per mesh in every mode: rectangle
+    index pairs are packed, followed by four unused bytes per rectangle.
+    Native playback rejects a rectangle record without that space.
+    """
+
+    kind: ClassVar[RecordType] = RecordType.GRADIENTFILL
+    bounds: Rect
+    mode: int
+    vertices: tuple[tuple[int, int, int, int, int, int], ...]
+    shapes: tuple[tuple[int, ...], ...]
+    padding: bytes | None = None
+
+    @property
+    def shape_layout(self) -> str:
+        return "3I" if self.mode == GRADIENT_FILL_TRIANGLE else "2I"
+
+    @property
+    def reserved(self) -> int:
+        """Unused bytes after rectangle indexes; explicit ``padding`` may differ, as read."""
+        return 0 if self.mode == GRADIENT_FILL_TRIANGLE else 4 * len(self.shapes)
+
+    def payload(self) -> bytes:
+        padding = bytes(self.reserved) if self.padding is None else self.padding
+        return (
+            pack("4iIII", *self.bounds, len(self.vertices), len(self.shapes), self.mode)
+            + b"".join(pack("2i4H", *vertex) for vertex in self.vertices)
+            + b"".join(pack(self.shape_layout, *shape) for shape in self.shapes)
+            + padding
+        )
+
+    @classmethod
+    def read(cls, reader: Reader, limits: Limits):
+        *bounds, vertex_count, shape_count, mode = reader.unpack("4iIII")
+        if vertex_count > limits.max_points or vertex_count > reader.remaining // 16:
+            raise FormatError("Invalid vertex count")
+        vertices = tuple(reader.unpack("2i4H") for _ in range(vertex_count))
+        size = 12 if mode == GRADIENT_FILL_TRIANGLE else 8
+        if shape_count > limits.max_points or shape_count > reader.remaining // size:
+            raise FormatError("Invalid gradient shape count")
+        shapes = tuple(reader.unpack("3I" if size == 12 else "2I") for _ in range(shape_count))
+        # Keep a short reservation as read, so playback can refuse it as native does.
+        reserved = 0 if size == 12 else 4 * shape_count
+        padding = reader.take(min(reserved, reader.remaining))
+        padding = None if len(padding) == reserved and not any(padding) else padding
+        return cls(tuple(bounds), mode, vertices, shapes, padding, trailing=reader.rest())

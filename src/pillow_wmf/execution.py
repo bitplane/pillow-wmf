@@ -8,6 +8,7 @@ from .limits import DEFAULT_LIMITS
 
 CREATED_KINDS = {
     "create_pen": "pen",
+    "ext_create_pen": "pen",
     "create_brush": "brush",
     "create_font": "font",
     "create_palette": "palette",
@@ -15,11 +16,19 @@ CREATED_KINDS = {
     "create_pattern_brush": "brush",
     "create_dib_pattern_brush": "brush",
 }
+# GetStockObject indexes and the kind of object each names.
+STOCK_OBJECT_KINDS = {
+    **dict.fromkeys((0, 1, 2, 3, 4, 5, 18), "brush"),
+    **dict.fromkeys((6, 7, 8, 19), "pen"),
+    **dict.fromkeys((10, 11, 12, 13, 14, 16, 17), "font"),
+    15: "palette",
+}
 REFERENCES = {
     "select_object": {"handle": {"pen", "brush", "font", "region"}},
     "delete_object": {"handle": {"pen", "brush", "font", "region", "palette"}},
     "select_palette": {"handle": {"palette"}},
     "select_clip_region": {"region": {"region"}},
+    "ext_select_clip_region": {"region": {"region"}},
     "fill_region": {"region": {"region"}, "brush": {"brush"}},
     "frame_region": {"region": {"region"}, "brush": {"brush"}},
     "paint_region": {"region": {"region"}},
@@ -80,7 +89,10 @@ class ExecutionContext[SavedState](GDI):
         arguments = {name: value for name, value in bound.arguments.items() if name != "self"}
         for name, kinds in REFERENCES.get(call.name, {}).items():
             handle = arguments[name]
-            if call.name in {"select_clip_region", "select_object", "select_palette"} and handle is None:
+            if (
+                call.name in {"select_clip_region", "ext_select_clip_region", "select_object", "select_palette"}
+                and handle is None
+            ):
                 continue
             if (
                 not isinstance(handle, Handle)
@@ -90,16 +102,20 @@ class ExecutionContext[SavedState](GDI):
                 raise InvalidOperation(f"Invalid or deleted handle: {name}")
             if handle.kind not in kinds:
                 raise InvalidOperation(f"Wrong object type for {call.name}.{name}")
-        if call.name in CREATED_KINDS and len(self._live) >= self.max_objects:
+        if (call.name in CREATED_KINDS or call.name == "get_stock_object") and len(self._live) >= self.max_objects:
             raise ResourceLimitError("Object limit exceeded")
         if call.name == "save_dc" and self._save_depth >= self.max_saved_states:
             raise ResourceLimitError("Saved-state limit exceeded")
         if call.name == "restore_dc":
             self._saved_index(arguments["saved_dc"])
+        if call.name == "get_stock_object" and arguments["index"] not in STOCK_OBJECT_KINDS:
+            raise InvalidOperation("Unknown stock object")
         return Call.make(call.name, **arguments)
 
     def _result(self, call: Call) -> Handle | int | None:
         """Reserve a result value without publishing handles or save levels."""
+        if call.name == "get_stock_object":
+            return Handle(self._next_handle, STOCK_OBJECT_KINDS[call.kwargs["index"]], self)
         if call.name in CREATED_KINDS:
             return Handle(self._next_handle, CREATED_KINDS[call.name], self)
         if call.name == "save_dc":
@@ -108,7 +124,7 @@ class ExecutionContext[SavedState](GDI):
 
     def _commit(self, call: Call, *, saved_state=_NO_SNAPSHOT) -> Handle | int | None:
         result = self._result(call)
-        if call.name in CREATED_KINDS:
+        if call.name in CREATED_KINDS or call.name == "get_stock_object":
             self._live[result.serial] = result
             self._next_handle += 1
         elif call.name == "delete_object":

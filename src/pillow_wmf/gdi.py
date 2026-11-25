@@ -124,6 +124,124 @@ class GDI:
     def set_map_mode(self, mode: int) -> None:
         return self.invoke(Call.make("set_map_mode", mode=mode))
 
+    def set_brush_origin(self, x: int, y: int) -> None:
+        """Align pattern and hatch brushes to device point (x, y)."""
+        return self.invoke(Call.make("set_brush_origin", x=x, y=y))
+
+    def set_arc_direction(self, direction: int) -> None:
+        """AD_COUNTERCLOCKWISE (1) or AD_CLOCKWISE (2) for arcs, chords and pies."""
+        return self.invoke(Call.make("set_arc_direction", direction=direction))
+
+    def arc_to(
+        self, left: int, top: int, right: int, bottom: int, start_x: int, start_y: int, end_x: int, end_y: int
+    ) -> None:
+        """A line from the current position to the arc's start, then the arc; the position moves to its end."""
+        return self.invoke(
+            Call.make(
+                "arc_to",
+                left=left,
+                top=top,
+                right=right,
+                bottom=bottom,
+                start_x=start_x,
+                start_y=start_y,
+                end_x=end_x,
+                end_y=end_y,
+            )
+        )
+
+    def angle_arc(self, x: int, y: int, radius: int, start: float, sweep: float) -> None:
+        """A line from the current position, then a circular arc by angle in degrees."""
+        return self.invoke(Call.make("angle_arc", x=x, y=y, radius=radius, start=start, sweep=sweep))
+
+    def begin_path(self) -> None:
+        """Record subsequent drawing into the DC path instead of painting it."""
+        return self.invoke(Call.make("begin_path"))
+
+    def end_path(self) -> None:
+        return self.invoke(Call.make("end_path"))
+
+    def abort_path(self) -> None:
+        return self.invoke(Call.make("abort_path"))
+
+    def close_figure(self) -> None:
+        return self.invoke(Call.make("close_figure"))
+
+    def fill_path(self) -> None:
+        return self.invoke(Call.make("fill_path"))
+
+    def stroke_path(self) -> None:
+        return self.invoke(Call.make("stroke_path"))
+
+    def stroke_and_fill_path(self) -> None:
+        return self.invoke(Call.make("stroke_and_fill_path"))
+
+    def flatten_path(self) -> None:
+        return self.invoke(Call.make("flatten_path"))
+
+    def widen_path(self) -> None:
+        return self.invoke(Call.make("widen_path"))
+
+    def select_clip_path(self, mode: int) -> None:
+        """Combine the clip with the path's interior: RGN_AND, OR, XOR, DIFF or COPY (1-5)."""
+        return self.invoke(Call.make("select_clip_path", mode=mode))
+
+    def gradient_fill(self, mode: int, vertices, meshes) -> None:
+        """GradientFill: TRIVERTEX ``(x, y, red, green, blue, alpha)`` tuples with
+        16-bit channels, and index pairs (rectangle modes 0 and 1) or triples
+        (triangle mode 2)."""
+        return self.invoke(
+            Call.make(
+                "gradient_fill",
+                mode=mode,
+                vertices=tuple(tuple(vertex) for vertex in vertices),
+                meshes=tuple(tuple(mesh) for mesh in meshes),
+            )
+        )
+
+    def set_color_adjustment(
+        self,
+        flags: int = 0,
+        illuminant: int = 0,
+        red_gamma: int = 10000,
+        green_gamma: int = 10000,
+        blue_gamma: int = 10000,
+        black: int = 0,
+        white: int = 10000,
+        contrast: int = 0,
+        brightness: int = 0,
+        colorfulness: int = 0,
+        tint: int = 0,
+    ) -> None:
+        """SetColorAdjustment: the COLORADJUSTMENT fields HALFTONE stretching applies."""
+        return self.invoke(
+            Call.make(
+                "set_color_adjustment",
+                flags=flags,
+                illuminant=illuminant,
+                red_gamma=red_gamma,
+                green_gamma=green_gamma,
+                blue_gamma=blue_gamma,
+                black=black,
+                white=white,
+                contrast=contrast,
+                brightness=brightness,
+                colorfulness=colorfulness,
+                tint=tint,
+            )
+        )
+
+    def set_miter_limit(self, limit: float) -> None:
+        """Limit miter joins of geometric pens to ``limit`` times the pen width."""
+        return self.invoke(Call.make("set_miter_limit", limit=limit))
+
+    def set_graphics_mode(self, mode: int) -> None:
+        return self.invoke(Call.make("set_graphics_mode", mode=mode))
+
+    def set_world_transform(self, m11: float, m12: float, m21: float, m22: float, dx: float, dy: float) -> None:
+        """Replace the GM_ADVANCED world transform: x' = x*m11 + y*m21 + dx, y' = x*m12 + y*m22 + dy."""
+        return self.invoke(Call.make("set_world_transform", m11=m11, m12=m12, m21=m21, m22=m22, dx=dx, dy=dy))
+
     def set_rop2(self, mode: int) -> None:
         return self.invoke(Call.make("set_rop2", mode=mode))
 
@@ -153,6 +271,14 @@ class GDI:
 
     def select_clip_region(self, region: Handle | None) -> None:
         return self.invoke(Call.make("select_clip_region", region=region))
+
+    def ext_select_clip_region(self, region: Handle | None, mode: int) -> None:
+        """Combine the clip with a device-space region: RGN_AND, OR, XOR, DIFF or COPY (1-5)."""
+        return self.invoke(Call.make("ext_select_clip_region", region=region, mode=mode))
+
+    def set_meta_region(self) -> None:
+        """Make the current clip the meta region and reset the clip."""
+        return self.invoke(Call.make("set_meta_region"))
 
     def paint_region(self, region: Handle) -> None:
         return self.invoke(Call.make("paint_region", region=region))
@@ -321,8 +447,39 @@ class GDI:
     def set_layout(self, layout: int) -> None:
         return self.invoke(Call.make("set_layout", layout=layout))
 
+    def get_stock_object(self, index: int) -> Handle:
+        """A stock brush, pen, font or palette (GetStockObject index, 0-19)."""
+        return self.invoke(Call.make("get_stock_object", index=index))
+
     def create_pen(self, style: int, width: int, color: int) -> Handle:
         return self.invoke(Call.make("create_pen", style=style, width=width, color=color))
+
+    def ext_create_pen(
+        self,
+        style: int,
+        width: int,
+        color: int,
+        brush_style: int = 0,
+        hatch: int = 0,
+        entries: tuple[int, ...] = (),
+        bitmap: BitmapData | None = None,
+    ) -> Handle:
+        """ExtCreatePen: type, style, end cap and join bits, with its LOGBRUSH and user style.
+
+        A DIB pattern pen carries its packed DIB; ``color`` is then its colour usage.
+        """
+        return self.invoke(
+            Call.make(
+                "ext_create_pen",
+                style=style,
+                width=width,
+                color=color,
+                brush_style=brush_style,
+                hatch=hatch,
+                entries=tuple(entries),
+                bitmap=bitmap,
+            )
+        )
 
     def create_brush(self, style: int, color: int, hatch: int) -> Handle:
         return self.invoke(Call.make("create_brush", style=style, color=color, hatch=hatch))
@@ -332,6 +489,24 @@ class GDI:
 
     def polygon(self, points: tuple[tuple[int, int], ...]) -> None:
         return self.invoke(Call.make("polygon", points=points))
+
+    def poly_bezier(self, points: tuple[tuple[int, int], ...]) -> None:
+        """A start point and three points (two controls and an end) per cubic."""
+        return self.invoke(Call.make("poly_bezier", points=points))
+
+    def poly_bezier_to(self, points: tuple[tuple[int, int], ...]) -> None:
+        """Cubics from the current position, which moves to the last point."""
+        return self.invoke(Call.make("poly_bezier_to", points=points))
+
+    def polyline_to(self, points: tuple[tuple[int, int], ...]) -> None:
+        return self.invoke(Call.make("polyline_to", points=points))
+
+    def poly_polyline(self, polylines: tuple[tuple[tuple[int, int], ...], ...]) -> None:
+        return self.invoke(Call.make("poly_polyline", polylines=polylines))
+
+    def poly_draw(self, points: tuple[tuple[int, int], ...], types: bytes) -> None:
+        """Lines and cubics with one PT_* type per point, from the current position."""
+        return self.invoke(Call.make("poly_draw", points=points, types=types))
 
     def poly_polygon(self, polygons: tuple[tuple[tuple[int, int], ...], ...]) -> None:
         return self.invoke(Call.make("poly_polygon", polygons=polygons))
@@ -493,6 +668,135 @@ class GDI:
                 scan_count=scan_count,
                 color_usage=color_usage,
                 source=source,
+            )
+        )
+
+    def transparent_blt(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        src_x: int,
+        src_y: int,
+        src_width: int,
+        src_height: int,
+        transparent: int,
+        source: BitmapData,
+    ) -> None:
+        """Stretch a packed DIB, leaving pixels of the ``transparent`` COLORREF untouched."""
+        return self.invoke(
+            Call.make(
+                "transparent_blt",
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                src_x=src_x,
+                src_y=src_y,
+                src_width=src_width,
+                src_height=src_height,
+                transparent=transparent,
+                source=source,
+            )
+        )
+
+    def alpha_blend(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        src_x: int,
+        src_y: int,
+        src_width: int,
+        src_height: int,
+        blend: int,
+        source: BitmapData,
+    ) -> None:
+        """AlphaBlend: ``blend`` packs BLENDFUNCTION (op, flags, constant alpha, AC_SRC_ALPHA)."""
+        return self.invoke(
+            Call.make(
+                "alpha_blend",
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                src_x=src_x,
+                src_y=src_y,
+                src_width=src_width,
+                src_height=src_height,
+                blend=blend,
+                source=source,
+            )
+        )
+
+    def plg_blt(
+        self,
+        points: tuple[tuple[int, int], tuple[int, int], tuple[int, int]],
+        src_x: int,
+        src_y: int,
+        src_width: int,
+        src_height: int,
+        source: BitmapData,
+        mask: BitmapData | None = None,
+        mask_x: int = 0,
+        mask_y: int = 0,
+        mask_usage: int = 0,
+    ) -> None:
+        """PlgBlt: map the source rectangle onto the parallelogram whose upper-left,
+        upper-right and lower-left corners are ``points``. Where a 1-bpp ``mask`` is
+        given, only pixels whose mask bit is 1 are copied."""
+        return self.invoke(
+            Call.make(
+                "plg_blt",
+                points=tuple(tuple(point) for point in points),
+                src_x=src_x,
+                src_y=src_y,
+                src_width=src_width,
+                src_height=src_height,
+                source=source,
+                mask=mask,
+                mask_x=mask_x,
+                mask_y=mask_y,
+                mask_usage=mask_usage,
+            )
+        )
+
+    def mask_blt(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        src_x: int,
+        src_y: int,
+        rop: int,
+        source: BitmapData | None,
+        mask: BitmapData | None = None,
+        mask_x: int = 0,
+        mask_y: int = 0,
+        mask_usage: int = 0,
+    ) -> None:
+        """MaskBlt: ROP4's foreground ROP3 where the 1-bpp mask is 1, background elsewhere.
+
+        ``mask_usage`` 2 (DIB_PAL_INDICES) marks a mask without a colour table.
+        """
+        return self.invoke(
+            Call.make(
+                "mask_blt",
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                src_x=src_x,
+                src_y=src_y,
+                rop=rop,
+                source=source,
+                mask=mask,
+                mask_x=mask_x,
+                mask_y=mask_y,
+                mask_usage=mask_usage,
             )
         )
 
