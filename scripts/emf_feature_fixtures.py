@@ -315,92 +315,81 @@ def regions(d):
     d.add(variable.InvertRgn(bounds=(0, 0, 0, 0), region=placed(50, 64)))
 
 
-def transfers(d):
+def transfer_background(d):
     d.pen(PS_NULL, 0, 0)
     d.brush(BS_SOLID, 0x80C080)
     d.add(fixed.Rectangle(0, 0, d.extent + 1, d.extent + 1))
-    source = rgb_dib(16, 12, gradient)
-    mask = mono_dib(16, 12, lambda x, y: (x // 4 + y // 4) % 2, ((0, 0, 0), (255, 255, 255)))
-    # One (offset, size) pair per block: source info, source bits, mask info, mask bits.
-    (bmi, bits, minfo, mbits), data = offset_fields(bitmaps.MaskBlt, source[0], source[1], mask[0], mask[1])
-    fields = dict.fromkeys(bitmaps.MaskBlt.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0, "background": 0xFFFFFF}
-    # MAKEROP4(SRCCOPY, DSTCOPY): the source where the mask is 1, the destination elsewhere.
-    fields |= {"x": d.u(4), "y": d.u(4), "width": 16, "height": 12, "rop": 0xAACC0020}
-    fields |= {"bitmap_offset": bmi[0], "bitmap_size": bmi[1], "bits_offset": bits[0], "bits_size": bits[1]}
-    fields |= {"mask_offset": minfo[0], "mask_size": minfo[1], "mask_bits_offset": mbits[0], "mask_bits_size": mbits[1]}
-    d.add(bitmaps.MaskBlt(**fields, data=data))
-    unmasked = {"x": d.u(44), "mask_size": 0, "mask_bits_size": 0, "mask_offset": 0, "mask_bits_offset": 0}
-    d.add(bitmaps.MaskBlt(**fields | unmasked, data=data))
-    (bmi, bits, minfo, mbits), data = offset_fields(bitmaps.PlgBlt, source[0], source[1], mask[0], mask[1])
-    fields = dict.fromkeys(bitmaps.PlgBlt.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0, "background": 0xFFFFFF}
-    fields |= {"x0": d.u(96), "y0": d.u(4), "x1": d.u(124), "y1": d.u(14), "x2": d.u(86), "y2": d.u(30)}
-    fields |= {"src_width": 16, "src_height": 12}
-    fields |= {"bitmap_offset": bmi[0], "bitmap_size": bmi[1], "bits_offset": bits[0], "bits_size": bits[1]}
-    d.add(bitmaps.PlgBlt(**fields, data=data))
-    d.add(
-        bitmaps.PlgBlt(
-            **fields
-            | {
-                "y0": d.u(36),
-                "y1": d.u(46),
-                "y2": d.u(62),
-                "mask_offset": minfo[0],
-                "mask_size": minfo[1],
-                "mask_bits_offset": mbits[0],
-                "mask_bits_size": mbits[1],
-            },
-            data=data,
-        )
-    )
-    alpha = argb_dib(16, 12)
-    (bmi, bits), data = offset_fields(bitmaps.AlphaBlend, *alpha)
-    fields = dict.fromkeys(bitmaps.AlphaBlend.fields, 0) | {
-        "src_m11": 1.0,
-        "src_m22": 1.0,
-        "src_width": 16,
-        "src_height": 12,
-    }
-    fields |= {"bitmap_offset": bmi[0], "bitmap_size": bmi[1], "bits_offset": bits[0], "bits_size": bits[1]}
-    d.add(
-        bitmaps.AlphaBlend(
-            **fields | {"x": d.u(4), "y": d.u(40), "width": d.u(30), "height": d.u(22), "blend": 0x01FF0000}, data=data
-        )
-    )
-    (bmi, bits), opaque = offset_fields(bitmaps.AlphaBlend, *source)
-    fields |= {"bitmap_offset": bmi[0], "bitmap_size": bmi[1], "bits_offset": bits[0], "bits_size": bits[1]}
-    d.add(
-        bitmaps.AlphaBlend(
-            **fields | {"x": d.u(40), "y": d.u(40), "width": d.u(30), "height": d.u(22), "blend": 0x00800000},
-            data=opaque,
-        )
-    )
-    (bmi, bits), data = offset_fields(bitmaps.TransparentBlt, *source)
-    fields = dict.fromkeys(bitmaps.TransparentBlt.fields, 0) | {
-        "src_m11": 1.0,
-        "src_m22": 1.0,
-        "src_width": 16,
-        "src_height": 12,
-    }
-    fields |= {"bitmap_offset": bmi[0], "bitmap_size": bmi[1], "bits_offset": bits[0], "bits_size": bits[1]}
-    key = gradient(5, 5)
-    fields |= {
-        "x": d.u(4),
-        "y": d.u(70),
-        "width": d.u(40),
-        "height": d.u(30),
-        "transparent": key[0] | key[1] << 8 | key[2] << 16,
-    }
-    d.add(bitmaps.TransparentBlt(**fields, data=data))
-    vertices = ((d.u(50), d.u(68), 0xFF00, 0, 0, 0), (d.u(80), d.u(90), 0, 0, 0xFF00, 0))
+
+
+SOURCE = rgb_dib(16, 12, gradient)
+MASK = mono_dib(16, 12, lambda x, y: (x // 4 + y // 4) % 2, ((0, 0, 0), (255, 255, 255)))
+
+
+def source_fields(cls, blocks):
+    """Zeroed fields with an identity source transform and the blocks' offsets."""
+    pairs, data = offset_fields(cls, *blocks)
+    fields = dict.fromkeys(cls.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0, "background": 0xFFFFFF}
+    names = ("bitmap_offset", "bitmap_size", "bits_offset", "bits_size")
+    names += ("mask_offset", "mask_size", "mask_bits_offset", "mask_bits_size")
+    for index, (offset, size) in enumerate(pairs):
+        fields |= {names[2 * index]: offset, names[2 * index + 1]: size}
+    return fields, data
+
+
+def mask_blt(masked):
+    def draw(d):
+        transfer_background(d)
+        fields, data = source_fields(bitmaps.MaskBlt, (*SOURCE, *MASK) if masked else SOURCE)
+        # MAKEROP4(SRCCOPY, DSTCOPY): the source where the mask is 1, the destination elsewhere.
+        fields |= {"x": d.u(8), "y": d.u(8), "width": 16, "height": 12, "rop": 0xAACC0020, "src_x": 1}
+        d.add(bitmaps.MaskBlt(**fields, data=data))
+        d.add(bitmaps.MaskBlt(**fields | {"x": d.u(64), "rop": 0xCCAA0029 if masked else SRCINVERT}, data=data))
+
+    return draw
+
+
+def plg_blt(masked):
+    def draw(d):
+        transfer_background(d)
+        fields, data = source_fields(bitmaps.PlgBlt, (*SOURCE, *MASK) if masked else SOURCE)
+        fields |= {"x0": d.u(30), "y0": d.u(8), "x1": d.u(110), "y1": d.u(40), "x2": d.u(10), "y2": d.u(70)}
+        d.add(bitmaps.PlgBlt(**fields | {"src_width": 16, "src_height": 12}, data=data))
+        fields |= {"x0": d.u(120), "y0": d.u(120), "x1": d.u(70), "y1": d.u(120), "x2": d.u(120), "y2": d.u(80)}
+        d.add(bitmaps.PlgBlt(**fields | {"src_x": 2, "src_y": 1, "src_width": 10, "src_height": 8}, data=data))
+
+    return draw
+
+
+def alpha_blend(per_pixel):
+    def draw(d):
+        transfer_background(d)
+        fields, data = source_fields(bitmaps.AlphaBlend, argb_dib(16, 12) if per_pixel else SOURCE)
+        blend = 0x01FF0000 if per_pixel else 0x00800000  # AC_SRC_ALPHA, or a constant half.
+        fields |= {"src_width": 16, "src_height": 12, "blend": blend}
+        d.add(bitmaps.AlphaBlend(**fields | {"x": d.u(8), "y": d.u(8), "width": d.u(48), "height": d.u(36)}, data=data))
+        d.add(bitmaps.AlphaBlend(**fields | {"x": d.u(64), "y": d.u(60), "width": 16, "height": 12}, data=data))
+
+    return draw
+
+
+def transparent_blt(d):
+    transfer_background(d)
+    fields, data = source_fields(bitmaps.TransparentBlt, SOURCE)
+    red, green, blue = gradient(5, 5)
+    fields |= {"src_width": 16, "src_height": 12, "transparent": red | green << 8 | blue << 16}
+    d.add(bitmaps.TransparentBlt(**fields | {"x": d.u(8), "y": d.u(8), "width": d.u(48), "height": d.u(36)}, data=data))
+    d.add(bitmaps.TransparentBlt(**fields | {"x": d.u(64), "y": d.u(60), "width": 16, "height": 12}, data=data))
+
+
+def gradients(d):
+    vertices = ((d.u(4), d.u(4), 0xFF00, 0, 0, 0), (d.u(60), d.u(40), 0, 0, 0xFF00, 0))
     d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
-    vertices = ((d.u(84), d.u(68), 0xFF00, 0xFF00, 0, 0), (d.u(124), d.u(90), 0, 0x8000, 0xFF00, 0))
+    vertices = ((d.u(68), d.u(4), 0xFF00, 0xFF00, 0, 0), (d.u(124), d.u(40), 0, 0x8000, 0xFF00, 0))
     d.add(variable.GradientFill((0, 0, 0, 0), 1, vertices, ((0, 1),)))
-    vertices = (
-        (d.u(50), d.u(124), 0xFF00, 0, 0, 0),
-        (d.u(84), d.u(96), 0, 0xFF00, 0, 0),
-        (d.u(124), d.u(124), 0, 0, 0xFF00, 0),
-    )
-    d.add(variable.GradientFill((0, 0, 0, 0), 2, vertices, ((0, 1, 2),)))
+    corners = ((4, 124), (64, 50), (124, 124), (64, 90))
+    colours = ((0xFF00, 0, 0), (0, 0xFF00, 0), (0, 0, 0xFF00), (0xFF00, 0xFF00, 0xFF00))
+    vertices = tuple((d.u(x), d.u(y), *colour, 0) for (x, y), colour in zip(corners, colours, strict=True))
+    d.add(variable.GradientFill((0, 0, 0, 0), 2, vertices, ((0, 1, 3), (1, 2, 3))))
 
 
 def palettes(d):
@@ -512,47 +501,38 @@ def comments(d):
     d.add(fixed.Rectangle(*d.rect(20, 20, 108, 108)))
 
 
-def state_records(d):
-    """Records that should not change a bitmap DC's output, each followed by drawing."""
-    d.add(fixed.SetICMMode(2), fixed.SetMiterLimit(4), fixed.SetMapperFlags(1))
-    d.add(fixed.SetColorAdjustment(24, 0, 0, 10000, 10000, 10000, 0, 10000, 50, -50, 0, 0))
-    d.add(system.CreateColorSpace(5, struct.pack("<5I", 0x50534F43, 0x400, 328, 0x73524742, 4) + bytes(308)))
-    d.add(fixed.SetColorSpace(5), fixed.DeleteColorSpace(5), fixed.ColorCorrectPalette(1, 0, 0, 0))
-    d.add(system.SetICMProfileA(0, b"sRGB\0\0\0\0"), system.ColorMatchToTargetW(1, 0, b"", b""))
-    d.add(fixed.ForceUFIMapping(1, 2), system.SetLinkedUFIs(((1, 2),)))
-    d.add(system.GlsRecord(bytes(8)), system.PixelFormat(bytes(40)))
-    d.add(
-        system.DrawEscape(0x1000, bytes(4)),
-        system.ExtEscape(0x1000, bytes(4)),
-        system.NamedEscape(0x1000, b"x\0\0\0", b""),
-    )
-    d.brush(BS_SOLID, 0x2040C0)
-    d.add(fixed.Rectangle(*d.rect(10, 10, 118, 60)), fixed.SetStretchBltMode(HALFTONE))
-    info, bits = rgb_dib(16, 12, gradient)
-    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
-    d.add(
-        bitmaps.StretchDIBits(
-            0,
-            0,
-            0,
-            0,
-            d.u(10),
-            d.u(66),
-            0,
-            0,
-            16,
-            12,
-            offset,
-            len(info),
-            offset + len(info),
-            len(bits),
-            0,
-            SRCCOPY,
-            d.u(108),
-            d.u(52),
-            info + bits,
-        )
-    )
+def state_record(*records):
+    """Records that should not change a bitmap DC's output, followed by drawing."""
+
+    def draw(d):
+        d.add(*records)
+        d.brush(BS_SOLID, 0x2040C0)
+        d.add(fixed.Rectangle(*d.rect(10, 10, 118, 60)), fixed.SetStretchBltMode(HALFTONE))
+        info, bits = rgb_dib(16, 12, gradient)
+        offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+        stretch = (d.u(10), d.u(66), 0, 0, 16, 12, offset, len(info), offset + len(info), len(bits), 0, SRCCOPY)
+        d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *stretch, d.u(108), d.u(52), info + bits))
+
+    return draw
+
+
+COLOR_SPACE = struct.pack("<5I", 0x50534F43, 0x400, 328, 0x73524742, 4) + bytes(308)
+STATE_RECORDS = {
+    "icm-on": (fixed.SetICMMode(2),),
+    "icm-off": (fixed.SetICMMode(1),),
+    "miter-limit": (fixed.SetMiterLimit(4),),
+    "mapper-flags": (fixed.SetMapperFlags(1),),
+    "color-adjustment": (fixed.SetColorAdjustment(24, 0, 0, 10000, 10000, 10000, 0, 10000, 50, -50, 0, 0),),
+    "color-space": (system.CreateColorSpace(5, COLOR_SPACE), fixed.SetColorSpace(5), fixed.DeleteColorSpace(5)),
+    "color-correct-palette": (fixed.ColorCorrectPalette(1, 0, 0, 0),),
+    "icm-profile": (system.SetICMProfileA(0, b"sRGB\0\0\0\0"),),
+    "color-match": (system.ColorMatchToTargetW(1, 0, b"", b""),),
+    "font-mapping": (fixed.ForceUFIMapping(1, 2), system.SetLinkedUFIs(((1, 2),))),
+    "opengl": (system.GlsRecord(bytes(8)), system.GlsBoundedRecord((0, 0, 1, 1), bytes(8))),
+    "pixel-format": (system.PixelFormat(bytes(40)),),
+    "escapes": (system.DrawEscape(0x1000, bytes(4)), system.ExtEscape(0x1000, bytes(4))),
+    "named-escape": (system.NamedEscape(0x1000, b"x\0\0\0", b""),),
+}
 
 
 # (name, draw, extents): 128 plays 1:1, 51 at a non-integer 2.5x.
@@ -565,14 +545,21 @@ FEATURES = (
     ("brushes", brushes, (128, 51)),
     ("clip-regions", clip_regions, (128, 51)),
     ("regions", regions, (128, 51)),
-    ("transfers", transfers, (128, 51)),
+    ("maskblt", mask_blt(True), (128, 51)),
+    ("maskblt-unmasked", mask_blt(False), (128,)),
+    ("plgblt", plg_blt(False), (128, 51)),
+    ("plgblt-masked", plg_blt(True), (128,)),
+    ("alphablend", alpha_blend(True), (128, 51)),
+    ("alphablend-constant", alpha_blend(False), (128,)),
+    ("transparentblt", transparent_blt, (128, 51)),
+    ("gradientfill", gradients, (128, 51)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
     ("layout", layout, (128,)),
     ("rotation", rotation, (128, 51)),
     ("save-levels", save_levels, (128,)),
     ("comments", comments, (128,)),
-    ("state-records", state_records, (128,)),
+    *((f"state-{name}", state_record(*records), (128,)) for name, records in STATE_RECORDS.items()),
 )
 SCALE_NAMES = {128: "unit", 51: "up-2-5"}
 
