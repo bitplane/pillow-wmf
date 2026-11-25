@@ -353,7 +353,7 @@ point:
 ## Gradient fills
 
 `GradientFill` maps each vertex to a whole device pixel and writes inside the
-clip region without applying ROP2 (the ROP2 interaction is unverified):
+clip region; ROP2 does not apply:
 
 - Rectangles shade from the corner nearer the leading edge, whichever index
   holds it. Each 16-bit channel advances by a floored 16.16 step per pixel
@@ -513,17 +513,19 @@ products plus the 28.4 translation.
   twice the frame sizes in logical units), and paints the widened outline's
   winding fill within the region.
 
-PlgBlt inverts the mapping at each pixel's integer point against the 28.4
-parallelogram. A source column on an exact boundary belongs to the column it
-starts; a source row on an exact boundary belongs to the row just above the
-pixel in device space. A mask bit of 1 copies the source pixel.
+PlgBlt onto a parallelogram that is a whole-pixel device rectangle (its
+corners on pixel boundaries, its edges along the axes) is a stretch: a copy
+at equal extents outside `HALFTONE`, otherwise a stretch in the DC's stretch
+mode, a negative extent mirroring the source. Its mask lies over the
+destination, so a mirrored axis reads the mask mirrored within the source
+rectangle. Any other parallelogram inverts the mapping at each pixel's
+integer point nudged right along device x: a source column or row on an
+exact boundary is the one just right of the point. Its mask is read at the
+source pixel. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
 - Under rotating or shearing transforms: text is refused.
-- A masked PlgBlt onto a parallelogram mirrored against its source reads the
-  mask mirrored within the source rectangle; only fully mirrored cases have
-  native references.
 - EMF+ (GDI+) drawing.
 - Text in `GM_ADVANCED`, Unicode text and stock fonts. Text output is
   font-limited and reported separately from exact comparisons.

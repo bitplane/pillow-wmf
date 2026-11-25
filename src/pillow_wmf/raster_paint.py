@@ -41,6 +41,14 @@ from .widen import CAP_FLAT, CAP_ROUND, JOIN_MITER, JOIN_ROUND, PenShape, dash_f
 from .widen import outline as widen_outline
 
 
+def _nudged_index(numerator, det, step):
+    """Floor of ``numerator / det`` at x + epsilon, where ``step`` is the
+    numerator's change per device pixel along x: an exact boundary falls to
+    the lower index only when the coordinate decreases along device x."""
+    value = Fraction(numerator, det)
+    return floor(value) - (value.denominator == 1 and (step > 0) != (det > 0) and step != 0)
+
+
 @dataclass
 class RasterPainter:
     """Paint one operation against stable pen/mapping state; never retain across calls."""
@@ -299,10 +307,10 @@ class RasterPainter:
 
         ``corners`` are the destination of the source's upper-left,
         upper-right and lower-left corners. Each pixel inverts the mapping
-        at its integer point. A source column on an exact boundary belongs
-        to the column it starts; a source row on an exact boundary belongs
-        to the row just above the pixel in device space. ``sample`` decides
-        per source pixel whether a mask lets it through.
+        at its integer point nudged right along device x, so a source
+        column or row on an exact boundary is the one just to the right of
+        the point. ``sample`` decides per source pixel whether a mask lets
+        it through.
         """
         (x0, y0), (x1, y1), (x2, y2) = corners
         ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x0, y2 - y0
@@ -311,16 +319,11 @@ class RasterPainter:
             return
         left, top, width, height = rectangle
         xs, ys = (x0, x1, x2, x1 + x2 - x0), (y0, y1, y2, y1 + y2 - y0)
-        upward = (ax > 0) == (det > 0)
         for y in range(max(0, min(ys) // 16), min(self._height, max(ys) // 16 + 1)):
             for x in range(max(0, min(xs) // 16), min(self._width, max(xs) // 16 + 1)):
                 dx, dy = 16 * x - x0, 16 * y - y0
-                u_numerator, v_numerator = (dx * by - dy * bx) * width, (ax * dy - ay * dx) * height
-                u = floor(Fraction(u_numerator, det))
-                v_exact = Fraction(v_numerator, det)
-                v = floor(v_exact)
-                if v == v_exact and ax and upward:
-                    v -= 1
+                u = _nudged_index((dx * by - dy * bx) * width, det, by)
+                v = _nudged_index((ax * dy - ay * dx) * height, det, -ay)
                 if not (0 <= u < width and 0 <= v < height):
                     continue
                 u, v = left + u, top + v
@@ -350,10 +353,7 @@ class RasterPainter:
         brush = self.state.brush
 
         def index(numerator, step):
-            # Floor at x + epsilon: an exact boundary falls to the lower
-            # index only when the coordinate decreases along device x.
-            value = Fraction(numerator, det)
-            return floor(value) - (value.denominator == 1 and (step > 0) != (det > 0) and step != 0)
+            return _nudged_index(numerator, det, step)
 
         for y, start, end in self._parallelogram_spans(corners):
             for x in range(start, end):

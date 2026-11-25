@@ -1177,29 +1177,61 @@ class RasterContext(ExecutionContext[DrawingState]):
                 painter.gradient_rectangle(corners, vertical=a["mode"] == 1)
 
     def _prepare_plg_blt(self, a):
+        corners = tuple(self.mapping.fixed_point(x, y) for x, y in a["points"])
+        (x0, y0), (x1, y1), (x2, y2) = corners
+        if y1 == y0 and x2 == x0 and not any(value & 15 for value in (x0, y0, x1, x2, y2)):
+            return self._prepare_rectangular_plg_blt(a, x0 >> 4, y0 >> 4, (x1 - x0) >> 4, (y2 - y0) >> 4)
         source = self._parallelogram_source(a["source"])
         rectangle = (a["src_x"], a["src_y"], a["src_width"], a["src_height"])
-        corners = tuple(self.mapping.fixed_point(x, y) for x, y in a["points"])
         sample = None
         if a["mask"] is not None:
-            mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
-            if mask.depth != 1 or not mask.complete:
-                raise UnsupportedOperation("plg_blt: masks are complete 1-bpp DIBs")
-            (x0, y0), (x1, _), (_, y2) = corners
-            # The mask keeps device orientation: a parallelogram mirrored
-            # against the source reads the mask mirrored within the rectangle.
-            flip_x, flip_y = x1 < x0, y2 < y0
+            mask = self._plg_mask(a)
 
             def sample(u, v):
-                u, v = u - a["src_x"], v - a["src_y"]
-                if flip_x:
-                    u = a["src_width"] - 1 - u
-                if flip_y:
-                    v = a["src_height"] - 1 - v
-                mx, my = u + a["mask_x"], v + a["mask_y"]
+                # A sheared or rotated parallelogram reads the mask at the source pixel.
+                mx, my = u - a["src_x"] + a["mask_x"], v - a["src_y"] + a["mask_y"]
                 return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
 
         return ParallelogramTransfer(source, corners, self._source_rectangle(source, rectangle), sample)
+
+    def _plg_mask(self, a):
+        mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
+        if mask.depth != 1 or not mask.complete:
+            raise UnsupportedOperation("plg_blt: masks are complete 1-bpp DIBs")
+        return mask
+
+    def _prepare_rectangular_plg_blt(self, a, x, y, width, height):
+        """A parallelogram that is a whole-pixel device rectangle is a stretch.
+
+        It copies (a BitBlt at equal extents outside HALFTONE) or stretches the
+        source onto the device rectangle in the DC's stretch mode, a negative
+        extent mirroring the source. The mask lies over the destination: a
+        mirrored axis reads it mirrored within the source rectangle.
+        """
+        sw, sh = a["src_width"], a["src_height"]
+        arguments = {key: a[key] for key in ("src_x", "src_y", "source")}
+        arguments |= {"x": x, "y": y, "width": width, "height": height, "rop": SRCCOPY}
+        name = "dib_bit_blt"
+        if (width, height) != (sw, sh) or self._state.stretch_mode == HALFTONE:
+            name = "dib_stretch_blt"
+            arguments |= {"src_width": sw, "src_height": sh}
+        device = Mapping(mode=MM_TEXT, window_extent=(1, 1), viewport_extent=(1, 1), surface_width=self.surface.width)
+        transfer = replace(self._transfer_preparation(), mapping=device).prepare_dib(name, arguments)
+        if not isinstance(transfer, SourceTransfer) or a["mask"] is None:
+            return transfer, None
+        mask = self._plg_mask(a)
+        flip_x, flip_y = width < 0, height < 0
+
+        def sample(u, v):
+            u, v = u - a["src_x"], v - a["src_y"]
+            if flip_x:
+                u = sw - 1 - u
+            if flip_y:
+                v = sh - 1 - v
+            mx, my = u + a["mask_x"], v + a["mask_y"]
+            return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
+
+        return transfer, (sample, 0x00AA0029)
 
     def _parallelogram_source(self, bitmap):
         layout = read_dib(bitmap, max_pixels=self.max_bitmap_pixels)
@@ -1235,6 +1267,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         return ParallelogramTransfer(source, corners, rectangle, rop=a["rop"])
 
     def _apply_plg_blt(self, call, prepared, result):
+        if isinstance(prepared, tuple):
+            transfer, mask = prepared
+            if isinstance(transfer, SourceTransfer):
+                self._painter().source_blt(transfer.bitmap, transfer.horizontal, transfer.vertical, SRCCOPY, mask=mask)
+            return
         if prepared.rop is not None:
             self._painter().transform_blt(
                 prepared.source,
