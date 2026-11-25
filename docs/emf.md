@@ -187,23 +187,40 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   are clipped to the clip region's bounding box; a figure with neither pen
   nor brush adds nothing.
 - Transfer sources are written as `GetDIBits` returns a source DC's bitmap:
-  bottom-up, zero-padded, with their image size, 32-bit samples as
-  `BI_BITFIELDS`. Masks and monochrome pattern brushes are 1-bpp without a
-  colour table (`DIB_PAL_INDICES`). Packed DIB pattern brushes are re-encoded
-  the same way; `SetDIBitsToDevice` and `StretchDIBits` keep the DIB as given.
+  bottom-up, zero-padded, with their image size. Indexed sources carry a full
+  zero-padded colour table and declare none used; 4-bpp sources are re-matched
+  by colour, so indices past a short table become the first black entry.
+  16- and 32-bpp sources are `BI_BITFIELDS` (5-5-5 and 8-8-8 by default). The
+  record's background is the DC background colour, or for indexed sources the
+  nearest table colour to it. Masks and monochrome pattern brushes are 1-bpp
+  without a colour table (`DIB_PAL_INDICES`); a 32-bpp device bitmap brush
+  becomes a bit-field DIB pattern brush. Packed DIB pattern brushes and pens
+  are re-encoded the same way; `SetDIBitsToDevice` and `StretchDIBits` keep
+  the DIB as given.
+- Bitmap brushes carry a `0x20000000` DWORD before their BitmapInfo. A DIB
+  pattern pen carries it in place of the header size; the player reads such
+  a header as a 40-byte one.
+- Fonts are written as `LOGFONTEXDV`: the LOGFONT, empty full name, style and
+  script, and a design vector with no axes.
+- `AngleArc` and `ArcTo` leave the current position at the exact end point,
+  floored; `ArcTo` measures it on the recorded, inclusive box's ellipse.
+- Header bounds count what reaches the device: drawing inside a path bracket
+  only measures the path, which `StrokePath` and `FillPath` then add. An
+  excluded clip rectangle shrinks the clip box to what it leaves, and
+  `SelectClipPath` clips to the bounding box of the path's fill coverage, or
+  of the pen's stroke footprint once widened.
 - Without an explicit frame, the frame is the bounds in 0.01 mm of the
   reference device; the header's micrometre extension is the reference
   display's size at 96 DPI.
 
 Recordings of the covered calls are byte-identical to native ones
-([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Font
-records are plain LOGFONTs, not yet checked against native recordings. Text
-output, colour pattern brushes, transfer sources other than 32-bit DIBs and
-null object selections are refused. DIB pattern pens are refused too: native
-recording writes their BitmapInfo with a corrupt size field. Unverified: the
-current position after `AngleArc` (native lands a pixel further along in one
-case), header bounds after an excluded clip rectangle, and the clip a
-widened path selects.
+([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Text output
+waits for the font work. Refused: pattern brushes from device bitmaps other
+than 1- and 32-bpp (native `CreateBitmap` cannot make them), compressed
+transfer sources, `SelectClipPath` of paths holding curves or shapes other
+than rectangles, and null object selections. Unverified: the `ArcTo` end
+position for one clockwise arc on an odd-sized box lands a pixel earlier
+natively than the ellipse rule gives.
 
 ## Geometric pens
 

@@ -490,12 +490,15 @@ class RasterContext(ExecutionContext[DrawingState]):
             corners=corners,
         )
 
-    def _stroke_from_position(self, path):
-        """Stroke a line from the current position into ``path`` and move to its end."""
+    def _stroke_from_position(self, path, end):
+        """Stroke a line from the current position into ``path``; move to ``end``.
+
+        The current position is the exact logical end point, floored, as
+        native recording reports it after AngleArc and ArcTo.
+        """
         start = self._path_point(*self._state.position)
         self._stroke_path(DevicePath(((start, path.commands[0][0]), *path.commands)), extend=True)
-        end = path.commands[-1][-1]
-        self._state.position = self.mapping.logical_point(Fraction(end[0], 16), Fraction(end[1], 16))
+        self._state.position = (math.floor(end[0]), math.floor(end[1]))
 
     def _prepare_arc_to(self, a):
         if self.mapping.graphics_mode != GM_ADVANCED:
@@ -504,7 +507,14 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_arc_to(self, call, prepared, result):
         a = call.kwargs
         box = (a["left"], a["top"], a["right"], a["bottom"])
-        self._stroke_from_position(self._advanced_arc(box, (a["start_x"], a["start_y"]), (a["end_x"], a["end_y"])))
+        end = (a["end_x"], a["end_y"])
+        path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end)
+        # The end lies on the box's ellipse along the end radial.
+        left, right = sorted(box[0::2])
+        top, bottom = sorted(box[1::2])
+        cx, cy, rx, ry = (left + right) / 2, (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2
+        angle = math.atan2((end[1] - cy) / ry, (end[0] - cx) / rx) if rx and ry else 0.0
+        self._stroke_from_position(path, (cx + rx * math.cos(angle), cy + ry * math.sin(angle)))
 
     def _prepare_angle_arc(self, a):
         if self.mapping.graphics_mode != GM_ADVANCED:
@@ -525,7 +535,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             path = self._advanced_arc((x - radius, y - radius, x + radius, y + radius), start, end)
         finally:
             self._state.arc_direction = direction
-        self._stroke_from_position(path)
+        self._stroke_from_position(path, end)
 
     def _prepare_set_miter_limit(self, a):
         if not a["limit"] >= 1:

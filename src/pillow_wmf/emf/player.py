@@ -325,6 +325,18 @@ def _mono_brush(record):
     return "create_pattern_brush", {"bitmap": encode_bitmap16(width, rows, samples, pattern=True, native_pattern=True)}
 
 
+# Native recording writes this DWORD in place of a DIB pattern pen's
+# BitmapInfo size; the header is otherwise an ordinary BITMAPINFOHEADER.
+PEN_DIB_MARKER = 0x20000000
+
+
+def _pen_dib(record) -> BitmapData:
+    info = record.bitmap_info
+    if len(info) >= 4 and struct.unpack_from("<I", info)[0] == PEN_DIB_MARKER:
+        info = struct.pack("<I", 40) + info[4:]
+    return BitmapData("dib", info + record.bits)
+
+
 def _ext_create_pen(record):
     """A pen with its LOGBRUSH; DIB pattern pens carry the record's bitmap."""
     pattern = record.brush_style in (BS_DIBPATTERN, BS_DIBPATTERN + 1)
@@ -335,7 +347,7 @@ def _ext_create_pen(record):
         "brush_style": record.brush_style,
         "hatch": record.hatch,
         "entries": tuple(record.style_entries),
-        "bitmap": _dib(record) if pattern and record.bitmap_size else None,
+        "bitmap": _pen_dib(record) if pattern and record.bitmap_size else None,
     }
 
 

@@ -12,7 +12,7 @@ import pytest
 
 from pillow_wmf.emf import Metafile, Recorder, play
 from pillow_wmf.gdi import UnsupportedOperation
-from pillow_wmf.objects import BitmapData, PaletteEntries, PaletteUpdate, RegionGeometry
+from pillow_wmf.objects import BitmapData, FontRequest, PaletteEntries, PaletteUpdate, RegionGeometry
 from pillow_wmf.raster import RasterContext
 
 NATIVE = json.loads((Path(__file__).with_name("native_recordings.json")).read_text())
@@ -297,7 +297,121 @@ def more_scenarios():
     yield "state-more", None, state_more
 
 
-SCENARIOS = [*scenarios(), *more_scenarios()]
+def bitmap16(depth, width=8, height=8):
+    stride = ((width * depth + 15) // 16) * 2
+    data = bytes((53 * i + 7) % 256 for i in range(stride * height))
+    return BitmapData("bitmap16", struct.pack("<hhhhBB", 0, width, height, stride, 1, depth) + data)
+
+
+def section(depth, colors=(), *, height=-3, compression=0, masks=()):
+    """The DIB a native probe's 4-pixel-wide DIB section held."""
+    header = struct.pack("<IiiHHIIiiII", 40, 4, height, 1, depth, compression, 0, 0, 0, len(colors), 0)
+    stride = ((4 * depth + 31) // 32) * 4
+    bits = bytes((37 * i + 11) % 256 for i in range(stride * abs(height)))
+    return BitmapData("dib", header + b"".join(struct.pack("<I", v) for v in (*masks, *colors)) + bits)
+
+
+def gap_scenarios():
+    """Fonts, pattern brushes, source depths, excluded clips and clip paths."""
+
+    def fonts(r):
+        for height, weight, italic, face, charset in (
+            (-12, 400, 0, "Arial", 0),
+            (20, 700, 1, "Courier New", 0),
+            (-9, 0, 0, "", 1),
+            (-30, 400, 0, "A Face Name Of Thirty-One Chars", 238),
+        ):
+            font = r.create_font(FontRequest(height, 0, 0, 0, weight, italic, 0, 0, charset, 0, 0, 0, 0, face))
+            r.select_object(font)
+            r.delete_object(font)
+        r.select_object(r.get_stock_object(13))
+        r.select_object(r.get_stock_object(17))
+
+    yield "fonts", None, fonts
+
+    def colour_patterns(r):
+        white = r.get_stock_object(0)
+        for depth in (1, 4, 8, 16, 24, 32):
+            if depth in (1, 32):  # Native CreateBitmap fails for the others.
+                r.select_object(r.create_pattern_brush(bitmap16(depth)))
+            r.rectangle(0, 0, 10, 10)
+            r.select_object(white)
+
+    yield "colour-patterns", None, colour_patterns
+
+    def source_depths(r):
+        sources = (
+            section(1, (0x000000, 0xFFFFFF)),
+            section(1, (0x123456, 0xABCDEF)),
+            section(4, tuple(0x111111 * i for i in range(16))),
+            section(4, (0xFF0000, 0x00FF00, 0x0000FF)),
+            section(8, tuple(0x010203 * i for i in range(256))),
+            section(8, tuple(0x0A0B0C * i for i in range(5))),
+            section(16),
+            section(16, compression=3, masks=(0xF800, 0x07E0, 0x001F)),
+            section(24),
+            section(24, height=3),
+            section(32, compression=3, masks=(0xFF0000, 0xFF00, 0xFF)),
+        )
+        for index, source in enumerate(sources):
+            r.dib_bit_blt(5 * index, 2, 4, 3, 0, 0, 0x00CC0020, source)
+
+    yield "source-depths", None, source_depths
+
+    def excluded(left, top, right, bottom):
+        def draw(r):
+            r.intersect_clip_rect(10, 10, 50, 50)
+            r.exclude_clip_rect(left, top, right, bottom)
+            r.rectangle(0, 0, 60, 60)
+
+        return draw
+
+    yield "excluded-left", None, excluded(0, 0, 30, 60)
+    yield "excluded-middle", None, excluded(20, 20, 40, 40)
+
+    for variant in ("plain", "close", "flatten", "widen", "widen5", "close-widen"):
+
+        def clip_path(r, variant=variant):
+            if variant == "widen5":
+                r.select_object(r.create_pen(0, 5, 0))
+            r.begin_path()
+            r.move_to(5, 5)
+            r.line_to(40, 10)
+            r.line_to(20, 40)
+            if "close" in variant:
+                r.close_figure()
+            r.end_path()
+            if variant == "flatten":
+                r.flatten_path()
+            if "widen" in variant:
+                r.widen_path()
+            r.select_clip_path(5)
+            r.rectangle(0, 0, 60, 60)
+
+        yield f"clip-path-{variant}", None, clip_path
+
+    def pattern_brushes(r):
+        mono = BitmapData("bitmap16", struct.pack("<hhhhBB", 0, 8, 8, 2, 1, 1) + bytes((0xAA, 0, 0x55, 0) * 4))
+        r.select_object(r.create_pattern_brush(mono))
+        r.rectangle(0, 0, 20, 20)
+        colour = BitmapData(
+            "bitmap16", struct.pack("<hhhhBB", 0, 4, 3, 16, 1, 32) + bytes((7 * i) % 256 for i in range(48))
+        )
+        r.select_object(r.create_pattern_brush(colour))
+        r.rectangle(30, 0, 50, 20)
+        r.select_object(r.create_dib_pattern_brush(5, 0, PACKED))
+        r.rectangle(60, 0, 80, 20)
+
+    yield "pattern-brushes", None, pattern_brushes
+
+    def dib_pattern_pen(r):
+        r.select_object(r.ext_create_pen(style=0x00010000, width=4, color=0, brush_style=6, bitmap=PACKED))
+        r.line_to(30, 30)
+
+    yield "dib-pattern-pen", None, dib_pattern_pen
+
+
+SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios()]
 
 
 @pytest.mark.parametrize(("name", "frame", "draw"), SCENARIOS, ids=[name for name, _, _ in SCENARIOS])
@@ -334,3 +448,35 @@ def test_unrecorded_calls_are_refused_before_anything_is_written():
     with pytest.raises(UnsupportedOperation):
         recorder.text_out(0, 0, b"x")
     assert recorder.records == []
+
+
+@pytest.mark.parametrize(
+    ("call", "args", "expected"),
+    [
+        # Native current positions after AngleArc: the exact end, floored.
+        ("angle_arc", (60, 60, 10, 30.0, 120.0), (51, 55)),
+        ("angle_arc", (60, 60, 10, 0.0, 90.0), (60, 50)),
+        ("angle_arc", (60, 60, 10, 45.0, -60.0), (69, 62)),
+        ("angle_arc", (50, 50, 17, 200.0, 75.0), (51, 66)),
+        ("angle_arc", (50, 50, 17, 10.0, 350.0), (67, 50)),
+        ("angle_arc", (40, 40, 5, 123.0, 1.5), (37, 35)),
+        ("angle_arc", (40, 40, 9, 300.0, -200.0), (38, 31)),
+        # ArcTo ends on the recorded inclusive box's ellipse, floored.
+        ("arc_to", (10, 10, 40, 30, 40, 20, 10, 10), (14, 12)),
+        ("arc_to", (5, 7, 60, 50, 0, 0, 60, 60), (47, 45)),
+    ],
+)
+def test_arcs_leave_the_native_current_position(call, args, expected):
+    recorder = Recorder()
+    recorder.move_to(0, 0)
+    getattr(recorder, call)(*args)
+    recorder.polyline_to(((300, 300),))
+    # The following PolylineTo's bounds start at the current position.
+    assert recorder.records[-1].bounds[:2] == expected
+
+
+def test_native_dib_pattern_pens_play_despite_their_header_marker():
+    # Native recording writes 0x20000000 in place of the pen bitmap's header size.
+    metafile = Metafile.from_bytes(bytes.fromhex(NATIVE["dib-pattern-pen"]))
+    context = RasterContext(64, 64, background=(255, 255, 255), trace_calls=False)
+    assert play(metafile, context, rect=(0, 0, 64, 64)) == ()
