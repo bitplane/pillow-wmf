@@ -164,6 +164,7 @@ EXPECTED = {
     "rotated-strokes": ("scripts/probe-windows-rotated-strokes.py", "rotated-strokes", True, True),
     "emf-layout": ("scripts/probe-windows-emf-layout.py", "emf-layout", True, True),
     "color-adjustment": ("scripts/probe-windows-color-adjustment.py", "color-adjustment", True, True),
+    "color-match": ("scripts/probe-windows-color-match.py", "color-match", True, True),
 }
 
 

@@ -76,6 +76,7 @@ on:
           - rotated-strokes
           - emf-layout
           - color-adjustment
+          - color-match
   push:
     branches: [master]
     paths:
