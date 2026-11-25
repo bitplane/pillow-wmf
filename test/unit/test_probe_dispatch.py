@@ -155,6 +155,7 @@ EXPECTED = {
     "chords": ("scripts/probe-windows-chords.py", None, False, None),
     "emf-frame": ("scripts/probe-windows-emf-frame.py", "emf-frame", True, True),
     "emf-transforms": ("scripts/probe-windows-emf-transforms.py", "emf-transforms", True, True),
+    "advanced-paths": ("scripts/probe-windows-advanced-paths.py", "advanced-paths", True, True),
 }
 
 

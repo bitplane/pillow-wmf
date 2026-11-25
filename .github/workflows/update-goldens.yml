@@ -67,6 +67,7 @@ on:
           - chords
           - emf-frame
           - emf-transforms
+          - advanced-paths
   push:
     branches: [master]
     paths:
