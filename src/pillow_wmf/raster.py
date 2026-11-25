@@ -60,6 +60,7 @@ from .ellipse import (
 from .execution import CREATED_KINDS, ExecutionContext
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon, coverage_spans
+from .gradient import mesh_triangles
 from .limits import DEFAULT_LIMITS
 from .mapping import IDENTITY_TRANSFORM, Mapping
 from .numeric import float32
@@ -1119,6 +1120,19 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         vertices = tuple((*self._point(x, y), red, green, blue) for x, y, red, green, blue, _ in a["vertices"])
         painter = self._painter()
+        if a["mode"] == 2 and not self.mapping.rotated:
+            clip = self._state.clip.within((0, 0, self.surface.width, self.surface.height)).rectangles()
+            clip = list(clip)
+            if clip:
+                bounds = (
+                    min(r[0] for r in clip),
+                    min(r[1] for r in clip),
+                    max(r[2] for r in clip),
+                    max(r[3] for r in clip),
+                )
+                for corners in mesh_triangles(vertices, a["meshes"], bounds):
+                    painter.gradient_triangle(corners)
+            return
         for mesh in a["meshes"]:
             corners = tuple(vertices[index] for index in mesh)
             if self.mapping.rotated and a["mode"] != 2:

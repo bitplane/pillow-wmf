@@ -306,7 +306,7 @@ point:
   vertex. Every support index comes from the forward segment directions, the
   near side taking the opposite pen vertex, and a forward sweep that ends at
   the head of the pen's second half also emits that vertex before the body
-  point. Styled cosmetic `CreatePen` pens are refused.
+  point.
 - Hatched and DIB pattern pens fill the widened footprint with the brush,
   tiled from the brush origin like any brush; a DIB pattern pen's LOGBRUSH
   colour is its colour usage.
@@ -319,10 +319,21 @@ clip region without applying ROP2 (the ROP2 interaction is unverified):
 - Rectangles shade from the corner nearer the leading edge, whichever index
   holds it. Each 16-bit channel advances by a floored 16.16 step per pixel
   and keeps its top 8 bits. The far column or row is not drawn.
-- Triangles cover rows from the top vertex to the row before the bottom
-  vertex; each row runs from the ceiling of its left edge crossing to before
-  the ceiling of its right one. A pixel's colour is the exact plane through
-  the corner colours, rounded to a 16-bit unit, then its top 8 bits.
+- Triangles ([`gradient.py`](../src/pillow_wmf/gradient.py)) clamp their
+  vertex channels to 0xff00 and cover rows from the top vertex to the row
+  before the bottom vertex; each row runs from the ceiling of its left edge
+  crossing to before the ceiling of its right one. Each channel's plane is
+  stepped in 48-bit fixed point: floored per-pixel and per-row slopes over
+  the doubled area, and a half-unit bias at the top vertex. A row starts
+  with the colour its leftmost edge reaches, or a horizontal edge's exact
+  vertex colour without the bias, and pixels keep each channel's top 8
+  bits.
+- A mesh whose vertices span 0x4000 pixels or more either way is drawn as a
+  stack, last triangle first: triangles outside the clip bounds are dropped
+  and any edge longer than 0x4000 splits its triangle at the single-precision
+  midpoint of its longest edge, the far half first, with fixed capacity for
+  the added triangles and vertices. Drawing clamps shared vertex colours in
+  place, so later midpoints see the clamped values.
 
 ## Colour adjustment
 
@@ -469,9 +480,6 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 - A square cap's extension under a general (non-orthogonal) transform can
   land one sixteenth further out natively than rounding the mapped
   half-width gives.
-- A triangle gradient's flat top row: native colours along a horizontal top
-  edge fall just below exact 8-bit boundaries, one unit lower than the
-  rounded plane.
 
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.

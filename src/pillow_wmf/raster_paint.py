@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import cached_property
-from math import ceil, floor
+from math import floor
 
 from .bitmap import DIBLayout
 from .constants import (
@@ -23,6 +23,7 @@ from .constants import (
 )
 from .flood import flood_spans
 from .geometry import DevicePath, Polygon, coverage_spans
+from .gradient import triangle_spans
 from .paint import pattern_rop2, rop2, rop3
 from .raster_state import Brush, DrawingState
 from .stroke import (
@@ -414,42 +415,10 @@ class RasterPainter:
                     self.pixel(position, y, color, operation=R2_COPYPEN)
 
     def gradient_triangle(self, corners) -> None:
-        """Shade a device triangle by the plane through its corner colours.
-
-        Rows run from the top vertex to the row before the bottom one; each
-        covers the columns from the ceiling of the left edge to before the
-        ceiling of the right edge. Each 16-bit channel of the exact plane
-        value is rounded to the nearest unit before its top 8 bits are kept.
-        """
-        (ax, ay), (bx, by), (cx, cy) = (corner[:2] for corner in corners)
-        det = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
-        if not det:
-            return
-        edges = [(corners[i], corners[(i + 1) % 3]) for i in range(3)]
-        top, bottom = min(ay, by, cy), max(ay, by, cy)
-        for y in range(max(top, 0), min(bottom, self._height)):
-            crossings = [
-                Fraction(p[0]) + Fraction((q[0] - p[0]) * (y - p[1]), q[1] - p[1])
-                for p, q in edges
-                if min(p[1], q[1]) <= y <= max(p[1], q[1]) and p[1] != q[1]
-            ]
-            left, right = ceil(min(crossings)), ceil(max(crossings))
+        """Shade a device triangle as native GradientFill does (see ``gradient.py``)."""
+        for y, left, right, colour in triangle_spans(corners, 0, self._height):
             for x in range(max(left, 0), min(right, self._width)):
-                # Barycentric weights of the second and third corners, over det.
-                second = (x - ax) * (cy - ay) - (y - ay) * (cx - ax)
-                third = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
-                first = det - second - third
-                color = tuple(
-                    floor(
-                        Fraction(
-                            corners[0][2 + i] * first + corners[1][2 + i] * second + corners[2][2 + i] * third, det
-                        )
-                        + Fraction(1, 2)
-                    )
-                    >> 8
-                    for i in range(3)
-                )
-                self.pixel(x, y, color, operation=R2_COPYPEN)
+                self.pixel(x, y, colour(x), operation=R2_COPYPEN)
 
     def pen_pixel(self, x: int, y: int) -> None:
         """Paint one pixel of a geometric pen footprint, through its brush if any."""
