@@ -96,16 +96,16 @@ the codec and reference columns against the code and fixtures.
 | `POLYDRAW` | typed | full | yes |  |
 | `SETARCDIRECTION` | typed | full | yes | Clockwise figures are the y-mirror of counterclockwise ones. |
 | `SETMITERLIMIT` | typed | partial | yes | Stored; geometric joins that use it are not yet drawn. |
-| `BEGINPATH` | typed | no | yes | Needs path recording. |
-| `ENDPATH` | typed | no | yes | Needs path recording. |
-| `CLOSEFIGURE` | typed | no | yes | Needs path recording. |
-| `FILLPATH` | typed | no | yes | Needs path recording. |
-| `STROKEANDFILLPATH` | typed | no | yes | Needs path recording. |
-| `STROKEPATH` | typed | no | yes | Needs path recording. |
-| `FLATTENPATH` | typed | no | yes | Needs path recording. |
-| `WIDENPATH` | typed | no | yes | Needs path recording and geometric pens. |
-| `SELECTCLIPPATH` | typed | no | yes | Needs path recording. |
-| `ABORTPATH` | typed | no | yes | Needs path recording. |
+| `BEGINPATH` | typed | full | yes |  |
+| `ENDPATH` | typed | full | yes |  |
+| `CLOSEFIGURE` | typed | full | yes |  |
+| `FILLPATH` | typed | full | yes |  |
+| `STROKEANDFILLPATH` | typed | full | yes |  |
+| `STROKEPATH` | typed | full | yes |  |
+| `FLATTENPATH` | typed | full | yes |  |
+| `WIDENPATH` | typed | no | yes | Needs geometric stroke outlines. |
+| `SELECTCLIPPATH` | typed | full | yes | The path interior becomes a region by its fill coverage. |
+| `ABORTPATH` | typed | full | yes |  |
 | `COMMENT` | typed | partial | yes | Never draws; EMF+ is not rendered and embedded metafiles are not played. |
 | `FILLRGN` | typed | full | yes | Region corners take the ceiling of their 28.4 position. |
 | `FRAMERGN` | typed | full | yes | As FILLRGN. |

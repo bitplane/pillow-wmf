@@ -399,7 +399,7 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _stroke_from_position(self, path):
         """Stroke a line from the current position into ``path`` and move to its end."""
         start = self._path_point(*self._state.position)
-        self._stroke_path(DevicePath(((start, path.commands[0][0]), *path.commands)))
+        self._stroke_path(DevicePath(((start, path.commands[0][0]), *path.commands)), extend=True)
         end = path.commands[-1][-1]
         self._state.position = self.mapping.logical_point(Fraction(end[0], 16), Fraction(end[1], 16))
 
@@ -717,7 +717,7 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_line_to(self, call, prepared, result):
         a = call.kwargs
-        self._stroke_path(DevicePath.polyline(self._mapped_path((self._state.position, (a["x"], a["y"])))))
+        self._stroke_path(DevicePath.polyline(self._mapped_path((self._state.position, (a["x"], a["y"])))), extend=True)
         self._state.position = a["x"], a["y"]
 
     def _apply_polyline(self, call, prepared, result):
@@ -740,13 +740,15 @@ class RasterContext(ExecutionContext[DrawingState]):
         logical = (self._state.position, *call.kwargs["points"])
         points = self._mapped_path(logical)
         if len(points) > 1:
-            self._stroke_path(DevicePath(tuple(tuple(points[i : i + 4]) for i in range(0, len(points) - 1, 3))))
+            self._stroke_path(
+                DevicePath(tuple(tuple(points[i : i + 4]) for i in range(0, len(points) - 1, 3))), extend=True
+            )
         self._state.position = logical[-1]
 
     def _apply_polyline_to(self, call, prepared, result):
         logical = (self._state.position, *call.kwargs["points"])
         if len(logical) > 1:
-            self._stroke_path(DevicePath.polyline(self._mapped_path(logical)))
+            self._stroke_path(DevicePath.polyline(self._mapped_path(logical)), extend=True)
         self._state.position = logical[-1]
 
     def _apply_poly_polyline(self, call, prepared, result):
@@ -1073,7 +1075,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             rectangle = name == "rectangle"
             if name == "rectangle":
                 bounds = (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
-                if drawing_bounds and not (pen.cosmetic and advanced_bounds):
+                # Hairline rectangles use the integer box, except in paths.
+                if drawing_bounds and not (pen.cosmetic and advanced_bounds and not self._state.recording_path):
                     bounds = drawing_bounds
                 path = DevicePath.polyline(box_corners(bounds), closed=True)
             elif name == "ellipse" and advanced_bounds is not None and drawing_bounds is advanced_bounds:
@@ -1145,7 +1148,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                 for x, y in painter.contour_pixels((path.vertices,)):
                     painter.pixel(x, y, self._state.pen.color)
             elif name == "arc":
-                painter.stroke_path(path)
+                self._stroke_path(path)
             else:
                 brush = self._state.brush
                 # Rectangle's block-fill realization simplifies ROPs
@@ -1153,7 +1156,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                 # transparency. Region/path fills retain the hatch mask.
                 if rectangle and brush.style == BS_HATCHED and self._state.rop2 in (R2_BLACK, R2_NOT, R2_NOP, R2_WHITE):
                     brush = replace(brush, style=0)
-                painter.paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
+                self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
 
     _apply_ellipse = _apply_rectangle
     _apply_arc = _apply_rectangle
@@ -1287,11 +1290,116 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _line(self, start: tuple[int, int], end: tuple[int, int]) -> None:
         self._stroke_path(DevicePath.polyline([(start[0] * 16, start[1] * 16), (end[0] * 16, end[1] * 16)]))
 
-    def _stroke_path(self, path, *, miter=False):
+    def _stroke_path(self, path, *, miter=False, extend=False):
+        """Stroke, or while recording a path add ``path`` as a figure.
+
+        ``extend`` continues the open figure that ends where ``path`` starts,
+        as LineTo and the other current-position calls do.
+        """
+        if self._state.recording_path:
+            self._record_figure(path, extend=extend)
+            return
         self._painter().stroke_path(path, miter=miter)
+
+    def _record_figure(self, path, *, extend=False):
+        if not path.commands:
+            return
+        figures = list(self._state.path or ())
+        if extend and figures and not figures[-1][1] and figures[-1][0][-1][-1] == path.commands[0][0]:
+            figures[-1] = (figures[-1][0] + path.commands, path.closed)
+        else:
+            figures.append((path.commands, path.closed))
+        self._state.path = tuple(figures)
 
     def _stroke_fragments(self, paths, *, miter=False):
         return self._painter().stroke_fragments(paths, miter=miter)
 
     def _paint_polygons(self, paths, *, miter=False, reserve_outline=False, brush=None):
+        if self._state.recording_path:
+            for path in paths:
+                self._record_figure(replace(path, closed=True))
+            return
         self._painter().paint_polygons(paths, miter=miter, reserve_outline=reserve_outline, brush=brush)
+
+    def _path_figures(self, *, close):
+        """The recorded figures as device paths, explicitly closed when ``close``."""
+        result = []
+        for commands, closed in self._state.path or ():
+            start, end = commands[0][0], commands[-1][-1]
+            if (close or closed) and start != end:
+                commands = (*commands, (end, start))
+            result.append(DevicePath(commands, closed=close or closed))
+        return tuple(result)
+
+    def _apply_begin_path(self, call, prepared, result):
+        self._state.path, self._state.recording_path = (), True
+
+    def _apply_end_path(self, call, prepared, result):
+        self._state.recording_path = False
+
+    def _apply_abort_path(self, call, prepared, result):
+        self._state.path, self._state.recording_path = None, False
+
+    def _apply_close_figure(self, call, prepared, result):
+        figures = list(self._state.path or ())
+        if self._state.recording_path and figures and not figures[-1][1]:
+            commands, _ = figures[-1]
+            start, end = commands[0][0], commands[-1][-1]
+            figures[-1] = ((*commands, (end, start)) if start != end else commands, True)
+            self._state.path = tuple(figures)
+
+    def _completed_path(self):
+        """Path operations fail natively, drawing nothing, without a completed path."""
+        return not self._state.recording_path and self._state.path is not None
+
+    def _apply_fill_path(self, call, prepared, result):
+        if not self._completed_path():
+            return
+        figures = self._path_figures(close=True)
+        self._state.path = None
+        unpenned = replace(self._state, pen=Pen((0, 0, 0), 0, PS_NULL))
+        RasterPainter(self.surface, unpenned).paint_polygons(figures)
+
+    def _apply_stroke_path(self, call, prepared, result):
+        if not self._completed_path():
+            return
+        figures = self._path_figures(close=False)
+        self._state.path = None
+        painter = self._painter()
+        for figure in figures:
+            painter.stroke_path(figure)
+
+    def _apply_stroke_and_fill_path(self, call, prepared, result):
+        if not self._completed_path():
+            return
+        figures = self._path_figures(close=True)
+        self._state.path = None
+        self._painter().paint_polygons(figures)
+
+    def _apply_flatten_path(self, call, prepared, result):
+        if not self._completed_path():
+            return
+        figures = []
+        for commands, closed in self._state.path:
+            flat = DevicePath(commands).flattened()
+            figures.append((flat.commands, closed))
+        self._state.path = tuple(figures)
+
+    def _prepare_select_clip_path(self, a):
+        if a["mode"] not in range(1, 6):
+            raise InvalidOperation(f"Region mode {a['mode']}")
+
+    def _apply_select_clip_path(self, call, prepared, result):
+        if not self._completed_path():
+            return
+        figures = self._path_figures(close=True)
+        self._state.path = None
+        spans = self._painter().contour_spans(
+            tuple(figure.flattened().vertices for figure in figures), fill_mode=self._state.polygon_fill_mode
+        )
+        region = RegionMask.from_rectangles((start, y, end, y + 1) for y, start, end in spans)
+        if call.kwargs["mode"] == 5:
+            self._state.clip = self._state.clip.select(region)
+        else:
+            bounds = (0, 0, self.surface.width, self.surface.height)
+            self._state.clip = self._state.clip.combine(region, call.kwargs["mode"], bounds)

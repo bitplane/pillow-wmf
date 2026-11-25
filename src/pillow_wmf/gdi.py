@@ -154,6 +154,38 @@ class GDI:
         """A line from the current position, then a circular arc by angle in degrees."""
         return self.invoke(Call.make("angle_arc", x=x, y=y, radius=radius, start=start, sweep=sweep))
 
+    def begin_path(self) -> None:
+        """Record subsequent drawing into the DC path instead of painting it."""
+        return self.invoke(Call.make("begin_path"))
+
+    def end_path(self) -> None:
+        return self.invoke(Call.make("end_path"))
+
+    def abort_path(self) -> None:
+        return self.invoke(Call.make("abort_path"))
+
+    def close_figure(self) -> None:
+        return self.invoke(Call.make("close_figure"))
+
+    def fill_path(self) -> None:
+        return self.invoke(Call.make("fill_path"))
+
+    def stroke_path(self) -> None:
+        return self.invoke(Call.make("stroke_path"))
+
+    def stroke_and_fill_path(self) -> None:
+        return self.invoke(Call.make("stroke_and_fill_path"))
+
+    def flatten_path(self) -> None:
+        return self.invoke(Call.make("flatten_path"))
+
+    def widen_path(self) -> None:
+        return self.invoke(Call.make("widen_path"))
+
+    def select_clip_path(self, mode: int) -> None:
+        """Combine the clip with the path's interior: RGN_AND, OR, XOR, DIFF or COPY (1-5)."""
+        return self.invoke(Call.make("select_clip_path", mode=mode))
+
     def set_miter_limit(self, limit: float) -> None:
         """Limit miter joins of geometric pens to ``limit`` times the pen width."""
         return self.invoke(Call.make("set_miter_limit", limit=limit))

@@ -62,6 +62,10 @@ class DrawingState:
     miter_limit: float = 10.0
     brush_origin: tuple[int, int] = (0, 0)
     arc_direction: int = 1  # AD_COUNTERCLOCKWISE
+    # The DC path: figures of (device commands, closed), and whether drawing
+    # calls are being recorded into it rather than painted.
+    path: tuple | None = None
+    recording_path: bool = False
     palette: LogicalPalette = field(default_factory=LogicalPalette.default)
     text_state: TextState = field(default_factory=TextState)
 
