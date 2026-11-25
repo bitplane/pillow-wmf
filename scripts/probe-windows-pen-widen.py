@@ -128,6 +128,14 @@ def main():
     print(f"Module versions: {module_versions()}")
     fits = scales()
     print(f"Scales (m11, m22, dx, dy, unit): {fits}")
+    # Single segments sweeping two octants show the cap and body vectors.
+    directions = [(64, k) for k in range(65)] + [(k, 64) for k in range(63, -1, -1)]
+    for width in (3, 5, 6, 9, 12):
+        for cap in ("flat", "square"):
+            style = PS_GEOMETRIC | CAPS[cap] | JOINS["bevel"]
+            for dx, dy in directions:
+                case = f"sweep {cap} bevel 10 solid {width} d{dx},{dy}"
+                print(f"case {case} {widen(fits['unit'], style, width, ((0, 0), (dx, dy)))}")
     for scale, transform in fits.items():
         for width in (5, 4, 3, 6, 9):
             for cap, cap_bits in CAPS.items():
@@ -146,7 +154,7 @@ def main():
         for name, bits in STYLES.items():
             for cap in ("flat", "round", "square"):
                 style = PS_GEOMETRIC | bits | CAPS[cap]
-                for width in (3, 1, 6):
+                for width in (3, 6) if scale != "unit" else (3, 1, 6):
                     for figure in ("horizontal", "shallow", "zigzag"):
                         case = f"{scale} {cap} round 10 {name} {width} {figure}"
                         print(f"case {case} {widen(transform, style, width, FIGURES[figure])}")
