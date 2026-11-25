@@ -130,12 +130,13 @@ def main():
     print(f"Scales (m11, m22, dx, dy, unit): {fits}")
     # Single segments sweeping two octants show the cap and body vectors.
     directions = [(64, k) for k in range(65)] + [(k, 64) for k in range(63, -1, -1)]
-    for width in (3, 5, 6, 9, 12):
-        for cap in ("flat", "square"):
-            style = PS_GEOMETRIC | CAPS[cap] | JOINS["bevel"]
-            for dx, dy in directions:
-                case = f"sweep {cap} bevel 10 solid {width} d{dx},{dy}"
-                print(f"case {case} {widen(fits['unit'], style, width, ((0, 0), (dx, dy)))}")
+    sweeps = [(width, 1, 1) for width in (1, 2, 4, 6, 7, 8, 50, 200)]
+    sweeps += [(6, sx, sy) for sx, sy in ((-1, 1), (1, -1), (-1, -1))]
+    style = PS_GEOMETRIC | CAPS["flat"] | JOINS["bevel"]
+    for width, sx, sy in sweeps:
+        for dx, dy in directions:
+            case = f"sweep flat bevel 10 solid {width} d{sx * dx},{sy * dy}"
+            print(f"case {case} {widen(fits['unit'], style, width, ((0, 0), (sx * dx, sy * dy)))}")
     for scale, transform in fits.items():
         for width in (5, 4, 3, 6, 9):
             for cap, cap_bits in CAPS.items():
