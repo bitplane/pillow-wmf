@@ -166,6 +166,7 @@ EXPECTED = {
     "color-adjustment": ("scripts/probe-windows-color-adjustment.py", "color-adjustment", True, True),
     "color-match": ("scripts/probe-windows-color-match.py", "color-match", True, True),
     "emf-recording": ("scripts/probe-windows-emf-recording.py", "emf-recording", True, True),
+    "rotated-regions": ("scripts/probe-windows-rotated-regions.py", "rotated-regions", True, True),
 }
 
 

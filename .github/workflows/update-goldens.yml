@@ -78,6 +78,7 @@ on:
           - color-adjustment
           - color-match
           - emf-recording
+          - rotated-regions
   push:
     branches: [master]
     paths:
