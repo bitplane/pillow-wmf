@@ -141,6 +141,11 @@ def main():
             centres.append(f"{r:02x}{g:02x}{b:02x}")
         print(f"case {name} applied={applied} mixed={mixed} {values}")
         print("  " + " ".join(centres))
+        if mixed:
+            # The top-left 64x64 destination pixels, row by row.
+            for y in range(min(64, size)):
+                row = (pixel(x, y) for x in range(min(64, size)))
+                print("  row " + " ".join(f"{r:02x}{g:02x}{b:02x}" for b, g, r in row))
 
 
 if __name__ == "__main__":
