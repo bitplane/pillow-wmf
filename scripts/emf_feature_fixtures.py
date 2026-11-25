@@ -654,6 +654,35 @@ def gradient_edges(d):
     )
 
 
+def rotated_frames(d):
+    """FrameRgn under rotating, shearing and general world transforms."""
+    d.add(
+        fixed.CreateBrushIndirect(1, BS_SOLID, 0xA00000, 0),
+        fixed.CreateBrushIndirect(2, BS_HATCHED, 0x0060C0, HS_DIAGCROSS),
+    )
+    shapes = (
+        [(0, 0, 30, 20)],
+        [(0, 0, 14, 10), (0, 10, 34, 22)],
+        [(0, 0, 30, 6), (0, 6, 8, 18), (22, 6, 30, 18), (0, 18, 30, 24)],
+    )
+    cases = (
+        ((0.9063, 0.4226, -0.4226, 0.9063, 18.0, 2.0), 0, 1, (1, 1)),
+        ((0.9063, 0.4226, -0.4226, 0.9063, 70.0, 2.0), 1, 2, (3, 2)),
+        ((1.0, 0.0, 0.5, 1.0, 4.0, 46.0), 2, 1, (2, 5)),
+        ((0.9, 0.35, -0.2, 1.1, 70.0, 44.0), 1, 1, (4, 4)),
+        ((0.7071, -0.7071, 0.7071, 0.7071, 10.0, 104.0), 2, 2, (6, 3)),
+        ((1.2, 0.3, 0.1, 0.8, 70.0, 88.0), 0, 1, (2, 7)),
+    )
+    d.add(fixed.SetMiterLimit(2))
+    for index, (transform, shape, brush, (width, height)) in enumerate(cases):
+        if index == 3:
+            d.add(fixed.SetMiterLimit(10))
+        region = region_data(list(shape_rects for shape_rects in shapes[shape]))
+        d.add(fixed.SetWorldTransform(*transform))
+        d.add(variable.FrameRgn(bounds=(0, 0, 0, 0), brush=brush, width=width, height=height, region=region))
+    d.add(fixed.SetWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+
+
 def palettes(d):
     entries = ((255, 0, 0, 0), (0, 160, 0, 0), (0, 0, 255, 0), (255, 255, 0, 0))
     d.add(variable.CreatePalette(1, entries), fixed.SelectPalette(1), fixed.RealizePalette())
@@ -832,6 +861,7 @@ FEATURES = (
     ),
     ("gradientfill", gradients, (128, 51)),
     ("gradient-edges", gradient_edges, (128,)),
+    ("rotated-frames", rotated_frames, (128, 51)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
     ("layout", layout, (128,)),
