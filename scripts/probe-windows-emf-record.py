@@ -93,6 +93,23 @@ def cases():
         indexes = (dword * 2)(0, 1)
         return gradient(dc, vertices, 2, indexes, 1, mode)
 
+    def gradient_fill_many(dc, mode, groups):
+        vertices = (TriVertex * 4)(
+            TriVertex(1, 2, 0xFF00, 0, 0, 0),
+            TriVertex(30, 20, 0, 0xFF00, 0, 0),
+            TriVertex(5, 25, 0, 0, 0xFF00, 0),
+            TriVertex(40, 30, 0x8000, 0x8000, 0x8000, 0),
+        )
+        flat = [index for group in groups for index in group]
+        indexes = (dword * len(flat))(*flat)
+        return gradient(dc, vertices, 4, indexes, len(groups), mode)
+
+    # Rectangle meshes are 8 bytes but the record has trailing padding:
+    # these show whether it is per rectangle or once per record.
+    yield "gradient-rect-two", lambda dc: gradient_fill_many(dc, 0, ((0, 1), (2, 3)))
+    yield "gradient-rect-three", lambda dc: gradient_fill_many(dc, 1, ((0, 1), (2, 3), (1, 2)))
+    yield "gradient-rect-one-of-four", lambda dc: gradient_fill_many(dc, 0, ((3, 0),))
+    yield "gradient-triangle-two", lambda dc: gradient_fill_many(dc, 2, ((0, 1, 2), (1, 2, 3)))
     yield "gradient-rect-h", lambda dc: gradient_fill(dc, 0)
     yield "gradient-rect-v", lambda dc: gradient_fill(dc, 1)
     yield "gradient-triangle", lambda dc: gradient_fill(dc, 2)
