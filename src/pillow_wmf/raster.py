@@ -143,8 +143,6 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
         "text_out",
         "ext_text_out",
         "set_dib_to_device",
-        "flood_fill",
-        "ext_flood_fill",
         "set_map_mode",
         "set_window_origin",
         "set_window_extent",
@@ -190,6 +188,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         self._state = DrawingState(
             Mapping(window_extent=(width, height), viewport_extent=(width, height), surface_width=width)
         )
+        # The DC starts with the stock default palette selected.
+        self._default_palette: LogicalPalette | None = self._state.palette
 
     @property
     def image(self):
@@ -477,6 +477,26 @@ class RasterContext(ExecutionContext[DrawingState]):
         return Pen(logical_color(a["color"]), abs(a["width"]), style)
 
     _apply_create_pen = _store_object
+
+    def _prepare_get_stock_object(self, a):
+        """Stock brushes and pens are ordinary objects; the default palette is shared."""
+        index = a["index"]
+        brushes = {0: 0xFFFFFF, 1: 0xC0C0C0, 2: 0x808080, 3: 0x404040, 4: 0, 18: 0xFFFFFF}
+        if index in brushes:
+            return Brush(logical_color(brushes[index]), BS_SOLID)
+        if index == 5:
+            return Brush((0, 0, 0), BS_NULL)
+        pens = {6: (0xFFFFFF, PS_SOLID), 7: (0, PS_SOLID), 8: (0, PS_NULL), 19: (0, PS_SOLID)}
+        if index in pens:
+            color, style = pens[index]
+            return Pen(logical_color(color), 0, style)
+        if index == 15:
+            if self._default_palette is None:
+                self._default_palette = LogicalPalette.default()
+            return self._default_palette
+        raise UnsupportedOperation(f"Stock font {index}")
+
+    _apply_get_stock_object = _store_object
 
     def _prepare_create_brush(self, a):
         if a["style"] not in (BS_SOLID, BS_NULL, BS_HATCHED) or (

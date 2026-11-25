@@ -8,7 +8,15 @@ from pillow_wmf import Call, Handle, PlaybackError, TraceContext, UnsupportedOpe
 from pillow_wmf.emf import FormatError, Limits, LogFont, Metafile, UnknownRecord, bitmaps, fixed, text, variable
 from pillow_wmf.emf.player import play
 from pillow_wmf.numeric import float32
-from pillow_wmf.objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, RegionGeometry
+from pillow_wmf.objects import (
+    BitmapData,
+    EncodedText,
+    FontRequest,
+    GlyphIndices,
+    PaletteEntries,
+    PaletteUpdate,
+    RegionGeometry,
+)
 
 DIB = bytes.fromhex("28000000 01000000 01000000 0100 1800 00000000 04000000 00000000 00000000 00000000 00000000")
 PIXEL = bytes.fromhex("0000ff00")
@@ -151,25 +159,52 @@ def test_creation_replaces_an_occupied_slot():
     assert calls[-1].kwargs["handle"].serial == 2
 
 
-def test_stock_brushes_and_pens_are_created_once():
+def test_stock_objects_are_fetched_once():
     calls, omissions = run(
         [
             fixed.SelectObject(WHITE_BRUSH),
             fixed.SelectObject(NULL_PEN),
             fixed.SelectObject(WHITE_BRUSH),
-            fixed.DeleteObject(WHITE_BRUSH),
+            fixed.DeleteObject(WHITE_BRUSH),  # Stock objects are never deleted.
             fixed.SelectObject(SYSTEM_FONT),
         ]
     )
-    brush, pen = Handle(1, "brush", None), Handle(2, "pen", None)
+    brush, pen, font = Handle(1, "brush", None), Handle(2, "pen", None), Handle(3, "font", None)
     assert calls == [
-        Call.make("create_brush", style=0, color=0xFFFFFF, hatch=0),
+        Call.make("get_stock_object", index=0),
         Call.make("select_object", handle=brush),
-        Call.make("create_pen", style=5, width=0, color=0),
+        Call.make("get_stock_object", index=8),
         Call.make("select_object", handle=pen),
         Call.make("select_object", handle=brush),
+        Call.make("get_stock_object", index=13),
+        Call.make("select_object", handle=font),
     ]
-    assert [(o.record_index, o.reason) for o in omissions] == [(4, "Stock object 13 is not yet supported")]
+    assert omissions == ()
+
+
+def test_palette_edits_name_their_palette():
+    calls, omissions = run(
+        [
+            variable.CreatePalette(1, ((1, 2, 3, 0),)),
+            variable.CreatePalette(2, ((4, 5, 6, 0),)),
+            fixed.SelectPalette(1),
+            variable.SetPaletteEntries(1, 0, ((7, 8, 9, 0),)),
+            fixed.ResizePalette(2, 4),
+            fixed.CreateBrushIndirect(3, 0, 0, 0),
+            fixed.ResizePalette(3, 4),  # Not a palette: fails natively.
+        ],
+        strict=True,
+    )
+    first, second = Handle(1, "palette", None), Handle(2, "palette", None)
+    assert [(call.name, call.kwargs) for call in calls[2:]] == [
+        ("select_palette", {"handle": first}),
+        ("set_palette_entries", {"palette": PaletteUpdate(0, ((7, 8, 9, 0),))}),
+        ("select_palette", {"handle": second}),
+        ("resize_palette", {"count": 4}),
+        ("select_palette", {"handle": first}),
+        ("create_brush", {"style": 0, "color": 0, "hatch": 0}),
+    ]
+    assert omissions == ()
 
 
 def test_unsupported_creations_are_reported_once_selected():

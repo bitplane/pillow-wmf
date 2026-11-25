@@ -344,6 +344,10 @@ class GDI:
     def set_layout(self, layout: int) -> None:
         return self.invoke(Call.make("set_layout", layout=layout))
 
+    def get_stock_object(self, index: int) -> Handle:
+        """A stock brush, pen, font or palette (GetStockObject index, 0-19)."""
+        return self.invoke(Call.make("get_stock_object", index=index))
+
     def create_pen(self, style: int, width: int, color: int) -> Handle:
         return self.invoke(Call.make("create_pen", style=style, width=width, color=color))
 

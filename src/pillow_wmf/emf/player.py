@@ -18,7 +18,7 @@ from ..constants import ETO_CLIPPED, ETO_GLYPH_INDEX, ETO_OPAQUE, GM_ADVANCED, P
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
-from ..objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, RegionGeometry
+from ..objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, PaletteUpdate, RegionGeometry
 from ..playback import Omission as Omission
 from ..playback import Omissions, PlaybackError, SaveLevels
 from . import bitmaps, fixed, system, text, variable
@@ -43,23 +43,6 @@ EMFPLUS_HEADER = 0x4001
 EMFPLUS_DUAL = 0x0001
 RGN_COPY = 5
 IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
-
-# Stock brushes and pens (MS-EMF 2.1.31) as equivalent creations. EMF has no
-# record to change the DC brush or pen colour, so they keep the defaults.
-# Stock fonts and the default palette are not emulated.
-STOCK_CREATIONS = {
-    0x80000000: ("create_brush", {"style": 0, "color": 0xFFFFFF, "hatch": 0}),  # WHITE_BRUSH
-    0x80000001: ("create_brush", {"style": 0, "color": 0xC0C0C0, "hatch": 0}),  # LTGRAY_BRUSH
-    0x80000002: ("create_brush", {"style": 0, "color": 0x808080, "hatch": 0}),  # GRAY_BRUSH
-    0x80000003: ("create_brush", {"style": 0, "color": 0x404040, "hatch": 0}),  # DKGRAY_BRUSH
-    0x80000004: ("create_brush", {"style": 0, "color": 0x000000, "hatch": 0}),  # BLACK_BRUSH
-    0x80000005: ("create_brush", {"style": BS_NULL, "color": 0, "hatch": 0}),  # NULL_BRUSH
-    0x80000006: ("create_pen", {"style": PS_SOLID, "width": 0, "color": 0xFFFFFF}),  # WHITE_PEN
-    0x80000007: ("create_pen", {"style": PS_SOLID, "width": 0, "color": 0x000000}),  # BLACK_PEN
-    0x80000008: ("create_pen", {"style": PS_NULL, "width": 0, "color": 0}),  # NULL_PEN
-    0x80000012: ("create_brush", {"style": 0, "color": 0xFFFFFF, "hatch": 0}),  # DC_BRUSH
-    0x80000013: ("create_pen", {"style": PS_SOLID, "width": 0, "color": 0x000000}),  # DC_PEN
-}
 
 # Records with no effect on a bitmap DC's output, established against native
 # references: colour management, font linking, OpenGL and escapes.
@@ -413,12 +396,10 @@ def play(
     def lookup(index, kind, object_index):
         """The backend object for a file reference; None when the lookup fails natively."""
         if object_index & STOCK_OBJECT:
-            if object_index not in STOCK_CREATIONS:
-                omissions.omit(index, kind, f"Stock object {object_index & 0xFF} is not yet supported")
-                return unavailable
+            # EMF has no record to change the DC brush or pen colour, so those
+            # stock objects keep their default colours.
             if object_index not in stock:
-                name, arguments = STOCK_CREATIONS[object_index]
-                ok, handle = invoke(index, kind, name, arguments)
+                ok, handle = invoke(index, kind, "get_stock_object", {"index": object_index & ~STOCK_OBJECT})
                 if not ok:
                     return unavailable
                 stock[object_index] = handle
@@ -431,6 +412,26 @@ def play(
         matrix = transform.matrix()
         names = ("m11", "m12", "m21", "m22", "dx", "dy")
         invoke(index, kind, "set_world_transform", dict(zip(names, matrix, strict=True)))
+
+    selected_palette = [None]  # None is the stock default palette the DC starts with.
+
+    def edit_palette(index, kind, record):
+        """EMF names the palette to edit; the shared calls edit the selected one."""
+        target = lookup(index, kind, record.object_index)
+        if target is None or target is unavailable or target.kind != "palette":
+            return  # Native palette functions fail on other objects.
+        if isinstance(record, variable.SetPaletteEntries):
+            name, arguments = "set_palette_entries", {"palette": PaletteUpdate(record.start, record.entries)}
+        else:
+            name, arguments = "resize_palette", {"count": record.count}
+        previous = selected_palette[0]
+        if target is not previous:
+            invoke(index, kind, "select_palette", {"handle": target})
+        invoke(index, kind, name, arguments)
+        if target is not previous:
+            if previous is None:
+                previous = lookup(index, kind, STOCK_OBJECT | 15)
+            invoke(index, kind, "select_palette", {"handle": previous})
 
     def paint_region(index, kind, record):
         """Region painting records carry their region; the brush is a file slot."""
@@ -510,7 +511,12 @@ def play(
                     omissions.omit(index, kind, "Object creation was unsupported")
                 continue
             name = "select_palette" if isinstance(record, fixed.SelectPalette) else "select_object"
-            invoke(index, kind, name, {"handle": handle})
+            ok, _ = invoke(index, kind, name, {"handle": handle})
+            if ok and name == "select_palette":
+                selected_palette[0] = handle
+            continue
+        if isinstance(record, (variable.SetPaletteEntries, fixed.ResizePalette)):
+            edit_palette(index, kind, record)
             continue
         if isinstance(record, fixed.DeleteObject):
             if record.object_index & STOCK_OBJECT or not 0 < record.object_index < len(slots):

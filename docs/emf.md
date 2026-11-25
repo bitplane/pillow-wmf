@@ -74,7 +74,7 @@ the codec and reference columns against the code and fixtures.
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
 | `SETWORLDTRANSFORM` | typed | partial | yes | Axis-aligned transforms only. |
 | `MODIFYWORLDTRANSFORM` | typed | partial | yes | Axis-aligned results only. |
-| `SELECTOBJECT` | typed | partial | yes | Stock brushes and pens, and the DC brush and pen; stock fonts are missing. |
+| `SELECTOBJECT` | typed | partial | yes | Stock brushes, pens and palette; stock fonts need the font work. |
 | `CREATEPEN` | typed | full | yes |  |
 | `CREATEBRUSHINDIRECT` | typed | full | yes | Solid, null and hatched brushes. |
 | `DELETEOBJECT` | typed | full | no |  |
@@ -85,12 +85,12 @@ the codec and reference columns against the code and fixtures.
 | `ARC` | typed | full | yes | Counterclockwise only. |
 | `CHORD` | typed | full | yes | Counterclockwise only. |
 | `PIE` | typed | full | yes | Counterclockwise only. |
-| `SELECTPALETTE` | typed | partial | yes | The stock default palette is missing. |
+| `SELECTPALETTE` | typed | full | yes | Including the stock default palette. |
 | `CREATEPALETTE` | typed | full | yes |  |
-| `SETPALETTEENTRIES` | typed | no | yes | Names a palette handle; the shared call edits the selected one. |
-| `RESIZEPALETTE` | typed | no | yes | As SETPALETTEENTRIES. |
+| `SETPALETTEENTRIES` | typed | full | yes | Edits the named palette; other objects fail natively. |
+| `RESIZEPALETTE` | typed | full | yes | As SETPALETTEENTRIES. |
 | `REALIZEPALETTE` | typed | full | yes |  |
-| `EXTFLOODFILL` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
+| `EXTFLOODFILL` | typed | full | yes |  |
 | `LINETO` | typed | full | yes |  |
 | `ARCTO` | typed | no | yes | Needs current-position arcs. |
 | `POLYDRAW` | typed | no | yes | Needs paths and Béziers. |

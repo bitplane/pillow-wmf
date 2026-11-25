@@ -15,6 +15,13 @@ CREATED_KINDS = {
     "create_pattern_brush": "brush",
     "create_dib_pattern_brush": "brush",
 }
+# GetStockObject indexes and the kind of object each names.
+STOCK_OBJECT_KINDS = {
+    **dict.fromkeys((0, 1, 2, 3, 4, 5, 18), "brush"),
+    **dict.fromkeys((6, 7, 8, 19), "pen"),
+    **dict.fromkeys((10, 11, 12, 13, 14, 16, 17), "font"),
+    15: "palette",
+}
 REFERENCES = {
     "select_object": {"handle": {"pen", "brush", "font", "region"}},
     "delete_object": {"handle": {"pen", "brush", "font", "region", "palette"}},
@@ -94,16 +101,20 @@ class ExecutionContext[SavedState](GDI):
                 raise InvalidOperation(f"Invalid or deleted handle: {name}")
             if handle.kind not in kinds:
                 raise InvalidOperation(f"Wrong object type for {call.name}.{name}")
-        if call.name in CREATED_KINDS and len(self._live) >= self.max_objects:
+        if (call.name in CREATED_KINDS or call.name == "get_stock_object") and len(self._live) >= self.max_objects:
             raise ResourceLimitError("Object limit exceeded")
         if call.name == "save_dc" and self._save_depth >= self.max_saved_states:
             raise ResourceLimitError("Saved-state limit exceeded")
         if call.name == "restore_dc":
             self._saved_index(arguments["saved_dc"])
+        if call.name == "get_stock_object" and arguments["index"] not in STOCK_OBJECT_KINDS:
+            raise InvalidOperation("Unknown stock object")
         return Call.make(call.name, **arguments)
 
     def _result(self, call: Call) -> Handle | int | None:
         """Reserve a result value without publishing handles or save levels."""
+        if call.name == "get_stock_object":
+            return Handle(self._next_handle, STOCK_OBJECT_KINDS[call.kwargs["index"]], self)
         if call.name in CREATED_KINDS:
             return Handle(self._next_handle, CREATED_KINDS[call.name], self)
         if call.name == "save_dc":
@@ -112,7 +123,7 @@ class ExecutionContext[SavedState](GDI):
 
     def _commit(self, call: Call, *, saved_state=_NO_SNAPSHOT) -> Handle | int | None:
         result = self._result(call)
-        if call.name in CREATED_KINDS:
+        if call.name in CREATED_KINDS or call.name == "get_stock_object":
             self._live[result.serial] = result
             self._next_handle += 1
         elif call.name == "delete_object":
