@@ -160,6 +160,7 @@ EXPECTED = {
     "pen-widen": ("scripts/probe-windows-pen-widen.py", "pen-widen", True, True),
     "gradient": ("scripts/probe-windows-gradient.py", "gradient", True, True),
     "rotated-paths": ("scripts/probe-windows-rotated-paths.py", "rotated-paths", True, True),
+    "rotated-pens": ("scripts/probe-windows-rotated-pens.py", "rotated-pens", True, True),
 }
 
 

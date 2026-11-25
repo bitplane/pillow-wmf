@@ -123,6 +123,7 @@ PROBES = {
     "pen-widen": Probe("probe-windows-pen-widen.py", output="pen-widen"),
     "gradient": Probe("probe-windows-gradient.py", output="gradient"),
     "rotated-paths": Probe("probe-windows-rotated-paths.py", output="rotated-paths"),
+    "rotated-pens": Probe("probe-windows-rotated-pens.py", output="rotated-pens"),
 }
 
 

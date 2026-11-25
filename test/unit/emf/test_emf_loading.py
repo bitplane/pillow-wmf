@@ -62,8 +62,11 @@ def test_raster_world_transform_contract():
     context.set_graphics_mode(2)
     with pytest.raises(InvalidOperation, match="Singular"):
         context.set_world_transform(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    with pytest.raises(UnsupportedOperation, match="Rotated"):
-        context.set_world_transform(0.0, 1.0, -1.0, 0.0, 0.0, 0.0)
+    context.set_world_transform(0.0, 1.0, -1.0, 0.0, 8.0, 0.0)
+    assert context.mapping.rotated and context.mapping.device_point(2, 3) == (5, 2)
+    # Axis-aligned geometry is refused under rotation, not drawn unrotated.
+    with pytest.raises(UnsupportedOperation, match="rotating"):
+        context.pat_blt(0, 0, 4, 4, 0x00F00021)
     context.set_world_transform(2.0, 0.0, 0.0, 3.0, 1.0, 0.5)
     assert context.mapping.world == (2.0, 0.0, 0.0, 3.0, 1.0, 0.5)
     assert context.mapping.device_point(2, 2) == (5, 7)

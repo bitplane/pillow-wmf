@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from fractions import Fraction
-from math import floor
+from math import floor, hypot
 
 from .constants import (
     GM_COMPATIBLE,
@@ -97,8 +97,8 @@ class Mapping:
     surface_width: int = 128
     device: ReferenceDevice = REFERENCE_DEVICE
     graphics_mode: int = GM_COMPATIBLE
-    # Float32 world transform applied before the page mapping. Only
-    # axis-aligned transforms are represented; GM_ADVANCED is required.
+    # Float32 world transform applied before the page mapping; GM_ADVANCED
+    # is required. A rotating or shearing transform needs an identity page.
     world: tuple[float, float, float, float, float, float] = IDENTITY_TRANSFORM
 
     @property
@@ -106,11 +106,29 @@ class Mapping:
         return bool(self.layout & 1)
 
     @property
+    def rotated(self) -> bool:
+        """Whether the world transform mixes the axes (rotates or shears)."""
+        return bool(self.world[1] or self.world[2])
+
+    @property
+    def identity_page(self) -> bool:
+        return (
+            not self.rtl
+            and self.window_origin == self.viewport_origin == (0, 0)
+            and self.window_extent == self.viewport_extent
+        )
+
+    @property
     def linear_scale(self):
         """Signed linear transform for pen support and logical directions.
 
         Point mapping separately preserves native product/translation rounding.
+        Under a rotating or shearing transform these are the lengths of the
+        transformed unit vectors, which a rotation preserves.
         """
+        if self.rotated:
+            m11, m12, m21, m22 = (Fraction(value) for value in self.world[:4])
+            return tuple(Fraction(hypot(a, b)) for a, b in ((m11, m12), (m21, m22)))
         x, y = (Fraction(v, w) for v, w in zip(self.viewport_extent, self.window_extent, strict=True))
         x, y = x * Fraction(self.world[0]), y * Fraction(self.world[3])
         return (-x if self.rtl else x), y
@@ -198,7 +216,18 @@ class Mapping:
         return tuple((coordinate + 8) // 16 for coordinate in self.fixed_point(x, y))
 
     def fixed_point(self, x, y):
-        """Map a point without discarding its device-space sixteenths."""
+        """Map a point without discarding its device-space sixteenths.
+
+        Under a rotating or shearing transform each coordinate is the float32
+        sum of its two float32 products, converted to 28.4, plus the 28.4
+        translation.
+        """
+        if self.rotated:
+            m11, m12, m21, m22, dx, dy = self.world
+            return (
+                fixed(float32(float32(x * m11) + float32(y * m21))) + fixed(dx),
+                fixed(float32(float32(x * m12) + float32(y * m22))) + fixed(dy),
+            )
         result = []
         for value, (scale, origin) in zip((x, y), self._transform(), strict=True):
             product = float32(value * scale)

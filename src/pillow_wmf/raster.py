@@ -49,6 +49,7 @@ from .ellipse import (
     advanced_ellipse_cubics,
     arc_figure,
     box_corners,
+    corner_ellipse_cubics,
     ellipse_cubics,
     inside_frame_bounds,
     round_rect_figure,
@@ -149,6 +150,60 @@ SRCCOPY = 0x00CC0020
 
 # Operations whose GM_ADVANCED output has no native references yet. They
 # raise rather than reuse GM_COMPATIBLE rules that may not match.
+# Operations whose geometry assumes axis-aligned mapping. A rotating or
+# shearing world transform refuses them rather than drawing them unrotated.
+AXIS_ALIGNED_ONLY = frozenset(
+    {
+        "alpha_blend",
+        "angle_arc",
+        "arc_to",
+        "bit_blt",
+        "dib_bit_blt",
+        "dib_stretch_blt",
+        "stretch_blt",
+        "stretch_dib",
+        "set_dib_to_device",
+        "mask_blt",
+        "transparent_blt",
+        "pat_blt",
+        "gradient_fill",
+        "exclude_clip_rect",
+        "intersect_clip_rect",
+        "offset_clip_region",
+        "fill_region",
+        "frame_region",
+        "invert_region",
+        "paint_region",
+        "text_out",
+        "ext_text_out",
+        "widen_path",
+    }
+)
+
+# Calls that stroke with the selected pen. Extended geometric pens build
+# their outlines from axis-aligned scales, so they are refused when rotated.
+PEN_STROKES = frozenset(
+    {
+        "arc",
+        "chord",
+        "ellipse",
+        "line_to",
+        "pie",
+        "poly_bezier",
+        "poly_bezier_to",
+        "poly_draw",
+        "poly_polygon",
+        "poly_polyline",
+        "polygon",
+        "polyline",
+        "polyline_to",
+        "rectangle",
+        "round_rect",
+        "stroke_and_fill_path",
+        "stroke_path",
+    }
+)
+
 UNVERIFIED_IN_ADVANCED_MODE = frozenset(
     {
         "text_out",
@@ -263,6 +318,15 @@ class RasterContext(ExecutionContext[DrawingState]):
         """Preparation lives beside its handler; simple state calls need none."""
         if self.mapping.graphics_mode == GM_ADVANCED and call.name in UNVERIFIED_IN_ADVANCED_MODE:
             raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
+        if self.mapping.rotated and (
+            call.name in AXIS_ALIGNED_ONLY
+            or (call.name in PEN_STROKES and self._state.pen.geometric)
+            or (
+                call.name in {"rectangle", "ellipse", "round_rect", "arc", "chord", "pie"}
+                and self._state.pen.style == PS_INSIDEFRAME
+            )
+        ):
+            raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
@@ -389,6 +453,12 @@ class RasterContext(ExecutionContext[DrawingState]):
             y0, y1 = y1, y0
             start, end = (start[0], top + bottom - start[1]), (end[0], top + bottom - end[1])
         ceil = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
+        corners = None
+        if self.mapping.rotated:
+            # The mirror image swaps the box's top and bottom corners.
+            near, far = (bottom, top) if self._state.arc_direction == 2 else (top, bottom)
+            lt, rt, lb = (self.mapping.fixed_point(*point) for point in ((left, near), (right, near), (left, far)))
+            corners = (lt, rt, (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1]), lb)
         return arc_figure(
             *ceil[:2],
             ceil[2] + 1,
@@ -400,6 +470,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             drawing_bounds=(x0, y0, x1, y1),
             radial_bounds=(left, top, right, bottom),
             advanced=True,
+            corners=corners,
         )
 
     def _stroke_from_position(self, path):
@@ -461,8 +532,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             raise InvalidOperation("World transforms require GM_ADVANCED")
         if transform[0] * transform[3] - transform[1] * transform[2] == 0:
             raise InvalidOperation("Singular world transform")
-        if transform[1] or transform[2]:
-            raise UnsupportedOperation("Rotated or sheared world transforms")
+        if (transform[1] or transform[2]) and not self.mapping.identity_page:
+            raise UnsupportedOperation("Rotated or sheared world transforms need an identity page mapping")
         return transform
 
     def _apply_set_world_transform(self, call, prepared, result):
@@ -1103,20 +1174,28 @@ class RasterContext(ExecutionContext[DrawingState]):
         # Native EBOX decrements RTL logical X edges before transforming.
         # Rectangle's wide-pen path enters EBOX after its own decrement.
         shift = int(self.mapping.rtl) * (1 + (name == "rectangle" and not pen.cosmetic))
-        advanced_bounds = None
+        advanced_bounds = corners = None
         if self.mapping.graphics_mode == GM_ADVANCED:
             # GM_ADVANCED paths use the transformed 28.4 box itself, lower-right
             # inclusive. The integer box takes the ceiling of each edge.
             # The logical box is normalized before it is transformed.
             logical_left, logical_right = sorted((a["left"], a["right"]))
             logical_top, logical_bottom = sorted((a["top"], a["bottom"]))
-            (x0, y0), (x1, y1) = (
+            # Native maps three corners and reflects the fourth through them.
+            lt, rt, lb = (
                 self.mapping.fixed_point(logical_left, logical_top),
-                self.mapping.fixed_point(logical_right, logical_bottom),
+                self.mapping.fixed_point(logical_right, logical_top),
+                self.mapping.fixed_point(logical_left, logical_bottom),
             )
+            rb = (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1])
+            corners = (lt, rt, rb, lb) if self.mapping.rotated else None
+            (x0, y0), (x1, y1) = lt, rb
             # Curves are built in world orientation; a mirroring transform
             # reverses the box edges rather than the construction.
             oriented_bounds = (x0, y0, x1, y1)
+            if corners:
+                xs, ys = [p[0] for p in corners], [p[1] for p in corners]
+                x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
             x0, x1 = sorted((x0, x1))
             y0, y1 = sorted((y0, y1))
             advanced_bounds = (x0, y0, x1, y1)
@@ -1147,6 +1226,11 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if drawing_bounds and not (pen.cosmetic and advanced_bounds and not self._state.recording_path):
                     bounds = drawing_bounds
                 path = DevicePath.polyline(box_corners(bounds), closed=True)
+                if corners:
+                    lt, rt, rb, lb = corners
+                    path = DevicePath.polyline((rt, lt, lb, rb), closed=True)
+            elif name == "ellipse" and corners:
+                path = DevicePath(corner_ellipse_cubics(corners), closed=True)
             elif name == "ellipse" and advanced_bounds is not None and drawing_bounds is advanced_bounds:
                 path = DevicePath(advanced_ellipse_cubics(*oriented_bounds), closed=True)
             elif name == "ellipse":
@@ -1180,6 +1264,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                     drawing_bounds=oriented_bounds if advanced else drawing_bounds,
                     clockwise=self.mapping.rtl,
                     advanced=advanced,
+                    corners=corners,
                 )
             else:
                 advanced = advanced_bounds is not None and drawing_bounds is advanced_bounds
@@ -1204,6 +1289,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                     radial_bounds=(x0, y0, x1, y1),
                     clockwise=self.mapping.rtl,
                     advanced=advanced,
+                    corners=corners,
                 )
                 if advanced and self._state.arc_direction == 2:
                     path = self._advanced_arc(
