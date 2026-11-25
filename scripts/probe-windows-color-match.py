@@ -22,7 +22,8 @@ FRAME = (0, 0, 1694, 1692)
 
 
 def cases():
-    profile = "sRGB Color Space Profile.icm\0".encode("utf-16-le")
+    # Names are padded with NULs to keep the record DWORD-aligned.
+    profile = "sRGB Color Space Profile.icm\0\0".encode("utf-16-le")
     for action in (0, 1, 2, 3, 4):
         yield f"action{action}", system.ColorMatchToTargetW(action, 0, b"", b"")
     for flags in (1, 2, 3):
@@ -32,7 +33,7 @@ def cases():
     yield "name-action3", system.ColorMatchToTargetW(3, 0, profile, b"")
     yield "data", system.ColorMatchToTargetW(1, 1, b"", bytes(128))
     yield "name-data", system.ColorMatchToTargetW(1, 1, profile, bytes(128))
-    yield "odd-name", system.ColorMatchToTargetW(1, 0, b"x", b"")
+    yield "short-name", system.ColorMatchToTargetW(1, 0, b"x\0\0\0", b"")
 
 
 def bind_probe(gdi):
