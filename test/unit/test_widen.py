@@ -79,6 +79,24 @@ def test_round_caps_walk_half_the_pen_from_the_perpendicular():
     assert points[:6] == [(96, 24), (96, 25), (46, 46), (25, 96), (46, 146), (96, 168)]
 
 
+def test_round_caps_walk_from_the_edge_holding_the_perpendicular():
+    pen = shape(4, CAP_ROUND, JOIN_BEVEL)
+    (points,) = outline(pen, (StrokeSegment((320, 320), (704, 384), (384, 64)),), False)
+    # The perpendicular (8, -32) is a pen vertex, but its keyframe interval
+    # puts it on the edge to (-8, -32): the cap skips it and ends on its
+    # opposite vertex instead.
+    assert points[:8] == [
+        (328, 288),
+        (313, 289),
+        (297, 297),
+        (289, 313),
+        (289, 327),
+        (297, 343),
+        (313, 351),
+        (312, 352),
+    ]
+
+
 def test_dashes_are_logical_lengths_with_round_cap_ends_pulled_back():
     line = figure((6, 6), (46, 14))
     flat = [dash for dash, _ in dash_figures(line, (9, 3), (1, 1))]

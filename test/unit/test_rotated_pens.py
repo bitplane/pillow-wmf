@@ -97,7 +97,7 @@ def test_widened_closed_figures_match_native_paths(key):
 
 CAPS = {"round": 0x0000, "square": 0x0100, "flat": 0x0200}
 JOINS = {"round": 0x0000, "bevel": 0x1000, "miter": 0x2000}
-LINE_STYLES = {"solid": 0, "dash": 1, "dot": 2, "user": 7}
+LINE_STYLES = {"solid": 0, "dash": 1, "dot": 2, "dashdot": 3, "user": 7}
 USER_STYLE = (3, 2, 1, 2)
 
 

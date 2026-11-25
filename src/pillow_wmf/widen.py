@@ -97,6 +97,20 @@ def perpendicular(pen: PenGeometry, direction: Point) -> Point:
     return _perpendicular(pen, direction)
 
 
+def _perpendicular_edge(pen: PenGeometry, direction: Point) -> tuple[Point, Point]:
+    """The pen edge whose keyframe interval holds ``direction``: its keyed vertex, then the other end.
+
+    Vertex keys hold the integer vertex, edge keys a Fraction midpoint.
+    """
+    keys = _keyframes(pen)
+    for index, (start_key, start) in enumerate(keys):
+        end_key, end = keys[(index + 1) % len(keys)]
+        if _cross(start_key, direction) >= 0 and _cross(direction, end_key) > 0:
+            vertex, middle = (end, start) if isinstance(start[0], Fraction) else (start, end)
+            return vertex, (int(2 * middle[0] - vertex[0]), int(2 * middle[1] - vertex[1]))
+    raise AssertionError("Pen keys do not surround the direction")
+
+
 def _perpendicular(pen: PenGeometry, direction: Point) -> Point:
     keys = _keyframes(pen)
     for index, (start_key, start) in enumerate(keys):
@@ -206,18 +220,51 @@ def _miter_fits(first_direction, second_direction, limit) -> bool:
     return half_sine_squared > 0 and 1 / half_sine_squared <= limit * limit
 
 
-def _join(shape, vertex, incoming, outgoing, offset_in, offset_out, outer, arc=None):
+def _sweep(shape: PenShape, origin: Point, start: Point, start_edge, end_edge, through: Point, *, join=True) -> Polygon:
+    """Inset pen vertices walked from one offset's pen edge to another's.
+
+    Each edge is the pen edge holding an offset, as (keyed vertex, other
+    end). The walk turns from ``start`` toward ``through``, from the start
+    edge's leading end to the end edge's trailing end, and is empty when both
+    offsets share an edge. A join's walk ending on the head of the pen's
+    second half emits it twice when that head is the end edge's keyed vertex.
+    """
+    if set(start_edge) == set(end_edge):
+        return []
+    vertices = _polygon(shape.pen)
+    count = len(vertices)
+    step = 1 if (_cross(vertices[0], vertices[1]) < 0) == (_cross(start, through) < 0) else -1
+
+    def ends(edge):
+        first, second = (vertices.index(vertex) for vertex in edge)
+        return (second, first) if (first + step) % count == second else (first, second)
+
+    lead, trail = ends(start_edge)[0], ends(end_edge)[1]
+    swept = [vertices[(lead + step * offset) % count] for offset in range(((trail - lead) * step) % count + 1)]
+    ring = shape.pen.vertices
+    if join and swept[-1] == ring[len(ring) // 2] == end_edge[0]:
+        swept.append(swept[-1])
+    return [_offset(origin, (_cap(x, origin), _cap(y, origin))) for x, y in swept]
+
+
+def _negate_edge(edge):
+    return tuple((-x, -y) for x, y in edge)
+
+
+def _join(shape, vertex, incoming, outgoing, offset_in, offset_out, outer, arc=None, edges=None):
     """Points from ``vertex + offset_in`` to ``vertex + offset_out``.
 
     ``arc`` gives the pen vertices bounding a round join that is built on
     support vertices; it is exclusive of both and adds no inner sweep.
+    ``edges`` gives the pen edges holding the two offsets, for other round
+    joins.
     """
     start, end = _offset(vertex, offset_in), _offset(vertex, offset_out)
     if not outer:
         points = [start, vertex, end]
         if shape.join == JOIN_ROUND and arc is None:
             back = (-incoming[0], -incoming[1])
-            points += _arc(shape, vertex, offset_out, offset_in, back) + [start, vertex, end]
+            points += _sweep(shape, vertex, offset_out, edges[1], edges[0], back) + [start, vertex, end]
         return points
     if arc is not None:
         return [start, *_arc(shape, vertex, *arc, incoming, exclusive=True), end]
@@ -226,7 +273,7 @@ def _join(shape, vertex, incoming, outgoing, offset_in, offset_out, outer, arc=N
         if tip is not None:
             return [start, tip, end]
     if shape.join == JOIN_ROUND:
-        return [start, *_arc(shape, vertex, offset_in, offset_out, incoming), end]
+        return [start, *_sweep(shape, vertex, offset_in, *edges, incoming), end]
     return [start, end]
 
 
@@ -247,9 +294,12 @@ def _cap_points(shape, point, direction, perp, *, start):
         extension = square_vector(shape, direction)
         sign = -1 if start else 1
         return [_offset(_offset(point, first), extension, sign), _offset(_offset(point, second), extension, sign)]
-    # Round caps sweep through the back of the line at the start, the front at the end.
+    # Round caps sweep through the back of the line at the start, the front at
+    # the end, between the pen edges holding the two offsets.
     through = (-direction[0], -direction[1]) if start else direction
-    return [_offset(point, first), *_arc(shape, point, first, second, through), _offset(point, second)]
+    edge = _perpendicular_edge(shape.pen, direction)
+    edges = (edge, _negate_edge(edge)) if start else (_negate_edge(edge), edge)
+    return [_offset(point, first), *_sweep(shape, point, first, *edges, through, join=False), _offset(point, second)]
 
 
 def outline(
@@ -277,6 +327,10 @@ def outline(
     support = shape.join == JOIN_ROUND and shape.cap == CAP_SQUARE
     raw = [shape.pen.vertices[_support_index(shape.pen, *segment.direction)] for segment in segments] if support else []
     bodies = [(_body(x), _body(y)) for x, y in raw] if support else perps
+    # Other round joins walk between the pen edges holding each offset, found
+    # from the direction itself even where the perpendicular is mirrored.
+    swept = shape.join == JOIN_ROUND and not support
+    edges = [_perpendicular_edge(shape.pen, segment.direction) for segment in segments] if swept else []
 
     def negate(vector):
         return (-vector[0], -vector[1])
@@ -292,16 +346,18 @@ def outline(
                 incoming, outgoing = segments[before].direction, segments[after].direction
                 offset_in, offset_out = negate(bodies[before]), negate(bodies[after])
                 arc = (negate(raw[before]), negate(raw[after])) if support else None
+                joint = (_negate_edge(edges[before]), _negate_edge(edges[after])) if swept else None
                 outer = turn < 0
             else:
                 incoming, outgoing = negate(segments[after].direction), negate(segments[before].direction)
                 offset_in, offset_out = bodies[after], bodies[before]
                 arc = (raw[after], raw[before]) if support else None
+                joint = (edges[after], edges[before]) if swept else None
                 outer = turn > 0
             if turn == 0 or offset_in == offset_out:
                 points += [_offset(vertex, offset_in), _offset(vertex, offset_out)]
                 continue
-            points += _join(shape, vertex, incoming, outgoing, offset_in, offset_out, outer, arc)
+            points += _join(shape, vertex, incoming, outgoing, offset_in, offset_out, outer, arc, joint)
         return points
 
     if closed:

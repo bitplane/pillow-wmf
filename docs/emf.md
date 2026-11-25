@@ -240,8 +240,17 @@ point:
   share it.
 - Inner joins pass through the vertex; round inner joins also sweep the pen.
   Miter tips round to the nearest 28.4 point; miters longer than the limit
-  bevel. A round join's sweep that reaches the head of the pen's second half
-  in vertex order also emits that vertex.
+  bevel.
+- Round caps and round joins walk the pen's vertices between the pen edges
+  holding the two offsets: each offset's edge is the one whose keyframe
+  interval holds the segment direction (taken unmirrored, even where the
+  perpendicular itself is mirrored). The walk runs from the leading end of
+  the first edge to the trailing end of the second, so a cap covers exactly
+  half the pen. A join's walk that ends on the head of the pen's second half
+  emits it twice when that head is the second edge's keyed vertex. Square
+  caps with round joins sweep between their support vertices instead, and a
+  sweep reaching the head of the pen's second half in vertex order also
+  emits that vertex.
 - Square caps extend along the logical direction by the device half-width of
   the larger axis, rounded to 28.4; under a scaling mapping it is first rounded
   to sixteenths of a 28.4 unit. Under a rotating transform the extension is
@@ -406,9 +415,6 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 - Under rotating or shearing transforms: text and `FrameRgn` are refused.
   Eroding the region by the frame size in logical units, as a box, comes
   within a few dozen pixels of native `FrameRgn` output but is not exact.
-- Round joins between flat or square caps: some inner joins natively omit
-  the pen vertex in the direction of the incoming body, or repeat a seam
-  vertex, where the angular sweep includes or drops it.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
   mask mirrored within the source rectangle; only fully mirrored cases have
   native references.
