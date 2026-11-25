@@ -432,6 +432,34 @@ def play(
         names = ("m11", "m12", "m21", "m22", "dx", "dy")
         invoke(index, kind, "set_world_transform", dict(zip(names, matrix, strict=True)))
 
+    def paint_region(index, kind, record):
+        """Region painting records carry their region; the brush is a file slot."""
+        try:
+            geometry = RegionGeometry(region_rectangles(record.region))
+        except FormatError as error:
+            omissions.omit(index, kind, str(error))
+            return
+        arguments = {}
+        if isinstance(record, (variable.FillRgn, variable.FrameRgn)):
+            brush = lookup(index, kind, record.brush)
+            if brush is None or brush is unavailable:
+                if brush is unavailable:
+                    omissions.omit(index, kind, "Object creation was unsupported")
+                return  # A missing brush fails natively.
+            arguments["brush"] = brush
+        if isinstance(record, variable.FrameRgn):
+            arguments |= {"width": record.width, "height": record.height}
+        name = {
+            variable.FillRgn: "fill_region",
+            variable.FrameRgn: "frame_region",
+            variable.InvertRgn: "invert_region",
+            variable.PaintRgn: "paint_region",
+        }[type(record)]
+        ok, region = invoke(index, kind, "create_region", {"region": geometry})
+        if ok:
+            invoke(index, kind, name, {"region": region, **arguments})
+            invoke(index, kind, "delete_object", {"handle": region})
+
     # Attributed to the header record, which native playback starts from.
     invoke(-1, RecordType.HEADER, "set_graphics_mode", {"mode": GM_ADVANCED})
     set_transform(-1, RecordType.HEADER)
@@ -513,6 +541,9 @@ def play(
             if ok:
                 invoke(index, kind, "ext_select_clip_region", {"region": region, "mode": record.mode})
                 invoke(index, kind, "delete_object", {"handle": region})
+            continue
+        if isinstance(record, variable.RegionRecord):
+            paint_region(index, kind, record)
             continue
         translate = TRANSLATIONS.get(type(record))
         if isinstance(record, bitmaps.SetDIBitsToDevice):

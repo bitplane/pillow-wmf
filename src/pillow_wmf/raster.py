@@ -143,10 +143,6 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
         "text_out",
         "ext_text_out",
         "set_dib_to_device",
-        "fill_region",
-        "frame_region",
-        "paint_region",
-        "invert_region",
         "flood_fill",
         "ext_flood_fill",
         "set_map_mode",
@@ -218,6 +214,12 @@ class RasterContext(ExecutionContext[DrawingState]):
         if region is not None and self.mapping.rtl:
             return region.transformed(lambda x, y: (self.surface.width - x, y))
         return region
+
+    def _region_point(self, x: int, y: int) -> tuple[int, int]:
+        """Region corners: GM_ADVANCED takes the ceiling of each 28.4 coordinate."""
+        if self.mapping.graphics_mode == GM_ADVANCED:
+            return tuple((value + 15) // 16 for value in self.mapping.fixed_point(x, y))
+        return self._point(x, y)
 
     def _path_point(self, x: int, y: int) -> tuple[int, int]:
         """A 28.4 path vertex: whole pixels in GM_COMPATIBLE, sixteenths in GM_ADVANCED."""
@@ -723,10 +725,10 @@ class RasterContext(ExecutionContext[DrawingState]):
                         a["height"],
                         *self.mapping.linear_scale,
                     ),
-                    point=self._point,
+                    point=self._region_point,
                 )
             else:
-                region = region.transformed(self._point)
+                region = region.transformed(self._region_point)
             brush = self._objects[a["brush"]] if "brush" in a else self._state.brush
             for left, top, right, bottom in region.rectangles():
                 if name == "invert_region":

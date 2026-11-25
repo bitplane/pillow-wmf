@@ -107,10 +107,10 @@ the codec and reference columns against the code and fixtures.
 | `SELECTCLIPPATH` | typed | no | yes | Needs path recording. |
 | `ABORTPATH` | typed | no | yes | Needs path recording. |
 | `COMMENT` | typed | partial | yes | Never draws; EMF+ is not rendered and embedded metafiles are not played. |
-| `FILLRGN` | typed | no | yes | Region records are not decoded. |
-| `FRAMERGN` | typed | no | yes | Region records are not decoded. |
-| `INVERTRGN` | typed | no | yes | Region records are not decoded. |
-| `PAINTRGN` | typed | no | yes | Region records are not decoded. |
+| `FILLRGN` | typed | full | yes | Region corners take the ceiling of their 28.4 position. |
+| `FRAMERGN` | typed | full | yes | As FILLRGN. |
+| `INVERTRGN` | typed | full | yes | As FILLRGN. |
+| `PAINTRGN` | typed | full | yes | As FILLRGN. |
 | `EXTSELECTCLIPRGN` | typed | full | yes | Device-space regions fitted like points; a missing clip combines with the whole surface. |
 | `BITBLT` | typed | partial | yes | Source transforms and palette-indexed sources are missing. |
 | `STRETCHBLT` | typed | partial | yes | As BITBLT. |
