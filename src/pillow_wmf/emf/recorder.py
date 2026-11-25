@@ -27,7 +27,8 @@ import heapq
 import struct
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from math import ceil, floor
+from fractions import Fraction
+from math import ceil, cos, floor, radians, sin
 
 from ..bitmap import read_dib
 from ..constants import GM_ADVANCED, GM_COMPATIBLE, MM_TEXT, PS_INSIDEFRAME, PS_NULL
@@ -44,6 +45,9 @@ from .objects import FACE_NAME_BYTES, LogFont
 STOCK_OBJECT = 0x80000000
 DEFAULT_PALETTE = 15
 NULL_PEN = 8
+NULL_BRUSH = 5
+BS_NULL = 1
+PT_MOVETO = 6
 RGN_COPY = 5
 FLOODFILLBORDER = 0
 DIB_RGB_COLORS = 0
@@ -69,6 +73,78 @@ def region_data(rectangles) -> bytes:
         bound = (0, 0, 0, 0)
     header = struct.pack("<4I4i", 32, 1, len(rectangles), 16 * len(rectangles), *bound)
     return header + b"".join(struct.pack("<4i", *rectangle) for rectangle in rectangles)
+
+
+def _dib_header(width, height, depth, compression, image_size) -> bytes:
+    return struct.pack("<IiiHHIIiiII", 40, width, height, 1, depth, compression, image_size, 0, 0, 0, 0)
+
+
+def _rows(layout) -> list[bytes]:
+    """Uncompressed DIB rows top-down, each trimmed to its samples and
+    re-padded to a DWORD with zeros."""
+    used = (layout.width * layout.depth + 7) // 8
+    stride = ((layout.width * layout.depth + 31) // 32) * 4
+    rows = []
+    for row in range(layout.height):
+        start = layout.offset + row * layout.stride
+        data = bytearray(layout.data[start : start + used].ljust(stride, b"\0"))
+        if layout.depth < 8 and layout.width * layout.depth % 8:
+            data[used - 1] &= 0xFF << (8 - layout.width * layout.depth % 8) & 0xFF
+        rows.append(bytes(data))
+    return rows if layout.top_down else rows[::-1]
+
+
+def device_bitmap(bitmap) -> tuple[bytes, bytes]:
+    """The (BitmapInfo, bits) a recording DC writes for a source DC's bitmap.
+
+    GetDIBits re-encodes it bottom-up with zero padding and its image size;
+    32-bit samples are written as BI_BITFIELDS with RGB masks.
+    """
+    layout = read_dib(bitmap)
+    if layout.compression not in (0, 3) or layout.depth != 32 or not layout.complete:
+        raise UnsupportedOperation("EMF recording of transfer sources other than 32-bit DIBs is not yet supported")
+    rows = _rows(layout)
+    bits = b"".join(reversed(rows))
+    header = _dib_header(layout.width, layout.height, 32, 3, len(bits))
+    return header + struct.pack("<3I", 0xFF0000, 0x00FF00, 0x0000FF), bits
+
+
+def mask_bitmap(bitmap) -> tuple[bytes, bytes]:
+    """A 1-bpp mask as written: no colour table, bottom-up, DIB_PAL_INDICES."""
+    layout = read_dib(bitmap, color_usage=2)
+    if layout.depth != 1 or layout.compression != 0 or not layout.complete:
+        raise UnsupportedOperation("EMF masks are 1-bpp DIBs")
+    bits = b"".join(reversed(_rows(layout)))
+    return _dib_header(layout.width, layout.height, 1, 0, len(bits)), bits
+
+
+def packed_bitmap(bitmap) -> tuple[bytes, bytes]:
+    """A packed DIB re-encoded as CreateDIBPatternBrushPt records it."""
+    layout = read_dib(bitmap)
+    if layout.compression != 0 or not layout.complete:
+        raise UnsupportedOperation("EMF recording of compressed DIB pattern brushes is not yet supported")
+    bits = b"".join(reversed(_rows(layout)))
+    info = bytearray(bitmap.data[: layout.offset])
+    struct.pack_into("<i", info, 8, abs(layout.height))
+    struct.pack_into("<I", info, 20, len(bits))
+    return bytes(info), bits
+
+
+def _offset_record(cls, values: dict, *blocks):
+    """Place (info, bits) blocks after the fixed fields, as native records do."""
+    offset = 8 + struct.calcsize("<" + cls.wire_layout)
+    names = (("bitmap_offset", "bitmap_size", "bits_offset", "bits_size"),)
+    names += (("mask_offset", "mask_size", "mask_bits_offset", "mask_bits_size"),)
+    data = b""
+    for group, block in zip(names, blocks, strict=False):
+        if block is None:
+            continue  # Absent blocks keep zero offsets and sizes.
+        info, bits = block
+        values |= dict(
+            zip(group, (offset + len(data), len(info), offset + len(data) + len(info), len(bits)), strict=True)
+        )
+        data += info + bits
+    return cls(**values, data=data)
 
 
 def _fits16(points) -> bool:
@@ -133,6 +209,14 @@ class _State:
     miter_limit: float = 10.0
     # The clip region's inclusive device bounding box; None when unclipped.
     clip: Rect | None = None
+    brush_null: bool = False
+    # Every colour written to a palette record, for the EOF palette.
+    colours: list = field(default_factory=list)
+    palette: _Object | None = None
+    background: int = 0xFFFFFF
+    # Arc direction: what the program set, and what the file last recorded.
+    arc_direction: int = 1
+    recorded_arc_direction: int = 1
     saved: list = field(default_factory=list)
 
 
@@ -176,6 +260,11 @@ class Recorder(TraceContext):
     def _object(self, state: _State, handle: Handle) -> _Object:
         return state.objects[handle.serial]
 
+    def _collect(self, state: _State, entries) -> None:
+        for red, green, blue, _ in entries:
+            if (red, green, blue, 0) not in state.colours:
+                state.colours.append((red, green, blue, 0))
+
     def _slot(self, state: _State, entry: _Object, records: list) -> int:
         """The file slot of an object, writing its creation record on first use."""
         if entry.stock is not None:
@@ -186,7 +275,10 @@ class Recorder(TraceContext):
             else:
                 entry.slot = state.capacity
                 state.capacity += 1
-            records.append(entry.create(entry.slot))
+            record = entry.create(entry.slot)
+            if isinstance(record, variable.CreatePalette):
+                self._collect(state, record.entries)
+            records.append(record)
         return entry.slot
 
     # Geometry ----------------------------------------------------------------
@@ -209,11 +301,16 @@ class Recorder(TraceContext):
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
     def _inclusive(self, state: _State, right: int, bottom: int) -> tuple[int, int]:
-        """GM_COMPATIBLE box edges moved in by one device pixel, in logical units."""
+        """GM_COMPATIBLE box edges moved in by one device pixel's logical size.
+
+        The logical size of a device pixel is the window extent over the
+        viewport extent; the result rounds half to even.
+        """
         if state.graphics_mode != GM_COMPATIBLE:
             return right, bottom
-        x, y = state.mapping.point(right, bottom)
-        return state.mapping.logical_point(x - 1, y - 1)
+        mapping = state.mapping
+        steps = (Fraction(w, v) for w, v in zip(mapping.window_extent, mapping.viewport_extent, strict=True))
+        return tuple(round(edge - step) for edge, step in zip((right, bottom), steps, strict=True))
 
     def _inflation(self, state: _State, *, frame: bool = False) -> int:
         """How far a stroke reaches past its figure's device bounds.
@@ -239,6 +336,12 @@ class Recorder(TraceContext):
         grow = self._inflation(state, frame=frame)
         return (box[0] - grow, box[1] - grow, box[2] + grow, box[3] + grow)
 
+    def _clipped(self, state: _State, box: Rect | None) -> Rect | None:
+        """Record bounds are clipped like the header's, outside path brackets."""
+        if box is None or state.clip is None or state.recording_path:
+            return box
+        return _intersection(box, state.clip)
+
     def _draw(self, state: _State, box: Rect | None) -> None:
         """Account a drawn device box in the header bounds and any open path.
 
@@ -263,29 +366,14 @@ class Recorder(TraceContext):
         if simple is not None:
             records.append(simple(a))
             if name == "save_dc":
-                state.saved.append(
-                    (
-                        deepcopy(state.mapping),
-                        state.graphics_mode,
-                        state.pen,
-                        state.position,
-                        state.clip,
-                        state.miter_limit,
-                    )
-                )
+                state.saved.append({key: deepcopy(getattr(state, key)) for key in _SAVED})
             elif name == "restore_dc":
                 level = a["saved_dc"]
                 index = level - 1 if level > 0 else len(state.saved) + level
                 if not 0 <= index < len(state.saved):
                     raise InvalidOperation("Invalid saved DC reference")
-                (
-                    state.mapping,
-                    state.graphics_mode,
-                    state.pen,
-                    state.position,
-                    state.clip,
-                    state.miter_limit,
-                ) = state.saved[index]
+                for key, value in state.saved[index].items():
+                    setattr(state, key, value)
                 del state.saved[index:]
             return records
         handler = getattr(self, f"_record_{name}", None)
@@ -304,7 +392,9 @@ class Recorder(TraceContext):
     def _record_get_stock_object(self, a, state, records):
         from ..execution import STOCK_OBJECT_KINDS
 
-        self._created(state, _Object(STOCK_OBJECT_KINDS[a["index"]], stock=a["index"]))
+        index = a["index"]
+        style = PS_NULL if index == NULL_PEN else BS_NULL if index == NULL_BRUSH else 0
+        self._created(state, _Object(STOCK_OBJECT_KINDS[index], stock=index, style=style))
 
     def _record_create_pen(self, a, state, records):
         style, width, color = a["style"], a["width"], a["color"]
@@ -347,14 +437,52 @@ class Recorder(TraceContext):
 
     def _record_create_brush(self, a, state, records):
         style, color, hatch = a["style"], a["color"], a["hatch"]
+        if style == BS_NULL:
+            # CreateBrushIndirect returns the stock NULL_BRUSH for BS_NULL.
+            self._created(state, _Object("brush", stock=NULL_BRUSH, style=BS_NULL))
+            return
         self._created(state, _Object("brush", lambda slot: fixed.CreateBrushIndirect(slot, style, color, hatch)))
 
     def _record_create_font(self, a, state, records):
         font = _log_font(a["font"])
         self._created(state, _Object("font", lambda slot: variable.ExtCreateFontIndirectW(slot, font)))
 
+    def _record_create_pattern_brush(self, a, state, records):
+        from ..bitmap16 import read_bitmap16
+
+        layout = read_bitmap16(a["bitmap"])
+        if layout.depth != 1:
+            raise UnsupportedOperation("EMF recording of colour pattern brushes is not yet supported")
+        used = (layout.width + 7) // 8
+        stride = ((layout.width + 31) // 32) * 4
+        rows = [
+            layout.data[layout.offset + y * layout.stride : layout.offset + y * layout.stride + used].ljust(
+                stride, b"\0"
+            )
+            for y in range(layout.height)
+        ]
+        bits = b"".join(reversed(rows))
+        block = (_dib_header(layout.width, layout.height, 1, 0, len(bits)), bits)
+
+        def create(slot):
+            values = {"object_index": slot, "usage": 2}
+            return _offset_record(bitmaps.CreateMonoBrush, values, block)
+
+        self._created(state, _Object("brush", create))
+
+    def _record_create_dib_pattern_brush(self, a, state, records):
+        block = packed_bitmap(a["bitmap"])
+        usage = a["color_usage"]
+
+        def create(slot):
+            return _offset_record(bitmaps.CreateDIBPatternBrushPt, {"object_index": slot, "usage": usage}, block)
+
+        self._created(state, _Object("brush", create))
+
     def _record_create_palette(self, a, state, records):
-        entries = a["palette"].entries if a["palette"] is not None else ()
+        # Native recording clears the palette entry flags.
+        palette = a["palette"]
+        entries = tuple((r, g, b, 0) for r, g, b, _ in palette.entries) if palette is not None else ()
         self._created(state, _Object("palette", lambda slot: variable.CreatePalette(slot, entries, 0x300)))
 
     def _record_create_region(self, a, state, records):
@@ -371,12 +499,37 @@ class Recorder(TraceContext):
         records.append(fixed.SelectObject(self._slot(state, entry, records)))
         if entry.kind == "pen":
             state.pen = entry
+        elif entry.kind == "brush":
+            state.brush_null = entry.style == BS_NULL
 
     def _record_select_palette(self, a, state, records):
         handle = a["handle"]
         if handle is None:
             raise UnsupportedOperation("A null palette selection has no EMF record")
-        records.append(fixed.SelectPalette(self._slot(state, self._object(state, handle), records)))
+        entry = self._object(state, handle)
+        records.append(fixed.SelectPalette(self._slot(state, entry, records)))
+        state.palette = entry
+
+    def _selected_palette_slot(self, state, records) -> int | None:
+        entry = state.palette
+        if entry is None or entry.stock is not None:
+            return None  # The stock palette is not edited through the file.
+        return self._slot(state, entry, records)
+
+    def _record_set_palette_entries(self, a, state, records):
+        slot = self._selected_palette_slot(state, records)
+        if slot is not None:
+            update = a["palette"]
+            records.append(variable.SetPaletteEntries(slot, update.start, tuple(update.entries)))
+            self._collect(state, update.entries)
+
+    def _record_resize_palette(self, a, state, records):
+        slot = self._selected_palette_slot(state, records)
+        if slot is not None:
+            records.append(fixed.ResizePalette(slot, a["count"]))
+
+    def _record_animate_palette(self, a, state, records):
+        pass  # AnimatePalette is not recorded natively.
 
     def _record_delete_object(self, a, state, records):
         entry = state.objects.pop(a["handle"].serial)
@@ -431,6 +584,19 @@ class Recorder(TraceContext):
             raise InvalidOperation(f"Graphics mode {a['mode']}")
         state.graphics_mode = state.mapping.graphics_mode = a["mode"]
 
+    def _record_set_background_color(self, a, state, records):
+        records.append(fixed.SetBkColor(a["color"]))
+        state.background = a["color"]
+
+    def _record_set_arc_direction(self, a, state, records):
+        # Recorded lazily, before the next arc that depends on it.
+        state.arc_direction = a["direction"]
+
+    def _arc_direction(self, state, records):
+        if state.arc_direction != state.recorded_arc_direction:
+            records.append(fixed.SetArcDirection(state.arc_direction))
+            state.recorded_arc_direction = state.arc_direction
+
     def _record_set_miter_limit(self, a, state, records):
         # Native recording truncates the float limit to the record's integer.
         if not a["limit"] >= 1:
@@ -443,7 +609,9 @@ class Recorder(TraceContext):
             raise InvalidOperation("World transforms require GM_ADVANCED")
         values = tuple(a[key] for key in ("m11", "m12", "m21", "m22", "dx", "dy"))
         state.mapping.world = values
+        # Native recording follows SetWorldTransform with MWT_SET of the same matrix.
         records.append(fixed.SetWorldTransform(*values))
+        records.append(fixed.ModifyWorldTransform(*values, 4))
 
     # Drawing
 
@@ -453,6 +621,8 @@ class Recorder(TraceContext):
         records.append(record_type(left, top, right, bottom, *extra))
         box = self._device_rect(state, left, top, a["right"], a["bottom"])
         if state.pen.style == PS_NULL:
+            if state.brush_null:
+                return  # Neither outline nor interior is drawn.
             # Without a pen only the interior is drawn.
             box = (box[0], box[1], box[2] - 1, box[3] - 1)
         elif state.pen.style == PS_INSIDEFRAME:
@@ -474,6 +644,7 @@ class Recorder(TraceContext):
         left, top = a["left"], a["top"]
         right, bottom = self._inclusive(state, a["right"], a["bottom"])
         start, end = (a["start_x"], a["start_y"]), (a["end_x"], a["end_y"])
+        self._arc_direction(state, records)
         records.append(record_type(left, top, right, bottom, *start, *end))
         x0, y0, x1, y1 = self._device_rect(state, left, top, a["right"], a["bottom"])
         closure = {fixed.Arc: "open", fixed.ArcTo: "open", fixed.Chord: "chord", fixed.Pie: "pie"}[record_type]
@@ -501,8 +672,43 @@ class Recorder(TraceContext):
     def _record_pie(self, a, state, records):
         self._radial(a, state, records, fixed.Pie)
 
+    def _arc_path(self, state, box, start, end, *, direction):
+        """The GM_ADVANCED arc a metafile DC strokes for ArcTo and AngleArc."""
+        left, right = sorted(box[0::2])
+        top, bottom = sorted(box[1::2])
+        (x0, y0), (x1, y1) = state.mapping.fixed_point(left, top), state.mapping.fixed_point(right, bottom)
+        if direction == 2:
+            y0, y1 = y1, y0
+            start, end = (start[0], top + bottom - start[1]), (end[0], top + bottom - end[1])
+        ceil_box = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
+        return arc_figure(
+            *ceil_box[:2],
+            ceil_box[2] + 1,
+            ceil_box[3] + 1,
+            start,
+            end,
+            drawing_bounds=(x0, y0, x1, y1),
+            radial_bounds=(left, top, right, bottom),
+            advanced=True,
+        )
+
+    def _stroke_from_position(self, state, path):
+        """Account a line from the current position into ``path``; move to its end."""
+        points = [point for command in path.commands for point in command]
+        box = _box(((x + 15) // 16, (y + 15) // 16) for x, y in points)
+        box = _union(box, self._device_box(state, (state.position,)))
+        self._draw(state, self._stroked(state, box))
+        x, y = path.commands[-1][-1]
+        state.position = state.mapping.logical_point(Fraction(x, 16), Fraction(y, 16))
+
     def _record_arc_to(self, a, state, records):
-        self._radial(a, state, records, fixed.ArcTo)
+        left, top = a["left"], a["top"]
+        right, bottom = self._inclusive(state, a["right"], a["bottom"])
+        start, end = (a["start_x"], a["start_y"]), (a["end_x"], a["end_y"])
+        self._arc_direction(state, records)
+        records.append(fixed.ArcTo(left, top, right, bottom, *start, *end))
+        box = (left, top, a["right"], a["bottom"])
+        self._stroke_from_position(state, self._arc_path(state, box, start, end, direction=state.arc_direction))
 
     def _record_move_to(self, a, state, records):
         records.append(fixed.MoveToEx(a["x"], a["y"]))
@@ -515,11 +721,15 @@ class Recorder(TraceContext):
 
     def _points(self, a, state, records, wide, narrow, *, key="points", to=False):
         points = tuple(tuple(point) for point in a[key])
-        bounds = self._stroked(state, self._device_box(state, points))
+        # The *To forms start from the current position, unless PolyDraw
+        # opens with a move.
+        moves = "types" in a and a["types"][:1] == bytes((PT_MOVETO,))
+        reached = (state.position, *points) if to and not moves else points
+        bounds = self._clipped(state, self._stroked(state, self._device_box(state, reached)))
         record_type = narrow if _fits16(points) else wide
         extra = (a["types"],) if "types" in a else ()
         records.append(record_type(bounds or (0, 0, -1, -1), points, *extra))
-        self._draw(state, self._stroked(state, self._device_box(state, (state.position, *points))) if to else bounds)
+        self._draw(state, bounds)
         if to and points:
             state.position = points[-1]
 
@@ -544,7 +754,7 @@ class Recorder(TraceContext):
     def _figures(self, figures, state, records, wide, narrow):
         figures = tuple(tuple(tuple(point) for point in figure) for figure in figures)
         flat = tuple(point for figure in figures for point in figure)
-        bounds = self._stroked(state, self._device_box(state, flat))
+        bounds = self._clipped(state, self._stroked(state, self._device_box(state, flat)))
         record_type = narrow if _fits16(flat) else wide
         records.append(record_type(bounds or (0, 0, -1, -1), figures))
         self._draw(state, bounds)
@@ -557,19 +767,29 @@ class Recorder(TraceContext):
 
     def _record_angle_arc(self, a, state, records):
         x, y, radius = a["x"], a["y"], a["radius"]
+        self._arc_direction(state, records)
         records.append(fixed.AngleArc(x, y, radius, a["start"], a["sweep"]))
-        box = self._device_box(state, ((x - radius, y - radius), (x + radius, y + radius)))
-        self._draw(state, self._stroked(state, box))
+        first, last = radians(a["start"]), radians(a["start"] + a["sweep"])
+        start = (x + radius * cos(first), y - radius * sin(first))
+        end = (x + radius * cos(last), y - radius * sin(last))
+        # AngleArc sweeps counterclockwise for positive angles, whatever the arc direction.
+        path = self._arc_path(
+            state, (x - radius, y - radius, x + radius, y + radius), start, end, direction=2 if a["sweep"] < 0 else 1
+        )
+        self._stroke_from_position(state, path)
 
     def _record_set_pixel(self, a, state, records):
         records.append(fixed.SetPixelV(a["x"], a["y"], a["color"]))
         self._draw(state, self._device_box(state, ((a["x"], a["y"]),)))
 
     def _record_flood_fill(self, a, state, records):
-        records.append(fixed.ExtFloodFill(a["x"], a["y"], a["color"], FLOODFILLBORDER))
+        self._record_ext_flood_fill(a | {"mode": FLOODFILLBORDER}, state, records)
 
     def _record_ext_flood_fill(self, a, state, records):
         records.append(fixed.ExtFloodFill(a["x"], a["y"], a["color"], a["mode"]))
+        # A flood can reach anywhere: it claims the whole reference device.
+        width, height = self.device.pixels
+        self._draw(state, (0, 0, width - 1, height - 1))
 
     # Paths
 
@@ -697,13 +917,84 @@ class Recorder(TraceContext):
     def _transfer_bounds(self, state, x, y, width, height) -> Rect:
         return self._device_rect(state, x, y, x + width, y + height)
 
-    def _record_pat_blt(self, a, state, records):
-        bounds = self._transfer_bounds(state, a["x"], a["y"], a["width"], a["height"])
-        values = dict.fromkeys(bitmaps.BitBlt.fields, 0)
-        values |= dict(zip(("bounds_left", "bounds_top", "bounds_right", "bounds_bottom"), bounds, strict=True))
-        values |= {key: a[key] for key in ("x", "y", "width", "height", "rop")}
+    def _blit(self, cls, a, state, records, *, source=True, extra=None, mask=None):
+        bounds = self._clipped(state, self._transfer_bounds(state, a["x"], a["y"], a["width"], a["height"]))
+        values = dict.fromkeys(cls.fields, 0)
+        values |= dict(
+            zip(("bounds_left", "bounds_top", "bounds_right", "bounds_bottom"), bounds or (0, 0, -1, -1), strict=True)
+        )
+        values |= {key: a[key] for key in ("x", "y", "width", "height")}
         values |= {"src_m11": 1.0, "src_m22": 1.0}
-        records.append(bitmaps.BitBlt(**values, data=b""))
+        values |= extra or {}
+        blocks = ()
+        if source and a.get("source") is not None:
+            values |= {"src_x": a["src_x"], "src_y": a["src_y"], "background": state.background}
+            blocks = (device_bitmap(a["source"]), mask)
+        records.append(_offset_record(cls, values, *blocks))
+        self._draw(state, bounds)
+
+    def _record_pat_blt(self, a, state, records):
+        self._blit(bitmaps.BitBlt, a, state, records, source=False, extra={"rop": a["rop"]})
+
+    def _record_dib_bit_blt(self, a, state, records):
+        self._blit(bitmaps.BitBlt, a, state, records, extra={"rop": a["rop"]})
+
+    def _record_dib_stretch_blt(self, a, state, records):
+        sizes = {"src_width": a["src_width"], "src_height": a["src_height"], "rop": a["rop"]}
+        self._blit(bitmaps.StretchBlt, a, state, records, extra=sizes)
+
+    def _record_alpha_blend(self, a, state, records):
+        sizes = {"src_width": a["src_width"], "src_height": a["src_height"], "blend": a["blend"]}
+        self._blit(bitmaps.AlphaBlend, a, state, records, extra=sizes)
+
+    def _record_transparent_blt(self, a, state, records):
+        sizes = {"src_width": a["src_width"], "src_height": a["src_height"], "transparent": a["transparent"]}
+        self._blit(bitmaps.TransparentBlt, a, state, records, extra=sizes)
+
+    def _record_mask_blt(self, a, state, records):
+        if a["source"] is None:
+            raise UnsupportedOperation("EMF recording of source-less MaskBlt is not yet supported")
+        mask = mask_bitmap(a["mask"]) if a["mask"] is not None else None
+        extra = {"rop": a["rop"], "mask_x": a["mask_x"], "mask_y": a["mask_y"], "mask_usage": 2}
+        self._blit(bitmaps.MaskBlt, a, state, records, extra=extra, mask=mask)
+
+    def _record_plg_blt(self, a, state, records):
+        (x0, y0), (x1, y1), (x2, y2) = a["points"]
+        corners = ((x0, y0), (x1, y1), (x2, y2), (x1 + x2 - x0, y1 + y2 - y0))
+        box = self._device_box(state, corners)
+        bounds = self._clipped(state, (box[0], box[1], box[2] - 1, box[3] - 1))
+        values = dict.fromkeys(bitmaps.PlgBlt.fields, 0)
+        values |= dict(
+            zip(("bounds_left", "bounds_top", "bounds_right", "bounds_bottom"), bounds or (0, 0, -1, -1), strict=True)
+        )
+        values |= {"x0": x0, "y0": y0, "x1": x1, "y1": y1, "x2": x2, "y2": y2}
+        values |= {key: a[key] for key in ("src_x", "src_y", "src_width", "src_height", "mask_x", "mask_y")}
+        values |= {"src_m11": 1.0, "src_m22": 1.0, "background": state.background, "mask_usage": 2}
+        mask = mask_bitmap(a["mask"]) if a["mask"] is not None else None
+        records.append(_offset_record(bitmaps.PlgBlt, values, device_bitmap(a["source"]), mask))
+        self._draw(state, bounds)
+
+    def _record_set_dib_to_device(self, a, state, records):
+        # A packed DIB is recorded as given.
+        layout = read_dib(a["source"], color_usage=a["color_usage"])
+        info, bits = a["source"].data[: layout.offset], a["source"].data[layout.offset :]
+        bounds = self._clipped(state, self._transfer_bounds(state, a["x"], a["y"], a["width"], a["height"]))
+        values = dict.fromkeys(bitmaps.SetDIBitsToDevice.fields, 0)
+        values |= dict(
+            zip(("bounds_left", "bounds_top", "bounds_right", "bounds_bottom"), bounds or (0, 0, -1, -1), strict=True)
+        )
+        values |= {"x": a["x"], "y": a["y"], "src_x": a["src_x"], "src_y": a["src_y"]}
+        values |= {"src_width": a["width"], "src_height": a["height"], "usage": a["color_usage"]}
+        values |= {"start_scan": a["start_scan"], "scan_count": a["scan_count"]}
+        records.append(_offset_record(bitmaps.SetDIBitsToDevice, values, (info, bits)))
+        self._draw(state, bounds)
+
+    def _record_gradient_fill(self, a, state, records):
+        vertices = tuple(tuple(vertex) for vertex in a["vertices"])
+        box = self._device_box(state, ((x, y) for x, y, *_ in vertices))
+        bounds = self._clipped(state, (box[0], box[1], box[2] - 1, box[3] - 1) if box else None)
+        meshes = tuple(tuple(mesh) for mesh in a["meshes"])
+        records.append(variable.GradientFill(bounds or (0, 0, -1, -1), a["mode"], vertices, meshes))
         self._draw(state, bounds)
 
     def _record_stretch_dib(self, a, state, records):
@@ -754,7 +1045,7 @@ class Recorder(TraceContext):
 
     def metafile(self, *, frame: Rect | None = None, description: str | None = None) -> Metafile:
         result = Metafile.build(
-            self.records,
+            (*self.records, variable.Eof(tuple(self._state.colours))),
             bounds=self.bounds,
             frame=self.frame() if frame is None else frame,
             device=self.device,
@@ -770,6 +1061,19 @@ class Recorder(TraceContext):
         return self.metafile(frame=frame, description=description).to_bytes()
 
 
+# Recording-DC state that SaveDC and RestoreDC carry.
+_SAVED = (
+    "mapping",
+    "graphics_mode",
+    "pen",
+    "position",
+    "clip",
+    "miter_limit",
+    "brush_null",
+    "background",
+    "arc_direction",
+)
+
 _SIMPLE = {
     "save_dc": lambda a: fixed.SaveDC(),
     "restore_dc": lambda a: fixed.RestoreDC(a["saved_dc"]),
@@ -780,9 +1084,7 @@ _SIMPLE = {
     "set_stretch_mode": lambda a: fixed.SetStretchBltMode(a["mode"]),
     "set_text_alignment": lambda a: fixed.SetTextAlign(a["alignment"]),
     "set_text_color": lambda a: fixed.SetTextColor(a["color"]),
-    "set_background_color": lambda a: fixed.SetBkColor(a["color"]),
     "set_mapper_flags": lambda a: fixed.SetMapperFlags(a["flags"]),
-    "set_arc_direction": lambda a: fixed.SetArcDirection(a["direction"]),
     "set_brush_origin": lambda a: fixed.SetBrushOrgEx(a["x"], a["y"]),
     "set_meta_region": lambda a: fixed.SetMetaRgn(),
     "set_layout": lambda a: fixed.SetLayout(a["layout"]),

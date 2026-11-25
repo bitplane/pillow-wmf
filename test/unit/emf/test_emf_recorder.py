@@ -12,7 +12,7 @@ import pytest
 
 from pillow_wmf.emf import Metafile, Recorder, play
 from pillow_wmf.gdi import UnsupportedOperation
-from pillow_wmf.objects import BitmapData, RegionGeometry
+from pillow_wmf.objects import BitmapData, PaletteEntries, PaletteUpdate, RegionGeometry
 from pillow_wmf.raster import RasterContext
 
 NATIVE = json.loads((Path(__file__).with_name("native_recordings.json")).read_text())
@@ -184,7 +184,120 @@ def scenarios():
     yield "transfers", None, transfers
 
 
-SCENARIOS = list(scenarios())
+def dib(width, height, depth, bits, colors=(), clr_used=None):
+    header = struct.pack(
+        "<IiiHHIIiiII", 40, width, height, 1, depth, 0, 0, 0, 0, len(colors) if clr_used is None else clr_used, 0
+    )
+    return BitmapData("dib", header + b"".join(struct.pack("<I", c) for c in colors) + bits)
+
+
+SOURCE = dib(4, -3, 32, bytes((7 * i) % 256 for i in range(48)))
+MASK = dib(4, -3, 1, bytes((0xA0, 0, 0, 0, 0x50, 0, 0, 0, 0xA0, 0, 0, 0)))
+PACKED = dib(2, 2, 24, bytes(range(16)))
+
+
+def more_scenarios():
+    """Palettes, clipping, transfers, gradients and state, as native recorded them."""
+
+    def advanced_once(r):
+        r.set_graphics_mode(2)
+        r.set_world_transform(1.5, 0, 0, 2.0, 3.0, 4.0)
+        r.rectangle(10, 10, 30, 20)
+
+    yield "advanced-once", None, advanced_once
+
+    def advanced_modes(r):
+        r.set_graphics_mode(2)
+        r.set_graphics_mode(2)
+        r.rectangle(10, 10, 30, 20)
+        r.set_graphics_mode(1)
+        r.rectangle(10, 10, 30, 20)
+
+    yield "advanced-modes", None, advanced_modes
+
+    def null_brush(r):
+        r.select_object(r.create_brush(1, 0, 0))
+        r.rectangle(10, 10, 30, 20)
+        r.select_object(r.get_stock_object(5))
+        r.select_object(r.get_stock_object(8))
+        r.rectangle(40, 40, 60, 60)
+
+    yield "null-brush", None, null_brush
+
+    def clipped(r):
+        r.intersect_clip_rect(10, 10, 40, 40)
+        r.polyline(((0, 0), (60, 30)))
+        r.exclude_clip_rect(10, 10, 40, 25)
+        r.rectangle(0, 0, 60, 60)
+        r.select_clip_region(None)
+        r.rectangle(70, 70, 80, 80)
+
+    yield "clipped-bounds", None, clipped
+
+    def regions(r):
+        g = r.create_region(RegionGeometry(((10, 10, 30, 30),)))
+        b = r.get_stock_object(4)
+        r.frame_region(g, b, 2, 3)
+        r.invert_region(g)
+        r.paint_region(g)
+        r.ext_select_clip_region(g, 1)
+        r.offset_clip_region(5, 6)
+        r.set_meta_region()
+        r.rectangle(0, 0, 50, 50)
+        r.delete_object(g)
+
+    yield "regions", None, regions
+
+    def palettes(r):
+        p = r.create_palette(PaletteEntries(((255, 0, 0, 0), (0, 255, 0, 0), (0, 0, 255, 0), (9, 9, 9, 1))))
+        r.select_palette(p)
+        r.realize_palette()
+        r.set_palette_entries(PaletteUpdate(1, ((1, 2, 3, 0),)))
+        r.resize_palette(6)
+        r.animate_palette(PaletteUpdate(3, ((1, 2, 3, 0),)))
+        r.select_palette(r.get_stock_object(15))
+        r.delete_object(p)
+
+    yield "palettes", None, palettes
+
+    def transfers(r):
+        r.dib_bit_blt(1, 2, 4, 3, 0, 0, 0x00CC0020, SOURCE)
+        r.dib_bit_blt(10, 2, 4, 3, 1, 1, 0x00660046, SOURCE)
+        r.set_stretch_mode(4)
+        r.dib_stretch_blt(20, 2, 8, 6, 0, 0, 4, 3, 0x00CC0020, SOURCE)
+        r.mask_blt(30, 2, 4, 3, 0, 0, 0xAACC0020, SOURCE, MASK, 0, 0, 2)
+        r.plg_blt(((45, 1), (60, 6), (42, 12)), 0, 0, 4, 3, SOURCE)
+        r.alpha_blend(1, 20, 8, 6, 0, 0, 4, 3, 0x00800000, SOURCE)
+        r.transparent_blt(20, 20, 8, 6, 0, 0, 4, 3, 0x00030201, SOURCE)
+        r.set_dib_to_device(40, 20, 2, 2, 0, 0, 0, 2, 0, PACKED)
+
+    yield "transfers-all", None, transfers
+
+    def gradients(r):
+        v = ((1, 2, 0xFF00, 0, 0, 0), (30, 20, 0, 0xFF00, 0, 0), (5, 25, 0, 0, 0xFF00, 0))
+        r.gradient_fill(0, v[:2], ((0, 1),))
+        r.gradient_fill(2, v, ((0, 1, 2),))
+
+    yield "gradients", None, gradients
+
+    def state_more(r):
+        r.set_map_mode(8)
+        r.set_window_extent(100, 100)
+        r.set_viewport_extent(100, 100)
+        r.scale_window_extent(2, 1, 3, 2)
+        r.set_viewport_origin(5, 6)
+        r.offset_window_origin(3, 4)
+        r.set_brush_origin(2, 3)
+        r.set_polygon_fill_mode(2)
+        r.set_miter_limit(4.5)
+        r.set_layout(0)
+        r.ext_flood_fill(10, 10, 0, 1)
+        r.rectangle(10, 10, 30, 30)
+
+    yield "state-more", None, state_more
+
+
+SCENARIOS = [*scenarios(), *more_scenarios()]
 
 
 @pytest.mark.parametrize(("name", "frame", "draw"), SCENARIOS, ids=[name for name, _, _ in SCENARIOS])

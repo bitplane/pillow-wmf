@@ -166,18 +166,31 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
 
 - Pens, brushes, fonts and palettes are written when first selected, into
   the lowest free 1-based slot; objects never selected never appear, nor do
-  their deletions. Stock objects are selected as `0x80000000 | index`, and
-  `CreatePen(PS_NULL)` is the stock null pen.
+  their deletions. Stock objects are selected as `0x80000000 | index`;
+  `CreatePen(PS_NULL)` and a `BS_NULL` brush are the stock null objects.
+  Palette edits name the selected palette's slot, `AnimatePalette` is not
+  recorded, palette entry flags are cleared, and every colour written to a
+  palette is collected, once each, into the EOF palette.
 - In GM_COMPATIBLE, box shapes are rewritten lower-right inclusive: the edge
-  is mapped to device pixels, moved in by one and mapped back. GM_ADVANCED
-  boxes are written as given; there is no record for the graphics mode.
+  moves in by the logical size of one device pixel (window over viewport
+  extent), rounded half to even. GM_ADVANCED boxes are written as given;
+  there is no record for the graphics mode. `SetWorldTransform` is followed
+  by `ModifyWorldTransform(MWT_SET)` with the same matrix.
+- `SetArcDirection` is written just before the next arc that uses it.
 - Point records use their 16-bit forms when every coordinate fits.
 - Bounds are inclusive device pixels. A stroke reaches the miter limit times
   half the device width plus one for mitred strokes (`Rectangle` frames and
   geometric miter joins), and half the width rounded up plus one otherwise;
-  one-pixel pens add nothing. Arcs, chords and pies count their drawn sweep.
-  Point records carry their stroked bounds; the header's are clipped to the
-  clip region's bounding box.
+  one-pixel pens add nothing. Arcs, chords and pies count their drawn sweep,
+  `*To` records include the current position (unless `PolyDraw` opens with a
+  move), and a flood fill claims the whole device. Record and header bounds
+  are clipped to the clip region's bounding box; a figure with neither pen
+  nor brush adds nothing.
+- Transfer sources are written as `GetDIBits` returns a source DC's bitmap:
+  bottom-up, zero-padded, with their image size, 32-bit samples as
+  `BI_BITFIELDS`. Masks and monochrome pattern brushes are 1-bpp without a
+  colour table (`DIB_PAL_INDICES`). Packed DIB pattern brushes are re-encoded
+  the same way; `SetDIBitsToDevice` and `StretchDIBits` keep the DIB as given.
 - Without an explicit frame, the frame is the bounds in 0.01 mm of the
   reference device; the header's micrometre extension is the reference
   display's size at 96 DPI.
@@ -185,10 +198,12 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
 Recordings of the covered calls are byte-identical to native ones
 ([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Font
 records are plain LOGFONTs, not yet checked against native recordings. Text
-output, palette editing, pattern brushes, DIB pattern pens and bitmap transfers other
-than `PatBlt` and `StretchDIBits` are refused, as are null object selections.
-Whether native recording clips record bounds, or the effect of an excluded
-clip rectangle on header bounds, is unverified.
+output, colour pattern brushes, transfer sources other than 32-bit DIBs and
+null object selections are refused. DIB pattern pens are refused too: native
+recording writes their BitmapInfo with a corrupt size field. Unverified: the
+current position after `AngleArc` (native lands a pixel further along in one
+case), header bounds after an excluded clip rectangle, and the clip a
+widened path selects.
 
 ## Geometric pens
 
