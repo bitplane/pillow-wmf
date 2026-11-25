@@ -698,6 +698,9 @@ class RasterContext(ExecutionContext[DrawingState]):
                 self.mapping.fixed_point(a["left"], a["top"]),
                 self.mapping.fixed_point(a["right"], a["bottom"]),
             )
+            # Curves are built in world orientation; a mirroring transform
+            # reverses the box edges rather than the construction.
+            oriented_bounds = (x0, y0, x1, y1)
             x0, x1 = sorted((x0, x1))
             y0, y1 = sorted((y0, y1))
             advanced_bounds = (x0, y0, x1, y1)
@@ -728,11 +731,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                     bounds = drawing_bounds
                 path = DevicePath.polyline(box_corners(bounds), closed=True)
             elif name == "ellipse" and advanced_bounds is not None and drawing_bounds is advanced_bounds:
-                (x0, y0), (x1, y1) = (
-                    self.mapping.fixed_point(a["left"], a["top"]),
-                    self.mapping.fixed_point(a["right"], a["bottom"]),
-                )
-                path = DevicePath(advanced_ellipse_cubics(x0, y0, x1, y1), closed=True)
+                path = DevicePath(advanced_ellipse_cubics(*oriented_bounds), closed=True)
             elif name == "ellipse":
                 path = DevicePath(
                     ellipse_cubics(
@@ -747,6 +746,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                     closed=True,
                 )
             elif name == "round_rect":
+                advanced = advanced_bounds is not None and drawing_bounds is advanced_bounds
                 # Corner proportions are established before integer device
                 # mapping, just like arc radial directions.
                 width = Fraction(abs(a["ellipse_width"]) * (right - left), abs(a["right"] - a["left"]))
@@ -760,12 +760,16 @@ class RasterContext(ExecutionContext[DrawingState]):
                     width,
                     height,
                     null_pen=self._state.pen.style == PS_NULL,
-                    drawing_bounds=drawing_bounds,
+                    drawing_bounds=oriented_bounds if advanced else drawing_bounds,
                     clockwise=self.mapping.rtl,
-                    advanced=advanced_bounds is not None and drawing_bounds is advanced_bounds,
+                    advanced=advanced,
                 )
             else:
-                sx, sy = (1 if value >= 0 else -1 for value in self.mapping.linear_scale)
+                advanced = advanced_bounds is not None and drawing_bounds is advanced_bounds
+                # GM_COMPATIBLE arcs run counterclockwise in device space, so
+                # a mirroring mapping reflects the radials; GM_ADVANCED arcs
+                # run counterclockwise in world space.
+                sx, sy = (1, 1) if advanced else (1 if value >= 0 else -1 for value in self.mapping.linear_scale)
                 start = sx * a["start_x"], sy * a["start_y"]
                 end = sx * a["end_x"], sy * a["end_y"]
                 x0, x1 = sorted((sx * (a["left"] - shift), sx * (a["right"] - shift)))
@@ -779,10 +783,10 @@ class RasterContext(ExecutionContext[DrawingState]):
                     end,
                     closure="open" if name == "arc" else name,
                     null_pen=self._state.pen.style == PS_NULL,
-                    drawing_bounds=drawing_bounds,
+                    drawing_bounds=oriented_bounds if advanced else drawing_bounds,
                     radial_bounds=(x0, y0, x1, y1),
                     clockwise=self.mapping.rtl,
-                    advanced=advanced_bounds is not None and drawing_bounds is advanced_bounds,
+                    advanced=advanced,
                 )
             if covered:
                 for x, y in painter.contour_pixels((path.vertices,)):

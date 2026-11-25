@@ -78,6 +78,7 @@ def bind_probe(gdi):
     bind(gdi, "BeginPath", boolean, ptr)
     bind(gdi, "EndPath", boolean, ptr)
     bind(gdi, "AbortPath", boolean, ptr)
+    bind(gdi, "FlattenPath", boolean, ptr)
     bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
     for name in ("Rectangle", "Ellipse"):
         bind(gdi, name, boolean, ptr, integer, integer, integer, integer)
@@ -96,7 +97,7 @@ def read_path(gdi, dc):
     return " ".join(f"({types[i]},{points[i].x},{points[i].y})" for i in range(count))
 
 
-def advanced_case(gdi, dc, transform, call):
+def advanced_case(gdi, dc, transform, call, *, flatten=False):
     check(gdi.SetGraphicsMode(dc, 2), "SetGraphicsMode")
     check(
         gdi.SetWorldTransform(dc, ctypes.byref(XForm(transform[0], 0, 0, transform[1], transform[2], transform[3]))),
@@ -105,6 +106,8 @@ def advanced_case(gdi, dc, transform, call):
     check(gdi.BeginPath(dc), "BeginPath")
     drawn = getattr(gdi, call[0])(dc, *call[1:])
     check(gdi.EndPath(dc), "EndPath")
+    if flatten:
+        check(gdi.FlattenPath(dc), "FlattenPath")
     check(gdi.SetWorldTransform(dc, ctypes.byref(XForm(1 / 16, 0, 0, 1 / 16, 0, 0))), "SetWorldTransform")
     return f"drawn={drawn} " + read_path(gdi, dc)
 
@@ -136,6 +139,13 @@ def main():
                     bind_probe(gdi)
                     check(gdi.SetMapMode(dc, 1), "SetMapMode")
                     print(f"{name} box={box} {shape} {advanced_case(gdi, dc, transform, call)}")
+                if shape in ("ellipse", "arc", "roundrect"):
+                    # Flattened in the device, as drawing flattens curves.
+                    with reference_surface(16, 16) as (gdi, dc, _):
+                        bind_probe(gdi)
+                        check(gdi.SetMapMode(dc, 1), "SetMapMode")
+                        flat = advanced_case(gdi, dc, transform, call, flatten=True)
+                        print(f"{name} box={box} flat-{shape} {flat}")
 
 
 if __name__ == "__main__":
