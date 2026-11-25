@@ -23,6 +23,15 @@ BS_SOLID, BS_HATCHED = 0, 2
 HS_DIAGCROSS = 5
 R2_XORPEN = 7
 SRCCOPY, PATCOPY, DSTINVERT = 0x00CC0020, 0x00F00021, 0x00550009
+SRCINVERT, SRCAND, SRCPAINT, NOTSRCCOPY, MERGECOPY, SRCERASE = (
+    0x00660046,
+    0x008800C6,
+    0x00EE0086,
+    0x00330008,
+    0x00C000CA,
+    0x00440328,
+)
+COLORONCOLOR, HALFTONE = 3, 4
 RGN_COPY = 5
 
 
@@ -206,6 +215,72 @@ def pattern_blits(d):
     pat_blt(100, 110, -30, -12, PATCOPY)
 
 
+def gradient_dib(width=32, height=24):
+    """Distinct colours per pixel, so any source offset or scaling shows."""
+    pixels = bytes(
+        value
+        for y in range(height)
+        for x in range(width)
+        for value in ((x * 8) % 256, (y * 10) % 256, ((x + y) * 5 + 40) % 256)
+    )
+    dib = encode_dib24(RGBBitmap(width, height, pixels)).data
+    return dib[:40], dib[40:]
+
+
+def mono_dib():
+    """An 8x8 1-bpp checkerboard with a navy and yellow colour table."""
+    header = struct.pack("<IiiHHIIiiII", 40, 8, 8, 1, 1, 0, 32, 0, 0, 2, 0)
+    colours = bytes((128, 0, 0, 0, 0, 255, 255, 0))  # BGRX navy, yellow.
+    rows = b"".join(bytes((0xAA if y % 2 else 0x55, 0, 0, 0)) for y in range(8))
+    return header + colours, rows
+
+
+def source_blit(d, cls, left, top, width, height, rop, source, *, src=(0, 0), src_size=None):
+    """A BitBlt or StretchBlt from a DIB; positions are design units, extents logical."""
+    info, bits = source
+    offset = 8 + struct.calcsize("<" + cls.wire_layout)
+    fields = dict.fromkeys(cls.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0}
+    fields |= {"x": d.u(left), "y": d.u(top), "width": width, "height": height, "rop": rop}
+    fields |= {"src_x": src[0], "src_y": src[1], "background": 0xFFFFFF}
+    fields |= {"bitmap_offset": offset, "bitmap_size": len(info), "bits_offset": offset + len(info)}
+    fields |= {"bits_size": len(bits), "data": info + bits}
+    if src_size is not None:
+        fields |= {"src_width": src_size[0], "src_height": src_size[1]}
+    d.add(cls(**fields))
+
+
+def bit_blits(d):
+    gradient = gradient_dib()
+    d.brush(BS_SOLID, 0x808080)
+    blit = dict.fromkeys(bitmaps.BitBlt.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0, "data": b""}
+    d.add(bitmaps.BitBlt(**blit | {"x": 0, "y": d.u(64), "width": d.extent, "height": d.u(64), "rop": PATCOPY}))
+    source_blit(d, bitmaps.BitBlt, 4, 4, 12, 9, SRCCOPY, gradient)
+    source_blit(d, bitmaps.BitBlt, 44, 4, 12, 9, SRCCOPY, gradient, src=(5, 3))
+    source_blit(d, bitmaps.BitBlt, 84, 4, 9, 12, SRCCOPY, mono_dib())
+    d.brush(BS_SOLID, 0x0000FF)
+    for index, rop in enumerate((SRCINVERT, SRCAND, SRCPAINT, NOTSRCCOPY, MERGECOPY, SRCERASE)):
+        source_blit(d, bitmaps.BitBlt, 4 + 40 * (index % 3), 70 + 30 * (index // 3), 14, 10, rop, gradient, src=(2, 1))
+
+
+def stretch_blits(d):
+    gradient = gradient_dib()
+
+    def stretch(left, top, width, height, **options):
+        right, bottom = d.u(left + width), d.u(top + height)
+        source_blit(
+            d, bitmaps.StretchBlt, left, top, right - d.u(left), bottom - d.u(top), SRCCOPY, gradient, **options
+        )
+
+    stretch(4, 4, 36, 27, src=(1, 2), src_size=(4, 3))
+    stretch(84, 4, -36, 27, src=(1, 2), src_size=(4, 3))
+    stretch(44, 60, 36, -27, src=(1, 2), src_size=(4, 3))
+    stretch(4, 64, 20, 15, src_size=(32, 24))
+    d.add(fixed.SetStretchBltMode(COLORONCOLOR))
+    stretch(84, 64, 20, 15, src_size=(32, 24))
+    d.add(fixed.SetStretchBltMode(HALFTONE))
+    stretch(84, 96, 30, 22, src=(3, 3), src_size=(13, 9))
+
+
 def markers(d):
     for index in range(d.extent):
         d.add(
@@ -221,6 +296,8 @@ CONTENT = {
     "clip": clipping,
     "region-clip": region_clip,
     "patblt": pattern_blits,
+    "bitblt": bit_blits,
+    "stretchblt": stretch_blits,
     "markers": markers,
 }
 
