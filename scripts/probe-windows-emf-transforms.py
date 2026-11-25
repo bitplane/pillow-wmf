@@ -118,6 +118,17 @@ def sequence_cases(rng):
             [fixed.SetMapMode(mode)],
         )
     yield "page", *header((0, 0, 1000, 1000), (0, 0, 128, 128)), page
+    anisotropic = [fixed.SetMapMode(8), fixed.SetWindowExtEx(300, 200), fixed.SetViewportExtEx(-50, 70)]
+    for window in (True, False):
+        scale = fixed.ScaleWindowExtEx if window else fixed.ScaleViewportExtEx
+        for signs in range(16):
+            values = [(-1 if signs >> bit & 1 else 1) * value for bit, value in enumerate((3, 2, 5, 4))]
+            name = f"scale-{'window' if window else 'viewport'}-{signs}"
+            yield name, *header((0, 0, 1000, 1000), (0, 0, 128, 128)), anisotropic + [scale(*values)]
+    for window, extent in ((True, (27476, -18)), (True, (-18, 27476)), (False, (1, 9000)), (False, (9000, -1))):
+        record = fixed.SetWindowExtEx(*extent) if window else fixed.SetViewportExtEx(*extent)
+        start = [fixed.SetMapMode(7), fixed.SetWindowExtEx(200, 100), fixed.SetViewportExtEx(128, 128)]
+        yield f"isotropic-collapse-{window}-{extent}", *header((0, 0, 1000, 1000), (0, 0, 128, 128)), start + [record]
     yield "page-near-identity", *header((0, 0, 3386, 3386), (0, 0, 128, 128)), page
     for index in range(300):
         frame = (rng.randint(-500, 500), rng.randint(-500, 500))

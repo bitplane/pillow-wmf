@@ -136,6 +136,38 @@ BITMAP_NOOP_ESCAPES = frozenset(
 )
 
 
+# Operations whose GM_ADVANCED output has no native references yet. They
+# raise rather than reuse GM_COMPATIBLE rules that may not match.
+UNVERIFIED_IN_ADVANCED_MODE = frozenset(
+    {
+        "text_out",
+        "ext_text_out",
+        "bit_blt",
+        "dib_bit_blt",
+        "stretch_blt",
+        "dib_stretch_blt",
+        "set_dib_to_device",
+        "fill_region",
+        "frame_region",
+        "paint_region",
+        "invert_region",
+        "flood_fill",
+        "ext_flood_fill",
+        "offset_clip_region",
+        "set_map_mode",
+        "set_window_origin",
+        "set_window_extent",
+        "set_viewport_origin",
+        "set_viewport_extent",
+        "offset_window_origin",
+        "offset_viewport_origin",
+        "scale_window_extent",
+        "scale_viewport_extent",
+        "set_layout",
+    }
+)
+
+
 class RasterContext(ExecutionContext[DrawingState]):
     """Draw the currently supported GDI calls into an RGB Pillow image.
 
@@ -204,6 +236,8 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_effect(self, call):
         """Preparation lives beside its handler; simple state calls need none."""
+        if self.mapping.graphics_mode == GM_ADVANCED and call.name in UNVERIFIED_IN_ADVANCED_MODE:
+            raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
