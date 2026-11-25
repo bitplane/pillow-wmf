@@ -25,6 +25,7 @@ from ..constants import (
     OPAQUE,
     R2_COPYPEN,
 )
+from ..dib_rle import truncate_rle
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
@@ -362,24 +363,32 @@ def _scan_band(record):
     if len(info) < 40 or struct.unpack_from("<I", info)[0] < 40:
         raise Unsupported("SetDIBitsToDevice bands need a BITMAPINFOHEADER")
     width, height, _, depth, compression = struct.unpack_from("<iiHHI", info, 4)
-    if compression not in (0, 3) or width <= 0 or height == 0:
-        raise Unsupported("SetDIBitsToDevice bands of compressed or empty DIBs")
+    rle = compression in (1, 2)
+    if not (compression in (0, 3) or (rle and height > 0)) or width <= 0 or height == 0:
+        raise Unsupported("SetDIBitsToDevice bands of top-down compressed or empty DIBs")
     top_down, lines = height < 0, abs(height)
     if record.start_scan >= lines or not record.scan_count:
         return None, None
     count = record.scan_count if top_down else min(record.scan_count, lines - record.start_scan)
     rows = min(count, lines)
-    stride = (width * depth + 31) // 32 * 4
     bits = record.bits
-    if len(bits) < stride * rows:
-        raise Unsupported("SetDIBitsToDevice band bits are truncated")
-    scans = [bits[row * stride : (row + 1) * stride] for row in range(rows)]
-    # Stored bottom-up, where StretchDIBits measures rows from the last line.
-    band = b"".join(reversed(scans) if top_down else scans)
+    if rle:
+        # A compressed band is the stream from its start, decoded into the
+        # band's own lines.
+        band = truncate_rle(bits, depth, rows)
+    else:
+        stride = (width * depth + 31) // 32 * 4
+        if len(bits) < stride * rows:
+            raise Unsupported("SetDIBitsToDevice band bits are truncated")
+        scans = [bits[row * stride : (row + 1) * stride] for row in range(rows)]
+        # Stored bottom-up, where StretchDIBits measures rows from the last line.
+        band = b"".join(reversed(scans) if top_down else scans)
     offset = record.start_scan + count - record.src_y - record.src_height
     if not (-record.src_height < offset < rows):
         return None, None
-    header = info[:4] + struct.pack("<ii", width, rows) + info[12:20] + struct.pack("<I", 0) + info[24:]
+    # A compressed band keeps its stream's size; an uncompressed one is sized by its lines.
+    size = len(band) if rle else 0
+    header = info[:4] + struct.pack("<ii", width, rows) + info[12:20] + struct.pack("<I", size) + info[24:]
     # Rows of the rectangle beyond the band have no source scan and are skipped.
     return "stretch_dib", {
         "x": record.x,

@@ -67,3 +67,30 @@ def decode_rle(data, width, height, depth, *, clip_spans=None):
             coverage[start:stop] = b"\1" * (right - left)
         x += count
     raise FormatError("Missing DIB RLE end-of-bitmap")
+
+
+def truncate_rle(data, depth, rows):
+    """The commands of an RLE stream that fall in its first ``rows`` lines, ended there.
+
+    Native band transfers decode a compressed DIB's stream into the band's
+    own lines and stop once it leaves them.
+    """
+    cursor, y = 0, 0
+    while cursor + 2 <= len(data):
+        count, value = data[cursor], data[cursor + 1]
+        if count or value > 2:
+            size = 2 if count else 2 + (((value * depth + 7) // 8 + 1) & ~1)
+        elif value == 0:
+            y += 1
+            size = 2
+        elif value == 1:
+            return data[: cursor + 2]
+        else:
+            if cursor + 4 > len(data):
+                break
+            y += data[cursor + 3]
+            size = 4
+        if y >= rows:
+            return data[:cursor] + b"\0\1"
+        cursor += size
+    return data
