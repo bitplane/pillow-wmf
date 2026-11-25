@@ -165,6 +165,7 @@ EXPECTED = {
     "emf-layout": ("scripts/probe-windows-emf-layout.py", "emf-layout", True, True),
     "color-adjustment": ("scripts/probe-windows-color-adjustment.py", "color-adjustment", True, True),
     "color-match": ("scripts/probe-windows-color-match.py", "color-match", True, True),
+    "emf-recording": ("scripts/probe-windows-emf-recording.py", "emf-recording", True, True),
 }
 
 
