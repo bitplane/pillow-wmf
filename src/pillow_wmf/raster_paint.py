@@ -26,7 +26,7 @@ from .paint import pattern_rop2, rop2, rop3
 from .raster_state import Brush, DrawingState
 from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outline, realize_pen, widen_segment
 from .surface import Surface
-from .widen import CAP_FLAT, CAP_ROUND, JOIN_ROUND, PenShape, dash_figures
+from .widen import CAP_FLAT, CAP_ROUND, JOIN_MITER, JOIN_ROUND, PenShape, dash_figures, perpendicular
 from .widen import outline as widen_outline
 
 
@@ -489,6 +489,29 @@ class RasterPainter:
         return outlines
 
     def _figure_pixels(self, segments, closed, *, miter=False):
+        if miter and self.state.mapping.rotated and not self.realized_pen.cosmetic:
+            # Mitred frames under rotation place their bodies on the pen
+            # perpendicular, as geometric pens with non-round joins do.
+            scale = tuple(float(value) for value in self.state.mapping.rotated_pen_scale(self.state.pen.width))
+            width = self.state.pen.width
+            shape = PenShape(
+                self.realized_pen,
+                (8 * width * scale[0], 8 * width * scale[1]),
+                scale,
+                CAP_ROUND,
+                JOIN_MITER,
+                self.state.miter_limit,
+            )
+            perps = None
+            if closed and len(segments) == 4:
+                # A box frame takes one perpendicular per box axis, from the
+                # left-top corner, for both of its parallel edges.
+                top, left, bottom, right = segments
+                horizontal = perpendicular(shape.pen, bottom.direction)
+                vertical = perpendicular(shape.pen, left.direction)
+                perps = [(-horizontal[0], -horizontal[1]), vertical, horizontal, (-vertical[0], -vertical[1])]
+            outline = widen_outline(shape, segments, closed, perps=perps)
+            return set(self.contour_pixels(tuple(outline), fill_mode=WINDING))
         if self.pen_shape is not None:
             # Each figure is widened into closed outlines filled by winding.
             outlines = tuple(widen_outline(self.pen_shape, segments, closed))

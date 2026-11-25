@@ -214,12 +214,19 @@ def _cap_points(shape, point, direction, perp, *, start):
     return [_offset(point, first), *_arc(shape, point, first, second, through), _offset(point, second)]
 
 
-def outline(shape: PenShape, segments: tuple[StrokeSegment, ...], closed: bool) -> list[Polygon]:
-    """Native widened outlines of one figure, for winding-rule filling."""
-    segments = tuple(segment for segment in segments if segment.direction != (0, 0))
+def outline(
+    shape: PenShape, segments: tuple[StrokeSegment, ...], closed: bool, *, perps: list[Point] | None = None
+) -> list[Polygon]:
+    """Native widened outlines of one figure, for winding-rule filling.
+
+    ``perps`` overrides each segment's left half-width vector, as a box
+    frame does by sharing one perpendicular between parallel edges.
+    """
+    if perps is None:
+        segments = tuple(segment for segment in segments if segment.direction != (0, 0))
     if not segments:
         return []
-    perps = [perpendicular(shape.pen, segment.direction) for segment in segments]
+    perps = perps or [perpendicular(shape.pen, segment.direction) for segment in segments]
     count = len(segments)
     # Round joins between square caps keep wide CreatePen bodies: the body
     # passes through rounded support vertices and joins sweep between them.

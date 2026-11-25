@@ -69,7 +69,7 @@ from .raster_state import DrawingState
 from .raster_state import Pen as Pen
 from .raster_state import SavedDC as SavedDC
 from .raster_state import TextState as TextState
-from .stroke import frame_footprint
+from .stroke import frame_footprint, realize_pen
 from .surface import Surface
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
@@ -337,9 +337,12 @@ class RasterContext(ExecutionContext[DrawingState]):
             raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
         if self.mapping.rotated and call.name in PEN_STROKES and self._state.pen.style != PS_NULL:
             try:
-                self.mapping.rotated_pen_scale(self._state.pen.width)
+                scale = self.mapping.rotated_pen_scale(self._state.pen.width)
             except ValueError as error:
                 raise UnsupportedOperation(str(error)) from error
+            if realize_pen(self._state.pen.width, *scale).expanded:
+                # Pens beyond the small-pen table are built in world space.
+                raise UnsupportedOperation("Pens wider than the small-pen table under a rotating transform")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 

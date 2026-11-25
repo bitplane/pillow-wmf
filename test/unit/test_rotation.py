@@ -120,3 +120,30 @@ def test_plg_blt_ties_follow_source_columns_and_device_rows():
         (0, 5),
         (1, 0),
     ]
+
+
+def test_rotated_rectangle_frames_share_a_perpendicular_per_box_axis():
+    world = (
+        2.2741613388061523,
+        1.0607258081436157,
+        -1.060458779335022,
+        2.274733781814575,
+        40.14814758300781,
+        -10.03956413269043,
+    )
+
+    def row(draw):
+        context = RasterContext(128, 128, background=(255, 255, 255), trace_calls=False)
+        context.set_graphics_mode(2)
+        context.set_world_transform(*world)
+        context.select_object(context.create_pen(0, 1, 0))
+        context.select_object(context.get_stock_object(5))  # NULL_BRUSH
+        draw(context)
+        image = context.image.convert("RGB")
+        return [x for x in range(30, 50) if image.getpixel((x, 8)) != (255, 255, 255)]
+
+    # Native: a polyline keeps the pen's support vertex on the steep edge, two
+    # pixels wide, while Rectangle's mitred frame places it on the narrower
+    # pen perpendicular shared by both logical vertical edges.
+    assert row(lambda c: c.polyline(((4, 4), (24, 4), (24, 16), (4, 16), (4, 4)))) == [42, 43]
+    assert row(lambda c: c.rectangle(4, 4, 24, 16)) == [43]

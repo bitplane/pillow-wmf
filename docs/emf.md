@@ -221,6 +221,10 @@ products plus the 28.4 translation.
 - A CreatePen pen keeps its device-aligned small-pen shape. Each device axis
   rounds the logical width vector along it to 28.4 and truncates its length,
   so a pen narrows slightly at oblique angles.
+- `Rectangle` frames are mitred: each body lies on the pen perpendicular
+  used by geometric pens, one per box axis taken from the left-top corner and
+  shared by both parallel edges. Other figures keep the support-vertex
+  bodies of wide `CreatePen` strokes.
 - DIB transfers with SRCCOPY map their destination rectangle to a
   parallelogram and copy as PlgBlt does.
 
@@ -243,9 +247,7 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 - Under rotating or shearing transforms: text, regions, clip rectangles,
   gradients, legacy and non-SRCCOPY transfers, extended geometric pens, pens
   wider than the small-pen table, and wide pens under non-uniform transforms
-  are refused. Direct drawing with a small wide pen can be a fraction of a
-  pixel thinner natively across some edge directions than `WidenPath`
-  reports; the renderer follows `WidenPath`.
+  are refused.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
   mask mirrored within the source rectangle; only fully mirrored cases have
   native references.
