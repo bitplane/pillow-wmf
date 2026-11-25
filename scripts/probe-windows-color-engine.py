@@ -4,7 +4,8 @@ The ``colours`` source is 32x32 and holds 1024 colours: the 256 greys, the
 216-colour 6x6x6 cube, red, green and blue ramps of 128 levels each, and
 168 pseudo-random colours. The ``greys`` source is 64x64; pixel (x, y) is
 the grey x // 4 + 16 * (y // 4), so each grey appears at all sixteen
-positions of a 4x4 cell. The ``grey-cells`` source is 256x256; pixel
+positions of a 4x4 cell. Each ``grey-octets`` source is 64x64; pixel (x, y) is the grey
+base + x // 8 + 8 * (y // 8), at every position of an 8x8 cell. The ``grey-cells`` source is 256x256; pixel
 (x, y) is the grey x // 16 + 16 * (y // 16), at every position of a 16x16
 cell. Each case selects a COLORADJUSTMENT, stretches its
 source four times (or the factor after ``-x`` in the case name) with StretchDIBits in HALFTONE mode, and prints the
@@ -74,7 +75,12 @@ def grey_cells():
     return [(v, v, v) for y in range(256) for x in range(256) for v in [x // 16 + 16 * (y // 16)]]
 
 
+def grey_octets(base):
+    return lambda: [(v, v, v) for y in range(64) for x in range(64) for v in [base + x // 8 + 8 * (y // 8)]]
+
+
 SOURCES = {"colours": (32, colours), "greys": (64, greys), "grey-cells": (256, grey_cells)}
+SOURCES |= {f"grey-octets{base}": (64, grey_octets(base)) for base in (0, 64, 128, 192)}
 
 
 def cases():
@@ -87,6 +93,8 @@ def cases():
     ):
         yield "greys", f"greys-{name}", values
     yield "grey-cells", "grey-cells-colorfulness1", NEUTRAL | dict(colorfulness=1)
+    for base in (0, 64, 128, 192):
+        yield f"grey-octets{base}", f"grey-octets{base}-colorfulness1", NEUTRAL | dict(colorfulness=1)
     # The same sources at other stretch factors: name-xSCALE.
     for source, scale in (("greys", 2), ("greys", 8), ("greys", 16), ("grey-cells", 2), ("colours", 8)):
         yield source, f"{source}-colorfulness1-x{scale}", NEUTRAL | dict(colorfulness=1)
