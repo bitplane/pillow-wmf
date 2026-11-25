@@ -472,6 +472,34 @@ def palette_sources(d):
     transfers(76)
 
 
+def blend_sources(d):
+    """AlphaBlend, TransparentBlt, MaskBlt and PlgBlt with a scaled, a palette-indexed
+    and a rotated source, one column each."""
+    transfer_background(d)
+    d.add(fixed.SetStretchBltMode(3))  # COLORONCOLOR
+    scaled = {"src_m11": 0.5, "src_m22": 0.5}
+    rotated = {"src_m11": 0.866, "src_m12": 0.5, "src_m21": -0.5, "src_m22": 0.866, "src_dx": 6.0}
+    indexed = palette_dib(8, 16, 12, (4, 3, 2, 1, 0, 9), lambda x, y: (x // 2 + y // 2) % 6)
+    columns = (({**scaled}, SOURCE, 32, 24), ({"usage": DIB_PAL_COLORS}, indexed, 16, 12), (rotated, SOURCE, 16, 12))
+    red, green, blue = gradient(5, 5)
+    for column, (change, source, src_width, src_height) in enumerate(columns):
+        x = d.u(4 + 40 * column)
+        size = {"width": d.u(32), "height": d.u(24), "src_width": src_width, "src_height": src_height}
+        fields, data = source_fields(bitmaps.AlphaBlend, source)
+        d.add(bitmaps.AlphaBlend(**fields | change | size | {"x": x, "y": d.u(4), "blend": 0x00C00000}, data=data))
+        fields, data = source_fields(bitmaps.TransparentBlt, source)
+        key = {"transparent": red | green << 8 | blue << 16 if source is SOURCE else 0x000080}
+        d.add(bitmaps.TransparentBlt(**fields | change | size | key | {"x": x, "y": d.u(36)}, data=data))
+        fields, data = source_fields(bitmaps.MaskBlt, (*source, *MASK))
+        place = {"x": x, "y": d.u(68), "width": d.u(16), "height": d.u(12), "rop": 0xAACC0020}
+        d.add(bitmaps.MaskBlt(**fields | change | place, data=data))
+        fields, data = source_fields(bitmaps.PlgBlt, source)
+        corners = {"x0": x, "y0": d.u(100), "x1": x + d.u(32), "y1": d.u(104), "x2": x + d.u(4), "y2": d.u(124)}
+        d.add(
+            bitmaps.PlgBlt(**fields | change | corners | {"src_width": src_width, "src_height": src_height}, data=data)
+        )
+
+
 def gradients(d):
     vertices = ((d.u(4), d.u(4), 0xFF00, 0, 0, 0), (d.u(60), d.u(40), 0, 0, 0xFF00, 0))
     d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
@@ -645,6 +673,7 @@ FEATURES = (
     ("transparentblt", transparent_blt, (128, 51)),
     ("source-transforms", source_transforms, (128, 51)),
     ("palette-sources", palette_sources, (128,)),
+    ("blend-sources", blend_sources, (128,)),
     ("gradientfill", gradients, (128, 51)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
