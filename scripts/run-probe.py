@@ -126,6 +126,7 @@ PROBES = {
     "rotated-pens": Probe("probe-windows-rotated-pens.py", output="rotated-pens"),
     "rotated-strokes": Probe("probe-windows-rotated-strokes.py", output="rotated-strokes"),
     "emf-layout": Probe("probe-windows-emf-layout.py", output="emf-layout"),
+    "color-adjustment": Probe("probe-windows-color-adjustment.py", output="color-adjustment"),
 }
 
 
