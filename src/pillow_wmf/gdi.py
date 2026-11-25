@@ -276,6 +276,14 @@ class GDI:
         """Combine the clip with a device-space region: RGN_AND, OR, XOR, DIFF or COPY (1-5)."""
         return self.invoke(Call.make("ext_select_clip_region", region=region, mode=mode))
 
+    def get_clip_box(self) -> tuple[int, int, int, int] | None:
+        """The clip's bounding box in logical units; None when nothing is visible.
+
+        A query, not a call: backends that cannot answer raise
+        UnsupportedOperation.
+        """
+        raise UnsupportedOperation("get_clip_box")
+
     def set_meta_region(self) -> None:
         """Make the current clip the meta region and reset the clip."""
         return self.invoke(Call.make("set_meta_region"))
@@ -840,5 +848,7 @@ class GDI:
 OPERATION_NAMES = frozenset(
     name
     for name, method in vars(GDI).items()
-    if callable(method) and not name.startswith("_") and name not in {"invoke", "is_null_object", "prepare", "apply"}
+    if callable(method)
+    and not name.startswith("_")
+    and name not in {"invoke", "is_null_object", "prepare", "apply", "get_clip_box"}
 )

@@ -864,6 +864,26 @@ class RasterContext(ExecutionContext[DrawingState]):
             bounds = (0, 0, self.surface.width, self.surface.height)
             self._state.clip = self._state.clip.combine(mask or RegionMask(), a["mode"], bounds)
 
+    def get_clip_box(self):
+        """GetClipBox: the effective clip's bounding box in logical units, or None when empty.
+
+        A rotating or shearing transform maps the box's four corners back and
+        bounds them; otherwise the two corners map back to their nearest
+        logical points.
+        """
+        region = self._state.clip.within((0, 0, self.surface.width, self.surface.height))
+        if not region.bands:
+            return None
+        left = min(endpoints[0] for _, _, endpoints in region.bands)
+        right = max(endpoints[-1] for _, _, endpoints in region.bands)
+        top, bottom = region.bands[0][0], region.bands[-1][1]
+        if self.mapping.rotated:
+            corners = [self.mapping.rotated_logical_point(x * 16, y * 16) for x in (left, right) for y in (top, bottom)]
+            xs, ys = [x for x, _ in corners], [y for _, y in corners]
+            return min(xs), min(ys), max(xs), max(ys)
+        (left, top), (right, bottom) = self.mapping.logical_point(left, top), self.mapping.logical_point(right, bottom)
+        return min(left, right), min(top, bottom), max(left, right), max(top, bottom)
+
     def _apply_set_meta_region(self, call, prepared, result):
         self._state.clip = self._state.clip.with_meta((0, 0, self.surface.width, self.surface.height))
 

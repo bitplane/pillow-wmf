@@ -13,6 +13,25 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   mapping records do not reach it. Playback keeps the metafile's own page state
   and world transform, and sets the DC world transform to *world, then page,
   then frame fit* as one float32 matrix (`emf/transform.py`).
+- Before the first record, the DC's clip becomes its meta region (so a
+  metafile's `SelectClipRgn(NULL)` returns to it), the white brush, black
+  pen and default palette are selected, and the attributes are reset: white
+  background, black text, no character extra, `OPAQUE`, `ALTERNATE`,
+  `R2_COPYPEN`, `BLACKONWHITE`, text alignment 0, mapper flags 0, brush
+  origin (0, 0), miter limit 10, no justification, counter-clockwise arcs
+  and the current position at (0, 0). Native playback also selects the
+  device default font; that waits for the text work. Colour adjustment is
+  not reset.
+- Native playback reads the clip box, in the metafile's logical units, once
+  before the first record, and widens it on each axis by one unit, or by one
+  more than the whole number of reference-display pixels per metafile
+  device pixel when the header's device is denser than the 1024x768,
+  271x203 mm reference display. Transfers (`BitBlt`, `StretchBlt`,
+  `StretchDIBits`, `SetDIBitsToDevice`, `MaskBlt`, `PlgBlt`, `AlphaBlend`,
+  `TransparentBlt`) and region painting (`FillRgn`, `FrameRgn`,
+  `InvertRgn`, `PaintRgn`) whose record bounds lie wholly outside that box
+  are skipped; reversed (empty) bounds never are. Nothing plays when the
+  clip is empty.
 - The frame fit maps the header frame (0.01 mm) onto the target rectangle using
   the header's device pixels and millimetres. Fits within 0.001 of 1:1 on both
   axes use exactly 1.0. A reversed frame does not play.
@@ -413,7 +432,9 @@ its formats with the enhanced-metafile signature, as `PlayEnhMetaFile` does:
 the embedded frame is fitted to the comment's output rectangle in the outer
 metafile's logical units, then mapped by the outer world transform. The
 embedded picture is not clipped to that rectangle. It plays inside a saved
-DC with its own object table, and the outer transform is set again after.
+DC with its own object table and the same start as a top-level playback,
+so the outer clip becomes its meta region and the outer attributes and
+objects do not reach it; the outer transform is set again after.
 Nesting stops after eight levels.
 
 ## Rotated and sheared transforms
@@ -485,8 +506,6 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
-- Whether playback resets DC attributes before the first record, and whether it
-  clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
 - Under rotating or shearing transforms: text is refused.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the

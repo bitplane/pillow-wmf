@@ -15,7 +15,16 @@ from collections.abc import Callable
 
 from ..binary import FormatError, Limits
 from ..bitmap16 import encode_bitmap16
-from ..constants import ETO_CLIPPED, ETO_GLYPH_INDEX, ETO_OPAQUE, GM_ADVANCED
+from ..constants import (
+    ALTERNATE,
+    BLACKONWHITE,
+    ETO_CLIPPED,
+    ETO_GLYPH_INDEX,
+    ETO_OPAQUE,
+    GM_ADVANCED,
+    OPAQUE,
+    R2_COPYPEN,
+)
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
@@ -555,6 +564,76 @@ TRANSLATIONS: dict[type, Callable] = {
 }
 
 
+# Records native playback skips when their bounds miss the clip box it reads
+# before the first record.
+CULLED_RECORDS = (
+    bitmaps.AlphaBlend,
+    bitmaps.BitBlt,
+    bitmaps.MaskBlt,
+    bitmaps.PlgBlt,
+    bitmaps.SetDIBitsToDevice,
+    bitmaps.StretchBlt,
+    bitmaps.StretchDIBits,
+    bitmaps.TransparentBlt,
+    variable.FillRgn,
+    variable.FrameRgn,
+    variable.InvertRgn,
+    variable.PaintRgn,
+)
+# The reference display's resolution in pixels per millimetre.
+REFERENCE_DENSITY = (float32(1024 / 271), float32(768 / 203))
+AD_COUNTERCLOCKWISE = 1
+# Attributes native playback resets before the first record, after selecting
+# the white brush, black pen and default palette. The device default font
+# is also selected; that waits for the text work.
+RESET_ATTRIBUTES = (
+    ("set_background_color", {"color": 0xFFFFFF}),
+    ("set_text_color", {"color": 0}),
+    ("set_text_character_extra", {"extra": 0}),
+    ("set_background_mode", {"mode": OPAQUE}),
+    ("set_polygon_fill_mode", {"mode": ALTERNATE}),
+    ("set_rop2", {"mode": R2_COPYPEN}),
+    ("set_stretch_mode", {"mode": BLACKONWHITE}),
+    ("set_text_alignment", {"alignment": 0}),
+    ("set_mapper_flags", {"flags": 0}),
+    ("set_brush_origin", {"x": 0, "y": 0}),
+    ("set_miter_limit", {"limit": 10.0}),
+    ("set_text_justification", {"break_count": 0, "break_extra": 0}),
+    ("set_arc_direction", {"direction": AD_COUNTERCLOCKWISE}),
+    ("move_to", {"x": 0, "y": 0}),
+)
+
+
+def record_bounds(record):
+    if isinstance(record, variable.RegionRecord):
+        return record.bounds
+    return record.bounds_left, record.bounds_top, record.bounds_right, record.bounds_bottom
+
+
+def culling_box(box, header):
+    """The clip box widened by the margin native playback allows for rounding.
+
+    Each axis widens by one logical unit, or by one more than the whole
+    number of reference-display pixels per metafile device pixel when the
+    metafile's device is denser.
+    """
+    left, top, right, bottom = box
+    margins = []
+    for axis in range(2):
+        density = float32(float32(header.device[axis]) / float32(header.millimetres[axis]))
+        reference = REFERENCE_DENSITY[axis]
+        margins.append(int(float32(density / reference)) + 1 if reference < density else 1)
+    return left - margins[0], top - margins[1], right + margins[0], bottom + margins[1]
+
+
+def culled(record, box) -> bool:
+    """Whether a record's non-empty bounds lie wholly outside the culling box."""
+    left, top, right, bottom = record_bounds(record)
+    if right < left or bottom < top:
+        return False
+    return right < box[0] or box[2] < left or bottom < box[1] or box[3] < top
+
+
 def fitted_rectangles(rectangles, fit):
     """Region rectangles are reference-device pixels; fit them like points."""
     scale_x, _, _, scale_y, origin_x, origin_y = fit
@@ -626,7 +705,10 @@ def play(
 
     The picture frame is fitted to ``rect`` in the backend's device pixels;
     the default is the frame's own size in header device pixels at the
-    origin. The caller owns the backend's other initial state. ``comment``
+    origin. Playback starts as natively: the clip becomes the meta region,
+    stock objects and attributes are reset, and when the backend answers
+    ``get_clip_box``, transfers and region painting whose record bounds miss
+    the widened clip box are skipped. ``comment``
     receives every EMR_COMMENT record with its index, for a front-end that
     interprets EMF+ or other comment payloads.
 
@@ -758,6 +840,22 @@ def play(
     # Attributed to the header record, which native playback starts from.
     invoke(-1, RecordType.HEADER, "set_graphics_mode", {"mode": GM_ADVANCED})
     set_transform(-1, RecordType.HEADER)
+    invoke(-1, RecordType.HEADER, "set_meta_region", {})
+    for stock_index, name in ((0, "select_object"), (7, "select_object"), (15, "select_palette")):
+        handle = lookup(-1, RecordType.HEADER, STOCK_OBJECT | stock_index)
+        if handle is not None and handle is not unavailable:
+            invoke(-1, RecordType.HEADER, name, {"handle": handle})
+    for name, arguments in RESET_ATTRIBUTES:
+        invoke(-1, RecordType.HEADER, name, arguments)
+    try:
+        box = backend.get_clip_box()
+    except UnsupportedOperation:
+        box = None
+        cull = None
+    else:
+        if box is None:
+            return omissions.result()  # Nothing is visible; native playback plays no records.
+        cull = culling_box(box, metafile.header)
     for index, record in enumerate(metafile.records):
         kind = record_type(record)
         if kind == RecordType.EOF:
@@ -848,6 +946,8 @@ def play(
             if ok:
                 invoke(index, kind, "ext_select_clip_region", {"region": region, "mode": record.mode})
                 invoke(index, kind, "delete_object", {"handle": region})
+            continue
+        if cull is not None and isinstance(record, CULLED_RECORDS) and culled(record, cull):
             continue
         if isinstance(record, variable.RegionRecord):
             paint_region(index, kind, record)

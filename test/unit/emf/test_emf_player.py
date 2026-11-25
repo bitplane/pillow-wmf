@@ -32,6 +32,34 @@ SYSTEM_FONT = 0x8000000D
 UNIT_FRAME = (0, 0, 3388, 3383)
 IDENTITY = dict(m11=1.0, m12=0.0, m21=0.0, m22=1.0, dx=0.0, dy=0.0)
 PREAMBLE = [Call.make("set_graphics_mode", mode=2), Call.make("set_world_transform", **IDENTITY)]
+# Native playback makes the clip the meta region, selects the white brush,
+# black pen and default palette, then resets the DC's attributes.
+RESET_NAMES = [
+    "set_meta_region",
+    *("get_stock_object", "select_object") * 2,
+    "get_stock_object",
+    "select_palette",
+    "set_background_color",
+    "set_text_color",
+    "set_text_character_extra",
+    "set_background_mode",
+    "set_polygon_fill_mode",
+    "set_rop2",
+    "set_stretch_mode",
+    "set_text_alignment",
+    "set_mapper_flags",
+    "set_brush_origin",
+    "set_miter_limit",
+    "set_text_justification",
+    "set_arc_direction",
+    "move_to",
+]
+
+
+def after_reset(calls):
+    """The calls after a playback's reset of the DC."""
+    assert [call.name for call in calls[: len(RESET_NAMES)]] == RESET_NAMES
+    return calls[len(RESET_NAMES) :]
 
 
 def run(records, **options):
@@ -39,7 +67,7 @@ def run(records, **options):
     trace = TraceContext()
     omissions = play(Metafile.build(records, frame=UNIT_FRAME), trace, rect=(0, 0, 128, 128), **options)
     assert trace.calls[:2] == PREAMBLE
-    return trace.calls[2:], omissions
+    return after_reset(trace.calls[2:]), omissions
 
 
 def test_state_and_drawing_records_translate_to_gdi_calls():
@@ -153,12 +181,13 @@ def test_objects_use_explicit_slots():
     assert calls[2] == Call.make("create_palette", palette=PaletteEntries(((1, 2, 3, 0),)))
     assert calls[3] == Call.make("create_font", font=FontRequest(height=-12, face_name="Arial"))
     selected = [call.kwargs["handle"].serial for call in calls[4:9]]
-    assert selected == [1, 2, 4, 3, 1]
+    # The reset's stock objects take serials 1 to 3.
+    assert selected == [4, 5, 7, 6, 4]
 
 
 def test_creation_replaces_an_occupied_slot():
     calls, _ = run([fixed.CreatePen(1, 0, 1, 0, 0), fixed.CreatePen(1, 0, 2, 0, 0), fixed.SelectObject(1)])
-    assert calls[-1].kwargs["handle"].serial == 2
+    assert calls[-1].kwargs["handle"].serial == 5
 
 
 def test_stock_objects_are_fetched_once():
@@ -171,9 +200,9 @@ def test_stock_objects_are_fetched_once():
             fixed.SelectObject(SYSTEM_FONT),
         ]
     )
-    brush, pen, font = Handle(1, "brush", None), Handle(2, "pen", None), Handle(3, "font", None)
+    # The reset already fetched the white brush.
+    brush, pen, font = Handle(1, "brush", None), Handle(4, "pen", None), Handle(5, "font", None)
     assert calls == [
-        Call.make("get_stock_object", index=0),
         Call.make("select_object", handle=brush),
         Call.make("get_stock_object", index=8),
         Call.make("select_object", handle=pen),
@@ -197,7 +226,7 @@ def test_palette_edits_name_their_palette():
         ],
         strict=True,
     )
-    first, second = Handle(1, "palette", None), Handle(2, "palette", None)
+    first, second = Handle(4, "palette", None), Handle(5, "palette", None)
     assert [(call.name, call.kwargs) for call in calls[2:]] == [
         ("select_palette", {"handle": first}),
         ("set_palette_entries", {"palette": PaletteUpdate(0, ((7, 8, 9, 0),))}),
@@ -314,15 +343,13 @@ def test_frame_fit_and_saved_transforms():
         m11=float32(float32(64 / 1000) * float32(27100 / 1024)), m22=float32(float32(32 / 1000) * float32(20300 / 768))
     )
     fit |= dict(dx=float32(10 - float32(100 * float32(64 / 1000))), dy=20.0)
-    assert [call.name for call in trace.calls] == [
-        "set_graphics_mode",
-        "set_world_transform",
+    assert [call.name for call in after_reset(trace.calls[2:])] == [
         "save_dc",
         "set_world_transform",
         "restore_dc",
     ]
     assert trace.calls[1] == transform(**fit)
-    assert trace.calls[3] == transform(
+    assert after_reset(trace.calls[2:])[1] == transform(
         **{key: float32(2 * value) if key in ("m11", "m22") else value for key, value in fit.items()}
     )
 
@@ -475,12 +502,12 @@ def test_clip_regions_are_combined_from_device_rectangles():
     geometry = RegionGeometry(((0, 0, 4, 4), (5, 5, 9, 9)))
     assert calls == [
         Call.make("create_region", region=geometry),
-        Call.make("ext_select_clip_region", region=Handle(1, "region", None), mode=5),
-        Call.make("delete_object", handle=Handle(1, "region", None)),
+        Call.make("ext_select_clip_region", region=Handle(4, "region", None), mode=5),
+        Call.make("delete_object", handle=Handle(4, "region", None)),
         Call.make("ext_select_clip_region", region=None, mode=5),
         Call.make("create_region", region=geometry),
-        Call.make("ext_select_clip_region", region=Handle(2, "region", None), mode=1),
-        Call.make("delete_object", handle=Handle(2, "region", None)),
+        Call.make("ext_select_clip_region", region=Handle(5, "region", None), mode=1),
+        Call.make("delete_object", handle=Handle(5, "region", None)),
         Call.make("set_meta_region"),
     ]
     assert [o.reason for o in omissions] == ["Invalid region data"]
@@ -553,16 +580,12 @@ def test_embedded_metafiles_play_into_their_output_rectangle():
     trace = TraceContext()
     play(Metafile.build([multiformats(inner)], frame=UNIT_FRAME), trace, rect=(0, 0, 128, 128))
     names = [call.name for call in trace.calls]
-    # The nested playback runs inside a saved DC and the parent's transform is
-    # set again afterwards.
-    assert names[names.index("save_dc") :] == [
-        "save_dc",
-        "set_graphics_mode",
-        "set_world_transform",
-        "rectangle",
-        "restore_dc",
-        "set_world_transform",
-    ]
+    # The nested playback runs inside a saved DC, resets it as a top-level
+    # playback does, and the parent's transform is set again afterwards.
+    nested = names[names.index("save_dc") :]
+    assert nested[:3] == ["save_dc", "set_graphics_mode", "set_world_transform"]
+    assert nested[3 : 3 + len(RESET_NAMES)] == RESET_NAMES
+    assert nested[3 + len(RESET_NAMES) :] == ["rectangle", "restore_dc", "set_world_transform"]
     nested = [call for call in trace.calls if call.name == "set_world_transform"][1].kwargs
     # A 20 mm frame fitted to 100 logical units, under the 1:1 parent.
     assert nested["m11"] == pytest.approx(100 / (2000 / 100 * 1024 / 271), rel=1e-3)
@@ -605,3 +628,29 @@ def test_color_match_to_target_stops_playback_only_when_enabling_without_a_profi
     ]
     calls, omissions = run(records)
     assert omissions == () and [call.name for call in calls].count("rectangle") == drawn
+
+
+def test_culling_box_widens_by_the_header_density():
+    from pillow_wmf.emf.player import culling_box
+    from pillow_wmf.mapping import ReferenceDevice
+
+    reference = Metafile.build([], frame=UNIT_FRAME).header
+    dense = Metafile.build([], frame=UNIT_FRAME, device=ReferenceDevice((4096, 3072), (271, 203), dpi=None)).header
+    assert culling_box((0, 0, 128, 128), reference) == (-1, -1, 129, 129)
+    # Four reference-display pixels per metafile pixel: one more than four.
+    assert culling_box((0, 0, 128, 128), dense) == (-5, -5, 133, 133)
+
+
+def test_clip_box_maps_the_clip_back_to_logical_units():
+    from pillow_wmf.raster import RasterContext
+
+    context = RasterContext(100, 80, trace_calls=False)
+    assert context.get_clip_box() == (0, 0, 100, 80)
+    context.set_graphics_mode(2)
+    context.set_world_transform(2.5, 0.0, 0.0, 2.5, 3.0, 0.0)
+    assert context.get_clip_box() == (-1, 0, 39, 32)
+    # A rotation bounds the four mapped corners.
+    context.set_world_transform(0.8, 0.6, -0.6, 0.8, 30.0, 0.0)
+    assert context.get_clip_box() == (-24, -42, 104, 82)
+    context.intersect_clip_rect(200, 200, 300, 300)
+    assert context.get_clip_box() is None
