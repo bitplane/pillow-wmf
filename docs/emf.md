@@ -158,6 +158,70 @@ the codec and reference columns against the code and fixtures.
 | `COLORMATCHTOTARGETW` | typed | full | yes | `CS_ENABLE` without a profile name stops playback; otherwise no effect on a bitmap DC. |
 | `CREATECOLORSPACEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
 
+## Recording
+
+[`emf.Recorder`](../src/pillow_wmf/emf/recorder.py) accepts the same GDI calls
+as the renderer and writes the records a native enhanced-metafile DC writes,
+emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
+
+- Pens, brushes, fonts and palettes are written when first selected, into
+  the lowest free 1-based slot; objects never selected never appear, nor do
+  their deletions. Stock objects are selected as `0x80000000 | index`;
+  `CreatePen(PS_NULL)` and a `BS_NULL` brush are the stock null objects.
+  Palette edits name the selected palette's slot, `AnimatePalette` is not
+  recorded, palette entry flags are cleared, and every colour written to a
+  palette is collected, once each, into the EOF palette.
+- In GM_COMPATIBLE, box shapes are rewritten lower-right inclusive: the edge
+  moves in by the logical size of one device pixel (window over viewport
+  extent), rounded half to even. GM_ADVANCED boxes are written as given;
+  there is no record for the graphics mode. `SetWorldTransform` is followed
+  by `ModifyWorldTransform(MWT_SET)` with the same matrix.
+- `SetArcDirection` is written just before the next arc that uses it.
+- Point records use their 16-bit forms when every coordinate fits.
+- Bounds are inclusive device pixels. A stroke reaches the miter limit times
+  half the device width plus one for mitred strokes (`Rectangle` frames and
+  geometric miter joins), and half the width rounded up plus one otherwise;
+  one-pixel pens add nothing. Arcs, chords and pies count their drawn sweep,
+  `*To` records include the current position (unless `PolyDraw` opens with a
+  move), and a flood fill claims the whole device. Record and header bounds
+  are clipped to the clip region's bounding box; a figure with neither pen
+  nor brush adds nothing.
+- Transfer sources are written as `GetDIBits` returns a source DC's bitmap:
+  bottom-up, zero-padded, with their image size. Indexed sources carry a full
+  zero-padded colour table and declare none used; 4-bpp sources are re-matched
+  by colour, so indices past a short table become the first black entry.
+  16- and 32-bpp sources are `BI_BITFIELDS` (5-5-5 and 8-8-8 by default). The
+  record's background is the DC background colour, or for indexed sources the
+  nearest table colour to it. Masks and monochrome pattern brushes are 1-bpp
+  without a colour table (`DIB_PAL_INDICES`); a 32-bpp device bitmap brush
+  becomes a bit-field DIB pattern brush. Packed DIB pattern brushes and pens
+  are re-encoded the same way; `SetDIBitsToDevice` and `StretchDIBits` keep
+  the DIB as given.
+- Bitmap brushes carry a `0x20000000` DWORD before their BitmapInfo. A DIB
+  pattern pen carries it in place of the header size; the player reads such
+  a header as a 40-byte one.
+- Fonts are written as `LOGFONTEXDV`: the LOGFONT, empty full name, style and
+  script, and a design vector with no axes.
+- `AngleArc` and `ArcTo` leave the current position at the exact end point,
+  floored; `ArcTo` measures it on the recorded, inclusive box's ellipse.
+- Header bounds count what reaches the device: drawing inside a path bracket
+  only measures the path, which `StrokePath` and `FillPath` then add. An
+  excluded clip rectangle shrinks the clip box to what it leaves, and
+  `SelectClipPath` clips to the bounding box of the path's fill coverage, or
+  of the pen's stroke footprint once widened.
+- Without an explicit frame, the frame is the bounds in 0.01 mm of the
+  reference device; the header's micrometre extension is the reference
+  display's size at 96 DPI.
+
+Recordings of the covered calls are byte-identical to native ones
+([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Text output
+waits for the font work. Refused: pattern brushes from device bitmaps other
+than 1- and 32-bpp (native `CreateBitmap` cannot make them), compressed
+transfer sources, `SelectClipPath` of paths holding curves or shapes other
+than rectangles, and null object selections. Unverified: the `ArcTo` end
+position for one clockwise arc on an odd-sized box lands a pixel earlier
+natively than the ellipse rule gives.
+
 ## Geometric pens
 
 Extended geometric pens (`widen.py`) widen each figure into closed outlines

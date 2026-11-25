@@ -6,6 +6,7 @@ from .constants import CommentIdentifier, RecordType
 from .file import Header, Metafile, accepts
 from .objects import LogFont
 from .player import play
+from .recorder import Recorder
 from .records import RECORD_CLASSES, Record, UnknownRecord
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "LogFont",
     "Metafile",
     "Record",
+    "Recorder",
     "RecordType",
     "UnknownRecord",
     "accepts",

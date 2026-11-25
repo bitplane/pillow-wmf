@@ -128,6 +128,7 @@ PROBES = {
     "emf-layout": Probe("probe-windows-emf-layout.py", output="emf-layout"),
     "color-adjustment": Probe("probe-windows-color-adjustment.py", output="color-adjustment"),
     "color-match": Probe("probe-windows-color-match.py", output="color-match"),
+    "emf-recording": Probe("probe-windows-emf-recording.py", output="emf-recording"),
 }
 
 
