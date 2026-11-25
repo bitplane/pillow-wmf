@@ -93,3 +93,23 @@ def test_widened_closed_figures_match_native_paths(key):
     context.widen_path()
     figures = [[list(command[0]) for command in commands] for commands, _ in context._state.path]
     assert figures == NATIVE["closed"][key]
+
+
+CAPS = {"round": 0x0000, "square": 0x0100, "flat": 0x0200}
+JOINS = {"round": 0x0000, "bevel": 0x1000, "miter": 0x2000}
+
+
+@pytest.mark.parametrize("key", sorted(NATIVE["styles"]))
+def test_geometric_caps_and_joins_match_native_paths(key):
+    """``styles``: native WidenPath outlines of solid geometric pens by cap and join."""
+    transform, cap, join, _, width, shape = key.split()
+    context = RasterContext(16, 16, trace_calls=False)
+    context.set_graphics_mode(2)
+    context.set_world_transform(*TRANSFORMS[transform])
+    context.select_object(context.ext_create_pen(0x00010000 | CAPS[cap] | JOINS[join], int(width), 0))
+    context.begin_path()
+    SHAPES[shape](context)
+    context.end_path()
+    context.widen_path()
+    figures = [[list(command[0]) for command in commands] for commands, _ in context._state.path]
+    assert figures == NATIVE["styles"][key]

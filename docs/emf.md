@@ -237,10 +237,12 @@ point:
   to the half-pixel grid. Flat and square caps, bevels and miters share it.
 - Inner joins pass through the vertex; round inner joins also sweep the pen.
   Miter tips round to the nearest 28.4 point; miters longer than the limit
-  bevel.
+  bevel. A round join's sweep that reaches the head of the pen's second half
+  in vertex order also emits that vertex.
 - Square caps extend along the logical direction by the device half-width of
   the larger axis, rounded to 28.4; under a scaling mapping it is first rounded
-  to sixteenths of a 28.4 unit.
+  to sixteenths of a 28.4 unit. Under a rotating transform the extension is
+  half the logical width along the logical direction, mapped to 28.4.
 - Predefined geometric styles are multiples of the width (dash 3:1, dot 1:1,
   and so on); user styles are logical lengths. Dashes are measured in logical
   units, cut by interpolating along the device segment, and drawn as open
@@ -343,9 +345,8 @@ products plus the 28.4 translation.
   used by geometric pens, one per box axis, taken from the two edges that
   leave the left-top corner and shared by both parallel edges. Other figures
   keep the support-vertex bodies of wide `CreatePen` strokes.
-- Geometric pens are modelled with round caps and joins, or flat caps and
-  bevel joins, solid; flat and bevel bodies use the perpendicular of the
-  realized pen.
+- Solid geometric pens use the caps and joins above with the realized pen;
+  styled geometric pens are refused.
 - `PatBlt` and the DIB transfers (`BitBlt`, `StretchBlt`, `StretchDIBits`
   and `MaskBlt` records, any ROP3) cover the polygon fill of their
   destination rectangle's three 28.4 corners and the reflected fourth. Each
@@ -391,8 +392,15 @@ pixel in device space. A mask bit of 1 copies the source pixel.
   clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
 - Under rotating or shearing transforms: text, `FrameRgn`, and strokes or
-  `WidenPath` with styled geometric pens or with square caps or mitre joins
-  are refused. Paths record with any pen selected.
+  `WidenPath` with styled geometric pens are refused. Paths record with any
+  pen selected.
+- Round joins between flat or square caps: some inner joins natively omit
+  the pen vertex in the direction of the incoming body, or repeat a seam
+  vertex, where the angular sweep includes or drops it.
+- Styled geometric pens: a dash that crosses a vertex keeps its join instead
+  of splitting into separate figures, a closed figure continues its pattern
+  across the closing vertex, and square caps on user styles do not pull each
+  dash end back by one width.
   Eroding the region by the frame size in logical units, as a box, comes
   within a few dozen pixels of native `FrameRgn` output but is not exact.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the

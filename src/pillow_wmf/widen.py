@@ -30,6 +30,9 @@ class PenShape:
     cap: int = CAP_ROUND
     join: int = JOIN_ROUND
     miter_limit: float = 10.0
+    # The linear world transform and logical width, under a rotating transform.
+    transform: tuple[float, float, float, float] | None = None
+    width: int = 0
 
 
 def _cross(a, b):
@@ -97,8 +100,21 @@ def square_vector(shape: PenShape, direction: Point) -> Point:
 
     The unit logical direction is scaled by one device radius, that of the
     larger axis, and rounded to 28.4. Under a scaling mapping it is first
-    rounded to sixteenths of a 28.4 unit.
+    rounded to sixteenths of a 28.4 unit. Under a rotating transform it is
+    half the logical width along the logical direction, mapped and rounded.
     """
+    if shape.transform is not None:
+        # Under a rotating transform: half the logical width along the
+        # logical direction, mapped to 28.4.
+        m11, m12, m21, m22 = shape.transform
+        det = m11 * m22 - m12 * m21
+        lx, ly = (direction[0] * m22 - direction[1] * m21) / det, (direction[1] * m11 - direction[0] * m12) / det
+        length = hypot(lx, ly)
+        if not length:
+            return (0, 0)
+        half = shape.width / 2 / length
+        ex, ey = (lx * m11 + ly * m21) * half * 16, (lx * m12 + ly * m22) * half * 16
+        return floor(ex + 0.5), floor(ey + 0.5)
     (rx, ry), (sx, sy) = shape.radius, shape.scale
     lx, ly = direction[0] / sx if sx else 0.0, direction[1] / sy if sy else 0.0
     length = hypot(lx, ly)
@@ -142,6 +158,13 @@ def _arc(shape: PenShape, origin: Point, start: Point, end: Point, through: Poin
         and not (exclusive and _cross(start, vertex) == 0 and _dot(start, vertex) > 0)
     ]
     vertices.sort(key=sweep)
+    # The forward walker enters the pen's second half at its head vertex, so
+    # a sweep reaching that vertex in index order also emits it at the end.
+    ring = shape.pen.vertices
+    head = ring[len(ring) // 2]
+    previous = next(vertex for vertex in reversed(ring[: len(ring) // 2]) if vertex != head)
+    if _cross(end, head) == 0 and _dot(end, head) > 0 and sweep(previous) < limit:
+        vertices.append(head)
     return [(origin[0] + _cap(x, origin), origin[1] + _cap(y, origin)) for x, y in vertices]
 
 

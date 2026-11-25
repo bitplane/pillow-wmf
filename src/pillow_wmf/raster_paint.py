@@ -484,6 +484,8 @@ class RasterPainter:
             pen.cap,
             pen.join,
             self.state.miter_limit,
+            tuple(float(value) for value in self.state.mapping.world[:4]) if self.state.mapping.rotated else None,
+            pen.width,
         )
 
     def _cosmetic_fragments(self, paths):

@@ -77,7 +77,6 @@ from .text_layout import TextLayout, layout_text
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
-from .widen import CAP_FLAT, CAP_ROUND, JOIN_BEVEL, JOIN_ROUND
 
 
 def rgb(colorref: int) -> tuple[int, int, int]:
@@ -168,9 +167,6 @@ class ParallelogramTransfer:
     # TransparentBlt; ``x, y`` locate the sample and None leaves the pixel.
     blend: object = None
 
-
-# Geometric pen (cap, join) pairs modelled under a rotating transform.
-ROTATED_GEOMETRIC_PENS = frozenset({(CAP_ROUND, JOIN_ROUND), (CAP_FLAT, JOIN_BEVEL)})
 
 # Operations whose geometry assumes axis-aligned mapping. A rotating or
 # shearing world transform refuses them rather than drawing them unrotated.
@@ -335,12 +331,9 @@ class RasterContext(ExecutionContext[DrawingState]):
             and pen.geometric
             and not self._state.recording_path
             and pen.style != PS_NULL
-            and ((pen.cap, pen.join) not in ROTATED_GEOMETRIC_PENS or pen.style & 15 != PS_SOLID)
+            and pen.style & 15 != PS_SOLID
         ):
-            raise UnsupportedOperation(
-                "Under a rotating transform only solid round-capped round-joined "
-                "and flat-capped bevel-joined geometric pens are modelled"
-            )
+            raise UnsupportedOperation("Styled geometric pens under a rotating transform")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
