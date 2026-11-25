@@ -92,6 +92,15 @@ def grey_tiles(base):
     return lambda: [(v, v, v) for y in range(512) for x in range(512) for v in [base + x // 128 + 4 * (y // 128)]]
 
 
+def tile_pixels(base):
+    """The ``grey-tiles`` source as top-down BGRX bytes, built a row at a time."""
+    rows = []
+    for band in range(4):
+        row = b"".join(bytes((v, v, v, 0)) * 128 for v in range(base + 4 * band, base + 4 * band + 4))
+        rows.append(row * 128)
+    return b"".join(rows)
+
+
 SOURCES = {"colours": (32, colours), "greys": (64, greys), "grey-cells": (256, grey_cells)}
 SOURCES |= {f"grey-tiles{base}": (512, grey_tiles(base)) for base in range(0, 256, 16)}
 SOURCES |= {f"grey-sixteens{base}": (128, grey_sixteens(base)) for base in (0, 64, 128, 192)}
@@ -148,7 +157,11 @@ def main():
         side, make = SOURCES[source_name]
         scale = int(name.rsplit("-x", 1)[1]) if "-x" in name else SCALE
         size = side * scale
-        pixels = b"".join(bytes((b, g, r, 0)) for r, g, b in make())
+        tiles = source_name.startswith("grey-tiles")
+        if tiles:
+            pixels = tile_pixels(int(source_name[len("grey-tiles") :]))
+        else:
+            pixels = b"".join(bytes((b, g, r, 0)) for r, g, b in make())
         header = BitmapInfoHeader(40, side, -side, 1, 32, 0, len(pixels), 0, 0, 0, 0)
         with reference_surface(size, size) as (gdi, dc, bits):
             ptr, integer = ctypes.c_void_p, ctypes.c_int
@@ -159,6 +172,17 @@ def main():
             applied = gdi.SetColorAdjustment(dc, ctypes.byref(ColorAdjustment(24, **values)))
             gdi.StretchDIBits(dc, 0, 0, size, size, 0, 0, side, side, pixels, ctypes.byref(header), 0, 0x00CC0020)
             data = ctypes.string_at(bits, size * size * 4)
+        if tiles:
+            # Greys only: the red channel at each block centre, two hex digits
+            # per source pixel; blocks are not checked for mixing.
+            centre = scale // 2
+            red = b"".join(
+                data[((y * scale + centre) * size + centre) * 4 + 2 : ((y * scale + centre + 1) * size) * 4 : scale * 4]
+                for y in range(side)
+            )
+            print(f"case {name} applied={applied} {values}")
+            print("  red " + red.hex())
+            continue
 
         def pixel(x, y, data=data, size=size):
             return data[(y * size + x) * 4 : (y * size + x) * 4 + 3]
@@ -171,10 +195,6 @@ def main():
             b, g, r = pixel(left + scale // 2, top + scale // 2)
             centres.append(f"{r:02x}{g:02x}{b:02x}")
         print(f"case {name} applied={applied} mixed={mixed} {values}")
-        if source_name.startswith("grey-tiles"):
-            # Greys only: the red channel, two hex digits per pixel.
-            print("  red " + "".join(centre[:2] for centre in centres))
-            continue
         print("  " + " ".join(centres))
         if mixed:
             # 64x64 destination pixels from the middle, row by row.
