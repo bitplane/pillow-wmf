@@ -20,7 +20,7 @@ from ..numeric import float32
 from ..objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, RegionGeometry
 from ..playback import Omission as Omission
 from ..playback import Omissions, PlaybackError, SaveLevels
-from . import bitmaps, fixed, text, variable
+from . import bitmaps, fixed, system, text, variable
 from .constants import CREATION_TYPES, RecordType
 from .file import Metafile
 from .objects import region_rectangles
@@ -43,8 +43,9 @@ EMFPLUS_DUAL = 0x0001
 RGN_COPY = 5
 IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
-# Stock brushes and pens (MS-EMF 2.1.31) as equivalent creations. Stock
-# fonts, the default palette and the DC brush and pen are not emulated.
+# Stock brushes and pens (MS-EMF 2.1.31) as equivalent creations. EMF has no
+# record to change the DC brush or pen colour, so they keep the defaults.
+# Stock fonts and the default palette are not emulated.
 STOCK_CREATIONS = {
     0x80000000: ("create_brush", {"style": 0, "color": 0xFFFFFF, "hatch": 0}),  # WHITE_BRUSH
     0x80000001: ("create_brush", {"style": 0, "color": 0xC0C0C0, "hatch": 0}),  # LTGRAY_BRUSH
@@ -55,7 +56,30 @@ STOCK_CREATIONS = {
     0x80000006: ("create_pen", {"style": PS_SOLID, "width": 0, "color": 0xFFFFFF}),  # WHITE_PEN
     0x80000007: ("create_pen", {"style": PS_SOLID, "width": 0, "color": 0x000000}),  # BLACK_PEN
     0x80000008: ("create_pen", {"style": PS_NULL, "width": 0, "color": 0}),  # NULL_PEN
+    0x80000012: ("create_brush", {"style": 0, "color": 0xFFFFFF, "hatch": 0}),  # DC_BRUSH
+    0x80000013: ("create_pen", {"style": PS_SOLID, "width": 0, "color": 0x000000}),  # DC_PEN
 }
+
+# Records with no effect on a bitmap DC's output, established against native
+# references: colour management, font linking, OpenGL and escapes.
+NO_OP_RECORDS = (
+    fixed.SetICMMode,
+    fixed.SetColorSpace,
+    fixed.DeleteColorSpace,
+    fixed.ColorCorrectPalette,
+    fixed.ForceUFIMapping,
+    system.CreateColorSpace,
+    system.CreateColorSpaceW,
+    system.SetICMProfileA,
+    system.SetICMProfileW,
+    system.SetLinkedUFIs,
+    system.GlsRecord,
+    system.GlsBoundedRecord,
+    system.PixelFormat,
+    system.DrawEscape,
+    system.ExtEscape,
+    system.NamedEscape,
+)
 
 
 class Unsupported(Exception):
@@ -267,6 +291,8 @@ TRANSLATIONS: dict[type, Callable] = {
     fixed.RealizePalette: _direct("realize_palette"),
     fixed.ExtFloodFill: _direct("ext_flood_fill", "x", "y", "color", "mode"),
     fixed.SetLayout: _direct("set_layout", "layout"),
+    # Native recording truncates the limit to an integer; playback reads it back.
+    fixed.SetMiterLimit: lambda r: ("set_miter_limit", {"limit": float(r.limit)}),
     fixed.SetTextJustification: _direct("set_text_justification", "break_count", "break_extra"),
     variable.Polygon: _direct("polygon", "points"),
     variable.Polygon16: _direct("polygon", "points"),
@@ -388,6 +414,8 @@ def play(
             break
         if isinstance(record, UnknownRecord):
             omissions.omit(index, kind, f"{record_name(kind)} is not yet supported")
+            continue
+        if isinstance(record, NO_OP_RECORDS):
             continue
         if isinstance(record, variable.Comment):
             if comment is not None:

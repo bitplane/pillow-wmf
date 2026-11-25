@@ -59,6 +59,7 @@ class DrawingState:
     background_color: tuple[int, int, int] | PaletteIndex = (255, 255, 255)
     text_color: tuple[int, int, int] | PaletteIndex = (0, 0, 0)
     stretch_mode: int = BLACKONWHITE
+    miter_limit: float = 10.0
     palette: LogicalPalette = field(default_factory=LogicalPalette.default)
     text_state: TextState = field(default_factory=TextState)
 

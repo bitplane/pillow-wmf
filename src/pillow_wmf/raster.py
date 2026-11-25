@@ -337,6 +337,13 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         self.mapping.set_mode(a["mode"])
 
+    def _prepare_set_miter_limit(self, a):
+        if not a["limit"] >= 1:
+            raise InvalidOperation("Miter limits are at least 1")
+
+    def _apply_set_miter_limit(self, call, prepared, result):
+        self._state.miter_limit = float(call.kwargs["limit"])
+
     def _prepare_set_graphics_mode(self, a):
         if a["mode"] not in (GM_COMPATIBLE, GM_ADVANCED):
             raise InvalidOperation(f"Graphics mode {a['mode']}")

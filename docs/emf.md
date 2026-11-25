@@ -39,124 +39,124 @@ the codec and reference columns against the code and fixtures.
 | Record | Codec | Playback | References | Notes |
 | --- | --- | --- | --- | --- |
 | `HEADER` | typed | full | yes | Frame fit, reference device and handle-table size. |
-| `POLYBEZIER` | typed | no | no | Needs Bézier drawing. |
+| `POLYBEZIER` | typed | no | yes | Needs Bézier drawing. |
 | `POLYGON` | typed | full | yes |  |
-| `POLYLINE` | typed | full | no |  |
-| `POLYBEZIERTO` | typed | no | no | Needs Bézier drawing and the current position. |
-| `POLYLINETO` | typed | no | no | Needs current-position drawing. |
-| `POLYPOLYLINE` | typed | no | no | Separate figures in one call; not equivalent to repeated Polyline under every ROP. |
-| `POLYPOLYGON` | typed | full | no |  |
+| `POLYLINE` | typed | full | yes |  |
+| `POLYBEZIERTO` | typed | no | yes | Needs Bézier drawing and the current position. |
+| `POLYLINETO` | typed | no | yes | Needs current-position drawing. |
+| `POLYPOLYLINE` | typed | no | yes | Separate figures in one call; not equivalent to repeated Polyline under every ROP. |
+| `POLYPOLYGON` | typed | full | yes |  |
 | `SETWINDOWEXTEX` | typed | full | yes | Folded into the playback world transform. |
 | `SETWINDOWORGEX` | typed | full | yes | Folded into the playback world transform. |
 | `SETVIEWPORTEXTEX` | typed | full | yes | Folded into the playback world transform. |
 | `SETVIEWPORTORGEX` | typed | full | yes | Folded into the playback world transform. |
-| `SETBRUSHORGEX` | typed | no | no | Needs a brush origin in the shared state. |
+| `SETBRUSHORGEX` | typed | no | yes | Needs a brush origin in the shared state. |
 | `EOF` | typed | full | yes | Its palette is not applied. |
 | `SETPIXELV` | typed | full | yes |  |
-| `SETMAPPERFLAGS` | typed | full | no | Font mapping; text is font-limited. |
+| `SETMAPPERFLAGS` | typed | full | yes | Font mapping; text is font-limited. |
 | `SETMAPMODE` | typed | full | yes | Physical extents from the header millimetres. |
-| `SETBKMODE` | typed | full | no |  |
-| `SETPOLYFILLMODE` | typed | full | no |  |
+| `SETBKMODE` | typed | full | yes |  |
+| `SETPOLYFILLMODE` | typed | full | yes |  |
 | `SETROP2` | typed | full | yes |  |
 | `SETSTRETCHBLTMODE` | typed | full | yes |  |
 | `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
-| `SETCOLORADJUSTMENT` | typed | no | no | Affects HALFTONE stretching only. |
-| `SETTEXTCOLOR` | typed | full | no |  |
-| `SETBKCOLOR` | typed | full | no |  |
-| `OFFSETCLIPRGN` | typed | no | no | Refused in GM_ADVANCED until referenced. |
+| `SETCOLORADJUSTMENT` | typed | no | yes | Changes HALFTONE stretching. |
+| `SETTEXTCOLOR` | typed | full | yes |  |
+| `SETBKCOLOR` | typed | full | yes |  |
+| `OFFSETCLIPRGN` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
 | `MOVETOEX` | typed | full | yes |  |
-| `SETMETARGN` | typed | no | no | Needs a meta region in the clip state. |
+| `SETMETARGN` | typed | no | yes | Needs a meta region in the clip state. |
 | `EXCLUDECLIPRECT` | typed | full | yes |  |
 | `INTERSECTCLIPRECT` | typed | full | yes |  |
 | `SCALEVIEWPORTEXTEX` | typed | partial | no | Transforms whose offsets overflow are not rejected as natively. |
 | `SCALEWINDOWEXTEX` | typed | partial | no | As SCALEVIEWPORTEXTEX. |
-| `SAVEDC` | typed | full | no |  |
-| `RESTOREDC` | typed | partial | no | Relative levels only. |
-| `SETWORLDTRANSFORM` | typed | partial | no | Axis-aligned transforms only. |
-| `MODIFYWORLDTRANSFORM` | typed | partial | no | Axis-aligned results only. |
-| `SELECTOBJECT` | typed | partial | yes | Stock brushes and pens; stock fonts and the DC brush and pen are missing. |
+| `SAVEDC` | typed | full | yes |  |
+| `RESTOREDC` | typed | partial | yes | Relative levels only. |
+| `SETWORLDTRANSFORM` | typed | partial | yes | Axis-aligned transforms only. |
+| `MODIFYWORLDTRANSFORM` | typed | partial | yes | Axis-aligned results only. |
+| `SELECTOBJECT` | typed | partial | yes | Stock brushes and pens, and the DC brush and pen; stock fonts are missing. |
 | `CREATEPEN` | typed | full | yes |  |
 | `CREATEBRUSHINDIRECT` | typed | full | yes | Solid, null and hatched brushes. |
 | `DELETEOBJECT` | typed | full | no |  |
-| `ANGLEARC` | typed | no | no | Needs current-position arcs. |
+| `ANGLEARC` | typed | no | yes | Needs current-position arcs. |
 | `ELLIPSE` | typed | full | yes |  |
 | `RECTANGLE` | typed | full | yes |  |
 | `ROUNDRECT` | typed | full | yes |  |
 | `ARC` | typed | full | yes | Counterclockwise only. |
 | `CHORD` | typed | full | yes | Counterclockwise only. |
 | `PIE` | typed | full | yes | Counterclockwise only. |
-| `SELECTPALETTE` | typed | partial | no | The stock default palette is missing. |
-| `CREATEPALETTE` | typed | full | no |  |
-| `SETPALETTEENTRIES` | typed | no | no | Names a palette handle; the shared call edits the selected one. |
-| `RESIZEPALETTE` | typed | no | no | As SETPALETTEENTRIES. |
-| `REALIZEPALETTE` | typed | full | no |  |
-| `EXTFLOODFILL` | typed | no | no | Refused in GM_ADVANCED until referenced. |
+| `SELECTPALETTE` | typed | partial | yes | The stock default palette is missing. |
+| `CREATEPALETTE` | typed | full | yes |  |
+| `SETPALETTEENTRIES` | typed | no | yes | Names a palette handle; the shared call edits the selected one. |
+| `RESIZEPALETTE` | typed | no | yes | As SETPALETTEENTRIES. |
+| `REALIZEPALETTE` | typed | full | yes |  |
+| `EXTFLOODFILL` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
 | `LINETO` | typed | full | yes |  |
-| `ARCTO` | typed | no | no | Needs current-position arcs. |
-| `POLYDRAW` | typed | no | no | Needs paths and Béziers. |
-| `SETARCDIRECTION` | typed | no | no | Needs clockwise arcs. |
-| `SETMITERLIMIT` | typed | no | no | Needs geometric pen joins. |
-| `BEGINPATH` | typed | no | no | Needs path recording. |
-| `ENDPATH` | typed | no | no | Needs path recording. |
-| `CLOSEFIGURE` | typed | no | no | Needs path recording. |
-| `FILLPATH` | typed | no | no | Needs path recording. |
-| `STROKEANDFILLPATH` | typed | no | no | Needs path recording. |
-| `STROKEPATH` | typed | no | no | Needs path recording. |
-| `FLATTENPATH` | typed | no | no | Needs path recording. |
-| `WIDENPATH` | typed | no | no | Needs path recording and geometric pens. |
-| `SELECTCLIPPATH` | typed | no | no | Needs path recording. |
-| `ABORTPATH` | typed | no | no | Needs path recording. |
-| `COMMENT` | typed | partial | no | Never draws; EMF+ is not rendered and embedded metafiles are not played. |
-| `FILLRGN` | typed | no | no | Region records are not decoded. |
-| `FRAMERGN` | typed | no | no | Region records are not decoded. |
-| `INVERTRGN` | typed | no | no | Region records are not decoded. |
-| `PAINTRGN` | typed | no | no | Region records are not decoded. |
+| `ARCTO` | typed | no | yes | Needs current-position arcs. |
+| `POLYDRAW` | typed | no | yes | Needs paths and Béziers. |
+| `SETARCDIRECTION` | typed | no | yes | Needs clockwise arcs. |
+| `SETMITERLIMIT` | typed | partial | yes | Stored; geometric joins that use it are not yet drawn. |
+| `BEGINPATH` | typed | no | yes | Needs path recording. |
+| `ENDPATH` | typed | no | yes | Needs path recording. |
+| `CLOSEFIGURE` | typed | no | yes | Needs path recording. |
+| `FILLPATH` | typed | no | yes | Needs path recording. |
+| `STROKEANDFILLPATH` | typed | no | yes | Needs path recording. |
+| `STROKEPATH` | typed | no | yes | Needs path recording. |
+| `FLATTENPATH` | typed | no | yes | Needs path recording. |
+| `WIDENPATH` | typed | no | yes | Needs path recording and geometric pens. |
+| `SELECTCLIPPATH` | typed | no | yes | Needs path recording. |
+| `ABORTPATH` | typed | no | yes | Needs path recording. |
+| `COMMENT` | typed | partial | yes | Never draws; EMF+ is not rendered and embedded metafiles are not played. |
+| `FILLRGN` | typed | no | yes | Region records are not decoded. |
+| `FRAMERGN` | typed | no | yes | Region records are not decoded. |
+| `INVERTRGN` | typed | no | yes | Region records are not decoded. |
+| `PAINTRGN` | typed | no | yes | Region records are not decoded. |
 | `EXTSELECTCLIPRGN` | typed | partial | yes | RGN_COPY only. |
 | `BITBLT` | typed | partial | yes | Source transforms and palette-indexed sources are missing. |
 | `STRETCHBLT` | typed | partial | yes | As BITBLT. |
-| `MASKBLT` | typed | no | no |  |
-| `PLGBLT` | typed | no | no | Needs rotated transfers. |
+| `MASKBLT` | typed | no | yes |  |
+| `PLGBLT` | typed | no | yes | Needs rotated transfers. |
 | `SETDIBITSTODEVICE` | typed | partial | yes | Partial bands are unverified under scaling. |
 | `STRETCHDIBITS` | typed | full | yes |  |
 | `EXTCREATEFONTINDIRECTW` | typed | full | no | Text is font-limited. |
 | `EXTTEXTOUTA` | typed | partial | no | Not yet drawn in GM_ADVANCED; font-limited. |
 | `EXTTEXTOUTW` | typed | partial | no | Glyph indices only; not yet drawn in GM_ADVANCED; font-limited. |
-| `POLYBEZIER16` | typed | no | no | Needs Bézier drawing. |
-| `POLYGON16` | typed | full | no |  |
+| `POLYBEZIER16` | typed | no | yes | Needs Bézier drawing. |
+| `POLYGON16` | typed | full | yes |  |
 | `POLYLINE16` | typed | full | yes |  |
-| `POLYBEZIERTO16` | typed | no | no | Needs Bézier drawing and the current position. |
-| `POLYLINETO16` | typed | no | no | Needs current-position drawing. |
-| `POLYPOLYLINE16` | typed | no | no | As POLYPOLYLINE. |
-| `POLYPOLYGON16` | typed | full | no |  |
-| `POLYDRAW16` | typed | no | no | Needs paths and Béziers. |
-| `CREATEMONOBRUSH` | typed | no | no |  |
-| `CREATEDIBPATTERNBRUSHPT` | typed | full | no |  |
-| `EXTCREATEPEN` | typed | partial | no | Pens CreatePen can express; caps, joins, styles and pattern pens are missing. |
+| `POLYBEZIERTO16` | typed | no | yes | Needs Bézier drawing and the current position. |
+| `POLYLINETO16` | typed | no | yes | Needs current-position drawing. |
+| `POLYPOLYLINE16` | typed | no | yes | As POLYPOLYLINE. |
+| `POLYPOLYGON16` | typed | full | yes |  |
+| `POLYDRAW16` | typed | no | yes | Needs paths and Béziers. |
+| `CREATEMONOBRUSH` | typed | no | yes |  |
+| `CREATEDIBPATTERNBRUSHPT` | typed | full | yes |  |
+| `EXTCREATEPEN` | typed | partial | yes | Pens CreatePen can express; caps, joins, styles and pattern pens are missing. |
 | `POLYTEXTOUTA` | typed | no | no |  |
 | `POLYTEXTOUTW` | typed | no | no |  |
-| `SETICMMODE` | typed | no | no |  |
-| `CREATECOLORSPACE` | typed | no | no |  |
-| `SETCOLORSPACE` | typed | no | no |  |
-| `DELETECOLORSPACE` | typed | no | no |  |
-| `GLSRECORD` | typed | no | no | OpenGL. |
-| `GLSBOUNDEDRECORD` | typed | no | no | OpenGL. |
-| `PIXELFORMAT` | typed | no | no | OpenGL. |
-| `DRAWESCAPE` | typed | no | no |  |
-| `EXTESCAPE` | typed | no | no |  |
+| `SETICMMODE` | typed | full | yes | No effect on a bitmap DC. |
+| `CREATECOLORSPACE` | typed | full | yes | No effect on a bitmap DC. |
+| `SETCOLORSPACE` | typed | full | yes | No effect on a bitmap DC. |
+| `DELETECOLORSPACE` | typed | full | yes | No effect on a bitmap DC. |
+| `GLSRECORD` | typed | full | yes | No effect on a bitmap DC. |
+| `GLSBOUNDEDRECORD` | typed | full | yes | No effect on a bitmap DC. |
+| `PIXELFORMAT` | typed | full | yes | No effect on a bitmap DC. |
+| `DRAWESCAPE` | typed | full | yes | No effect on a bitmap DC. |
+| `EXTESCAPE` | typed | full | yes | No effect on a bitmap DC. |
 | `SMALLTEXTOUT` | typed | no | no |  |
-| `FORCEUFIMAPPING` | typed | no | no |  |
-| `NAMEDESCAPE` | typed | no | no |  |
-| `COLORCORRECTPALETTE` | typed | no | no |  |
-| `SETICMPROFILEA` | typed | no | no |  |
-| `SETICMPROFILEW` | typed | no | no |  |
-| `ALPHABLEND` | typed | no | no | Needs alpha compositing. |
-| `SETLAYOUT` | typed | no | no | Refused in GM_ADVANCED until referenced. |
-| `TRANSPARENTBLT` | typed | no | no |  |
-| `GRADIENTFILL` | typed | no | no |  |
-| `SETLINKEDUFIS` | typed | no | no |  |
+| `FORCEUFIMAPPING` | typed | full | yes | No effect on shapes; font-limited. |
+| `NAMEDESCAPE` | typed | full | yes | No effect on a bitmap DC. |
+| `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
+| `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
+| `SETICMPROFILEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
+| `ALPHABLEND` | typed | no | yes | Needs alpha compositing. |
+| `SETLAYOUT` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
+| `TRANSPARENTBLT` | typed | no | yes |  |
+| `GRADIENTFILL` | typed | no | yes |  |
+| `SETLINKEDUFIS` | typed | full | yes | No effect on shapes; font-limited. |
 | `SETTEXTJUSTIFICATION` | typed | full | no | Text is font-limited. |
-| `COLORMATCHTOTARGETW` | typed | no | no |  |
-| `CREATECOLORSPACEW` | typed | no | no |  |
+| `COLORMATCHTOTARGETW` | typed | no | yes | The fixture record stops native playback; its validity rules are unknown. |
+| `CREATECOLORSPACEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
 
 ## Playback behaviours not yet modelled
 

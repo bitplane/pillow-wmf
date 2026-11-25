@@ -124,6 +124,10 @@ class GDI:
     def set_map_mode(self, mode: int) -> None:
         return self.invoke(Call.make("set_map_mode", mode=mode))
 
+    def set_miter_limit(self, limit: float) -> None:
+        """Limit miter joins of geometric pens to ``limit`` times the pen width."""
+        return self.invoke(Call.make("set_miter_limit", limit=limit))
+
     def set_graphics_mode(self, mode: int) -> None:
         return self.invoke(Call.make("set_graphics_mode", mode=mode))
 
