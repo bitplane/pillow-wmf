@@ -158,6 +158,37 @@ the codec and reference columns against the code and fixtures.
 | `COLORMATCHTOTARGETW` | typed | full | yes | `CS_ENABLE` without a profile name stops playback; otherwise no effect on a bitmap DC. |
 | `CREATECOLORSPACEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
 
+## Recording
+
+[`emf.Recorder`](../src/pillow_wmf/emf/recorder.py) accepts the same GDI calls
+as the renderer and writes the records a native enhanced-metafile DC writes,
+emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
+
+- Pens, brushes, fonts and palettes are written when first selected, into
+  the lowest free 1-based slot; objects never selected never appear, nor do
+  their deletions. Stock objects are selected as `0x80000000 | index`, and
+  `CreatePen(PS_NULL)` is the stock null pen.
+- In GM_COMPATIBLE, box shapes are rewritten lower-right inclusive: the edge
+  is mapped to device pixels, moved in by one and mapped back. GM_ADVANCED
+  boxes are written as given; there is no record for the graphics mode.
+- Point records use their 16-bit forms when every coordinate fits.
+- Bounds are inclusive device pixels. A stroke reaches the miter limit times
+  half the device width plus one for mitred strokes (`Rectangle` frames and
+  geometric miter joins), and half the width rounded up plus one otherwise;
+  one-pixel pens add nothing. Arcs, chords and pies count their drawn sweep.
+  Point records carry their stroked bounds; the header's are clipped to the
+  clip region's bounding box.
+- Without an explicit frame, the frame is the bounds in 0.01 mm of the
+  reference device; the header's micrometre extension is the reference
+  display's size at 96 DPI.
+
+Recordings of the covered calls are byte-identical to native ones
+([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Text,
+palette editing, pattern brushes, DIB pattern pens and bitmap transfers other
+than `PatBlt` and `StretchDIBits` are refused, as are null object selections.
+Whether native recording clips record bounds, or the effect of an excluded
+clip rectangle on header bounds, is unverified.
+
 ## Geometric pens
 
 Extended geometric pens (`widen.py`) widen each figure into closed outlines
