@@ -65,6 +65,38 @@ intersect_clip = api("IntersectClipRect", integer, ptr, integer, integer, intege
 create_rect_rgn = api("CreateRectRgn", ptr, integer, integer, integer, integer)
 select_clip_rgn = api("SelectClipRgn", integer, ptr, ptr)
 fill_rgn = api("FillRgn", boolean, ptr, ptr, ptr)
+set_graphics_mode = api("SetGraphicsMode", integer, ptr, integer)
+
+
+class XForm(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_float) for name in ("m11", "m12", "m21", "m22", "dx", "dy")]
+
+
+class LogBrush(ctypes.Structure):
+    _fields_ = [("style", wintypes.UINT), ("color", wintypes.DWORD), ("hatch", ctypes.c_size_t)]
+
+
+class BitmapInfo(ctypes.Structure):
+    _fields_ = [
+        ("size", dword),
+        ("width", wintypes.LONG),
+        ("height", wintypes.LONG),
+        ("planes", wintypes.WORD),
+        ("bit_count", wintypes.WORD),
+        ("compression", dword),
+        ("size_image", dword),
+        ("xppm", wintypes.LONG),
+        ("yppm", wintypes.LONG),
+        ("used", dword),
+        ("important", dword),
+    ]
+
+
+set_world_transform = api("SetWorldTransform", boolean, ptr, ctypes.POINTER(XForm))
+ext_create_pen = api("ExtCreatePen", ptr, dword, dword, ctypes.POINTER(LogBrush), dword, ptr)
+pat_blt = api("PatBlt", boolean, ptr, *(integer,) * 4, dword)
+stretch_dib = api("StretchDIBits", integer, ptr, *(integer,) * 8, ptr, ptr, wintypes.UINT, dword)
+set_miter_limit = api("SetMiterLimit", boolean, ptr, ctypes.c_float, ptr)
 
 
 def points(*values):
@@ -197,6 +229,79 @@ def scenarios():
         return None
 
     yield "paths", None, paths
+
+    # Bounds: one figure per metafile, so the header bounds belong to it.
+    figures = {
+        "rect": lambda dc: rectangle(dc, 20, 20, 40, 30),
+        "ellipse": lambda dc: ellipse(dc, 20, 20, 40, 30),
+        "line": lambda dc: (move_to(dc, 20, 20, None), line_to(dc, 40, 30)),
+        "polyline": lambda dc: polyline(dc, *points((20, 20), (40, 30), (25, 35))),
+        "polygon": lambda dc: polygon(dc, *points((20, 20), (40, 30), (25, 35))),
+    }
+    for figure, draw_figure in figures.items():
+        for width in (0, 1, 2, 3, 4, 5, 8, 11):
+
+            def draw(dc, width=width, draw_figure=draw_figure):
+                pen = create_pen(0, width, 0)
+                select(dc, pen)
+                draw_figure(dc)
+                return None
+
+            yield f"bounds-{figure}-w{width}", None, draw
+    for style in (1, 5, 6):
+
+        def styled(dc, style=style):
+            select(dc, create_pen(style, 6, 0))
+            rectangle(dc, 20, 20, 40, 30)
+            return None
+
+        yield f"bounds-rect-style{style}", None, styled
+
+    def geometric(dc):
+        brush = LogBrush(0, 0, 0)
+        select(dc, ext_create_pen(0x00010000 | 0x0200 | 0x2000, 6, ctypes.byref(brush), 0, None))
+        polyline(dc, *points((20, 20), (40, 30), (25, 35)))
+        return None
+
+    yield "bounds-geometric-miter", None, geometric
+
+    def miter(dc):
+        set_miter_limit(dc, 2.0, None)
+        select(dc, create_pen(0, 5, 0))
+        rectangle(dc, 20, 20, 40, 30)
+        return None
+
+    yield "bounds-rect-miter2", None, miter
+
+    def scaled(dc):
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 10, 10, None)
+        set_viewport_ext(dc, 25, 25, None)
+        select(dc, create_pen(0, 2, 0))
+        rectangle(dc, 4, 4, 20, 12)
+        polyline(dc, *points((4, 4), (20, 12)))
+        return None
+
+    yield "bounds-scaled", None, scaled
+
+    def advanced(dc):
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(1.5, 0, 0, 2.0, 3.0, 4.0)))
+        rectangle(dc, 10, 10, 30, 20)
+        ellipse(dc, 10, 10, 30, 20)
+        set_graphics_mode(dc, 2)
+        return None
+
+    yield "advanced", None, advanced
+
+    def transfers(dc):
+        pat_blt(dc, 5, 6, 20, 10, 0x00F00021)
+        info = BitmapInfo(40, 2, 2, 1, 24, 0, 0, 0, 0, 0, 0)
+        bits = bytes(range(16))
+        stretch_dib(dc, 30, 30, 8, 6, 0, 0, 2, 2, bits, ctypes.byref(info), 0, 0x00CC0020)
+        return None
+
+    yield "transfers", None, transfers
 
 
 def records(data):
