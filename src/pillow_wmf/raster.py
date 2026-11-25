@@ -694,9 +694,12 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self.mapping.graphics_mode == GM_ADVANCED:
             # GM_ADVANCED paths use the transformed 28.4 box itself, lower-right
             # inclusive. The integer box takes the ceiling of each edge.
+            # The logical box is normalized before it is transformed.
+            logical_left, logical_right = sorted((a["left"], a["right"]))
+            logical_top, logical_bottom = sorted((a["top"], a["bottom"]))
             (x0, y0), (x1, y1) = (
-                self.mapping.fixed_point(a["left"], a["top"]),
-                self.mapping.fixed_point(a["right"], a["bottom"]),
+                self.mapping.fixed_point(logical_left, logical_top),
+                self.mapping.fixed_point(logical_right, logical_bottom),
             )
             # Curves are built in world orientation; a mirroring transform
             # reverses the box edges rather than the construction.
