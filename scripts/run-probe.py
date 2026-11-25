@@ -122,6 +122,7 @@ PROBES = {
     "emf-record": Probe("probe-windows-emf-record.py", output="emf-record"),
     "pen-widen": Probe("probe-windows-pen-widen.py", output="pen-widen"),
     "gradient": Probe("probe-windows-gradient.py", output="gradient"),
+    "rotated-paths": Probe("probe-windows-rotated-paths.py", output="rotated-paths"),
 }
 
 

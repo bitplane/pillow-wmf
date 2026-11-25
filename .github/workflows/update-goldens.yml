@@ -71,6 +71,7 @@ on:
           - emf-record
           - pen-widen
           - gradient
+          - rotated-paths
   push:
     branches: [master]
     paths:
