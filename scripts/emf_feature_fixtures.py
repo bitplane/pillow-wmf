@@ -9,6 +9,7 @@ import math
 import struct
 
 from pillow_wmf.emf import Metafile, bitmaps, fixed, system, variable
+from pillow_wmf.mapping import ReferenceDevice
 
 PS_SOLID, PS_DASH, PS_DOT, PS_USERSTYLE, PS_ALTERNATE, PS_NULL = 0, 1, 2, 7, 8, 5
 PS_GEOMETRIC = 0x00010000
@@ -792,6 +793,109 @@ def comments(d):
     d.add(fixed.Rectangle(*d.rect(20, 20, 108, 108)))
 
 
+def _stretch_dib(d, left, top, bounds, source):
+    """A StretchDIBits of ``source`` at design (left, top), 1:1, with explicit record bounds."""
+    info, bits = source
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    width, height = struct.unpack_from("<ii", info, 4)
+    fields = (d.u(left), d.u(top), 0, 0, width, abs(height), offset, len(info), offset + len(info), len(bits))
+    d.add(bitmaps.StretchDIBits(*bounds, *fields, 0, SRCCOPY, width, abs(height), info + bits))
+
+
+def record_culling(dense):
+    """Transfers and region painting whose record bounds miss the clip box.
+
+    Native playback skips these records when their non-empty bounds lie
+    wholly outside the clip box, widened by a margin, that it reads before
+    the first record. Each record draws inside the picture whatever its
+    bounds say, so only culling leaves a gap.
+    """
+
+    def draw(d):
+        if dense:
+            d.device = ReferenceDevice((4096, 3072), (271, 203), dpi=None)
+        source = rgb_dib(12, 9, gradient)
+        edge = d.u(128)
+        # Far outside; reversed (empty) bounds are never culled.
+        _stretch_dib(d, 4, 4, (500, 500, 520, 520), source)
+        _stretch_dib(d, 24, 4, (520, 520, 500, 500), source)
+        # At and just past the widened box's leading and trailing edges.
+        for column, offset in enumerate(range(-1, -7, -1)):
+            _stretch_dib(d, 4 + 20 * column, 20, (-20, -20, offset, offset), source)
+        for column, offset in enumerate(range(1, 7)):
+            _stretch_dib(d, 4 + 20 * column, 36, (edge + offset, 0, edge + offset + 5, 5), source)
+            _stretch_dib(d, 4 + 20 * column, 52, (0, edge + offset, 5, edge + offset + 5), source)
+        d.brush(BS_SOLID, 0x2080C0)
+        region = region_data(((d.u(4), d.u(72), d.u(40), d.u(100)),))
+        brush = d.slot
+        d.add(variable.FillRgn(bounds=(600, 0, 700, 10), brush=brush, region=region))
+        region = region_data(((d.u(48), d.u(72), d.u(84), d.u(100)),))
+        d.add(variable.PaintRgn(bounds=(-1, -1, -1, -1), region=region))
+        region = region_data(((d.u(92), d.u(72), d.u(124), d.u(100)),))
+        d.add(variable.InvertRgn(bounds=(0, -30, 10, -3), region=region))
+        blit = dict.fromkeys(bitmaps.BitBlt.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0, "data": b""}
+        blit |= {"x": d.u(4), "y": d.u(106), "width": d.u(56), "height": d.u(18), "rop": PATCOPY}
+        d.add(bitmaps.BitBlt(**blit | dict(zip(bitmaps.BOUNDS, (0, edge + 2, 10, edge + 9), strict=True))))
+        blit |= {"x": d.u(68)}
+        d.add(bitmaps.BitBlt(**blit | dict(zip(bitmaps.BOUNDS, (-9, 0, -1, 10), strict=True))))
+
+    return draw
+
+
+def nested_reset(d):
+    """An embedded metafile drawing with the attributes native playback resets.
+
+    The outer metafile changes every attribute playback resets, selects a
+    hatched brush and wide pen, and clips; the embedded metafile then draws
+    with its defaults, and removes its own clip to reach the outer one.
+    """
+    d.brush(BS_SOLID, 0xC0C0C0)
+    d.add(fixed.Rectangle(*d.rect(0, 0, 64, 128)))
+    d.brush(BS_HATCHED, 0x0000C0, HS_DIAGCROSS)
+    d.pen(PS_SOLID, 3, 0x00C000)
+    d.add(
+        fixed.SetBkColor(0x80FFFF),
+        fixed.SetTextColor(0xFF0000),
+        fixed.SetBkMode(TRANSPARENT),
+        fixed.SetPolyFillMode(WINDING),
+        fixed.SetROP2(7),
+        fixed.SetStretchBltMode(HALFTONE),
+        fixed.SetBrushOrgEx(3, 5),
+        fixed.SetMiterLimit(1),
+        fixed.SetArcDirection(AD_CLOCKWISE),
+        fixed.MoveToEx(d.u(120), d.u(30)),
+        fixed.IntersectClipRect(*d.rect(4, 4, 124, 124)),
+    )
+    star = [
+        (30 + 24 * math.cos(math.radians(90 + 144 * i)), 32 - 24 * math.sin(math.radians(90 + 144 * i)))
+        for i in range(5)
+    ]
+    inner = [
+        fixed.Rectangle(70, 8, 120, 30),
+        fixed.LineTo(60, 60),
+        fixed.Arc(70, 36, 120, 76, 120, 56, 70, 56),
+        fixed.CreateBrushIndirect(1, BS_HATCHED, 0x008000, HS_BDIAGONAL),
+        fixed.SelectObject(1),
+        variable.Polygon((0, 0, 0, 0), tuple((round(x), round(y)) for x, y in star)),
+        fixed.Rectangle(8, 64, 60, 96),
+        bitmaps.ExtCreatePen(2, 0, 0, 0, 0, PS_GEOMETRIC | PS_JOIN_MITER | PS_ENDCAP_FLAT, 6, BS_SOLID, 0x800080, 0),
+        fixed.SelectObject(2),
+        variable.Polyline((0, 0, 0, 0), ((70, 120), (80, 84), (90, 120))),
+        variable.ExtSelectClipRgn(RGN_COPY),
+        fixed.SelectObject(STOCK | 8),
+        fixed.CreateBrushIndirect(3, BS_SOLID, 0xC08040, 0),
+        fixed.SelectObject(3),
+        fixed.Rectangle(100, 84, 140, 140),
+    ]
+    embedded = Metafile.build(inner, frame=(0, 0, 3388, 3383)).to_bytes()
+    left, top, right, bottom = d.rect(0, 0, 128, 128)
+    multiformats = struct.pack("<II4iI", 0x43494447, 0x40000004, left, top, right, bottom, 1)
+    multiformats += struct.pack("<4I", 0x464D4520, 0x00010000, len(embedded), 8 + 16 + 4 + 16) + embedded
+    d.add(variable.Comment(multiformats))
+    # The outer state is back after the embedded metafile.
+    d.add(fixed.LineTo(d.u(100), d.u(124)))
+
+
 def state_record(*records):
     """Records that should not change a bitmap DC's output, followed by drawing."""
 
@@ -868,6 +972,9 @@ FEATURES = (
     ("rotation", rotation, (128, 51)),
     ("save-levels", save_levels, (128,)),
     ("comments", comments, (128,)),
+    ("record-culling", record_culling(False), (128, 51)),
+    ("record-culling-dense", record_culling(True), (128,)),
+    ("nested-reset", nested_reset, (128,)),
     *((f"state-{name}", state_record(*records), (128,)) for name, records in STATE_RECORDS.items()),
 )
 SCALE_NAMES = {128: "unit", 51: "up-2-5"}
