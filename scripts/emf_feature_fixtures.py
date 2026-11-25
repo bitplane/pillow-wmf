@@ -500,6 +500,39 @@ def blend_sources(d):
         )
 
 
+def scan_bands(d):
+    """SetDIBitsToDevice records carrying partial scan bands of a 16x12 DIB.
+
+    Each record holds the full-height header and only its band's scan lines,
+    as a band-by-band caller passes them.
+    """
+    transfer_background(d)
+    stride = 16 * 3
+    pixels = {y: b"".join(bytes(reversed(gradient(x, y))) for x in range(16)) for y in range(12)}
+    bands = (
+        # (x, y, src_x, src_y, src_width, src_height, start, count, top_down)
+        (4, 4, 0, 0, 16, 12, 0, 4, False),
+        (24, 4, 0, 0, 16, 12, 4, 4, False),
+        (44, 4, 0, 0, 16, 12, 8, 8, False),
+        (64, 4, 2, 3, 10, 6, 2, 5, False),
+        (84, 4, 0, 0, 16, 12, 3, 20, False),
+        (4, 40, 0, 0, 16, 12, 0, 4, True),
+        (24, 40, 0, 0, 16, 12, 5, 4, True),
+        (44, 40, 1, 2, 12, 8, 2, 6, True),
+    )
+    for x, y, src_x, src_y, src_width, src_height, start, count, top_down in bands:
+        height = -12 if top_down else 12
+        info = struct.pack("<IiiHHIIiiII", 40, 16, height, 1, 24, 0, 0, 0, 0, 0, 0)
+        # Scan line n is row n from the top of a top-down DIB, else from the bottom.
+        lines = range(start, min(start + count, 12))
+        bits = b"".join(pixels[line if top_down else 11 - line] for line in lines)
+        bits += bytes(stride * (count - len(lines)))
+        offset = 8 + struct.calcsize("<" + bitmaps.SetDIBitsToDevice.wire_layout)
+        placement = (d.u(x), d.u(y), src_x, src_y, src_width, src_height)
+        blocks = (offset, len(info), offset + len(info), len(bits), 0, start, count)
+        d.add(bitmaps.SetDIBitsToDevice(0, 0, 0, 0, *placement, *blocks, info + bits))
+
+
 def gradients(d):
     vertices = ((d.u(4), d.u(4), 0xFF00, 0, 0, 0), (d.u(60), d.u(40), 0, 0, 0xFF00, 0))
     d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
@@ -674,6 +707,7 @@ FEATURES = (
     ("source-transforms", source_transforms, (128, 51)),
     ("palette-sources", palette_sources, (128,)),
     ("blend-sources", blend_sources, (128,)),
+    ("scan-bands", scan_bands, (128, 51)),
     ("gradientfill", gradients, (128, 51)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
