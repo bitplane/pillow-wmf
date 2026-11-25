@@ -217,7 +217,7 @@ def test_relative_save_levels():
         ("restore_dc", {"saved_dc": -2}),
         ("save_dc", {}),
     ]
-    assert [(o.record_index, o.reason) for o in omissions] == [(5, "Absolute RestoreDC levels are not yet supported")]
+    assert omissions == ()  # Native playback ignores the absolute level.
 
 
 def transform(**values):
@@ -404,24 +404,30 @@ def test_text():
     ]
 
 
-def test_clip_regions_are_copied_from_device_rectangles():
+def test_clip_regions_are_combined_from_device_rectangles():
     region = struct.pack("<4I4i", 32, 1, 2, 32, 0, 0, 9, 9) + struct.pack("<8i", 0, 0, 4, 4, 5, 5, 9, 9)
     calls, omissions = run(
         [
             variable.ExtSelectClipRgn(5, region),
             variable.ExtSelectClipRgn(5),
             variable.ExtSelectClipRgn(1, region),
+            variable.ExtSelectClipRgn(4),  # Only RGN_COPY plays without a region.
             variable.ExtSelectClipRgn(5, bytes(32)),
+            fixed.SetMetaRgn(),
         ]
     )
-    created = calls[0]
-    assert created == Call.make("create_region", region=RegionGeometry(((0, 0, 4, 4), (5, 5, 9, 9))))
-    assert [(call.name, call.kwargs) for call in calls[1:]] == [
-        ("select_clip_region", {"region": Handle(1, "region", None)}),
-        ("delete_object", {"handle": Handle(1, "region", None)}),
-        ("select_clip_region", {"region": None}),
+    geometry = RegionGeometry(((0, 0, 4, 4), (5, 5, 9, 9)))
+    assert calls == [
+        Call.make("create_region", region=geometry),
+        Call.make("ext_select_clip_region", region=Handle(1, "region", None), mode=5),
+        Call.make("delete_object", handle=Handle(1, "region", None)),
+        Call.make("ext_select_clip_region", region=None, mode=5),
+        Call.make("create_region", region=geometry),
+        Call.make("ext_select_clip_region", region=Handle(2, "region", None), mode=1),
+        Call.make("delete_object", handle=Handle(2, "region", None)),
+        Call.make("set_meta_region"),
     ]
-    assert [o.reason for o in omissions] == ["Combining clip regions is not yet supported", "Invalid region data"]
+    assert [o.reason for o in omissions] == ["Invalid region data"]
 
 
 def emf_plus(flags: int) -> variable.Comment:
