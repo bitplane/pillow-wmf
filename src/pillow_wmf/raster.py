@@ -10,7 +10,7 @@ from .binary import FormatError, ResourceLimitError
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, read_dib
 from .bitmap16 import read_bitmap16
 from .blit import StretchAxis
-from .clip import RegionMask
+from .clip import RegionMask, region_outlines
 from .color_adjustment import ColorAdjustment
 from .constants import (
     ALTERNATE,
@@ -57,7 +57,7 @@ from .ellipse import (
 )
 from .execution import CREATED_KINDS, ExecutionContext
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
-from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon
+from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon, coverage_spans
 from .limits import DEFAULT_LIMITS
 from .mapping import IDENTITY_TRANSFORM, Mapping
 from .numeric import float32
@@ -176,13 +176,7 @@ AXIS_ALIGNED_ONLY = frozenset(
         "transparent_blt",
         "pat_blt",
         "gradient_fill",
-        "exclude_clip_rect",
-        "intersect_clip_rect",
-        "offset_clip_region",
-        "fill_region",
         "frame_region",
-        "invert_region",
-        "paint_region",
         "text_out",
         "ext_text_out",
         "widen_path",
@@ -1247,9 +1241,37 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     _apply_restore_dc = _apply_save_dc
 
+    def _polygon_mask(self, contours) -> RegionMask:
+        """The pixels a polygon fill of 28.4 ``contours`` covers, as a region."""
+        contours = tuple(contour for contour in contours if contour)
+        if not contours:
+            return RegionMask()
+        xs = [x for contour in contours for x, _ in contour]
+        ys = [y for contour in contours for _, y in contour]
+        spans = coverage_spans(contours, min(xs) // 16, min(ys) // 16, max(xs) // 16 + 1, max(ys) // 16 + 1)
+        return RegionMask.from_rectangles((start, y, end, y + 1) for y, start, end in spans)
+
     def _apply_intersect_clip_rect(self, call, prepared, result):
         name = call.name
         a = call.kwargs
+        if self.mapping.rotated:
+            # Under rotation the clip rectangle becomes a filled parallelogram:
+            # IntersectClipRect rounds its corners to device pixels first,
+            # ExcludeClipRect keeps them in 28.4.
+            corners = (
+                (a["left"], a["top"]),
+                (a["right"], a["top"]),
+                (a["right"], a["bottom"]),
+                (a["left"], a["bottom"]),
+            )
+            if name == "intersect_clip_rect":
+                polygon = [tuple(16 * value for value in self.mapping.device_point(*point)) for point in corners]
+            else:
+                polygon = [self.mapping.fixed_point(*point) for point in corners]
+            bounds = (0, 0, self.surface.width, self.surface.height)
+            mode = 1 if name == "intersect_clip_rect" else 4
+            self._state.clip = self._state.clip.combine(self._polygon_mask((polygon,)), mode, bounds)
+            return
         left, top = self.mapping.clip_point(a["left"], a["top"])
         right, bottom = self.mapping.clip_point(a["right"], a["bottom"])
         rectangle = (min(left, right), min(top, bottom), max(left, right), max(top, bottom))
@@ -1263,6 +1285,13 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_offset_clip_region(self, call, prepared, result):
         a = call.kwargs
         dx, dy = self.mapping.clip_displacement(a["x"], a["y"])
+        if self.mapping.rotated:
+            # The logical offset is mapped by the transform's linear part and rounded.
+            m11, m12, m21, m22 = self.mapping.world[:4]
+            dx, dy = (
+                (1 if value >= 0 else -1) * math.floor(abs(value) + 0.5)
+                for value in (a["x"] * m11 + a["y"] * m21, a["x"] * m12 + a["y"] * m22)
+            )
         self._state.clip = self._state.clip.offset(dx, dy)
 
     def _apply_fill_region(self, call, prepared, result):
@@ -1270,6 +1299,18 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         painter = self._painter()
         region = self._objects[a["region"]]
+        if region is not None and self.mapping.rotated:
+            # The region's outline is transformed and filled as a polygon.
+            loops = region_outlines(region.rectangles())
+            mask = self._polygon_mask(tuple([self.mapping.fixed_point(*point) for point in loop] for loop in loops))
+            brush = self._objects[a["brush"]] if "brush" in a else self._state.brush
+            for left, top, right, bottom in mask.rectangles():
+                if name == "invert_region":
+                    for y in range(max(0, top), min(self.surface.height, bottom)):
+                        painter.span(y, left, right, (0, 0, 0), operation=R2_NOT)
+                else:
+                    painter.fill_box(left, top, right, bottom, brush)
+            return
         if region is not None:
             if name == "frame_region":
                 region = region.frame(

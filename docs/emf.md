@@ -330,6 +330,14 @@ products plus the 28.4 translation.
 - DIB transfers with SRCCOPY map their destination rectangle to a
   parallelogram and copy as PlgBlt does.
 
+- Clip rectangles become filled parallelograms: `IntersectClipRect` rounds
+  the transformed corners to device pixels first, `ExcludeClipRect` keeps
+  them in 28.4. `OffsetClipRgn` moves the clip by the offset mapped through
+  the transform and rounded; `SelectClipRgn` regions are device pixels as
+  always.
+- `FillRgn`, `PaintRgn` and `InvertRgn` trace the region's outline (corner
+  vertices only), map it to 28.4 and fill it as a polygon.
+
 PlgBlt inverts the mapping at each pixel's integer point against the 28.4
 parallelogram. A source column on an exact boundary belongs to the column it
 starts; a source row on an exact boundary belongs to the row just above the
@@ -346,10 +354,11 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
-- Under rotating or shearing transforms: text, regions, clip rectangles,
-  gradients, legacy and non-SRCCOPY transfers, extended geometric pens, pens
-  wider than the small-pen table, and wide pens under non-uniform transforms
-  are refused.
+- Under rotating or shearing transforms: text, `FrameRgn`, gradients, legacy
+  and non-SRCCOPY transfers, extended geometric pens, pens wider than the
+  small-pen table, and wide pens under non-uniform transforms are refused.
+  Eroding the region by the frame size in logical units, as a box, comes
+  within a few dozen pixels of native `FrameRgn` output but is not exact.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
   mask mirrored within the source rectangle; only fully mirrored cases have
   native references.
