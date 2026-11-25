@@ -523,6 +523,73 @@ class GDI:
             )
         )
 
+    def transparent_blt(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        src_x: int,
+        src_y: int,
+        src_width: int,
+        src_height: int,
+        transparent: int,
+        source: BitmapData,
+    ) -> None:
+        """Stretch a packed DIB, leaving pixels of the ``transparent`` COLORREF untouched."""
+        return self.invoke(
+            Call.make(
+                "transparent_blt",
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                src_x=src_x,
+                src_y=src_y,
+                src_width=src_width,
+                src_height=src_height,
+                transparent=transparent,
+                source=source,
+            )
+        )
+
+    def mask_blt(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        src_x: int,
+        src_y: int,
+        rop: int,
+        source: BitmapData | None,
+        mask: BitmapData | None = None,
+        mask_x: int = 0,
+        mask_y: int = 0,
+        mask_usage: int = 0,
+    ) -> None:
+        """MaskBlt: ROP4's foreground ROP3 where the 1-bpp mask is 1, background elsewhere.
+
+        ``mask_usage`` 2 (DIB_PAL_INDICES) marks a mask without a colour table.
+        """
+        return self.invoke(
+            Call.make(
+                "mask_blt",
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                src_x=src_x,
+                src_y=src_y,
+                rop=rop,
+                source=source,
+                mask=mask,
+                mask_x=mask_x,
+                mask_y=mask_y,
+                mask_usage=mask_usage,
+            )
+        )
+
     def stretch_dib(
         self,
         x: int,

@@ -114,7 +114,7 @@ the codec and reference columns against the code and fixtures.
 | `EXTSELECTCLIPRGN` | typed | full | yes | Device-space regions fitted like points; a missing clip combines with the whole surface. |
 | `BITBLT` | typed | partial | yes | Source transforms and palette-indexed sources are missing. |
 | `STRETCHBLT` | typed | partial | yes | As BITBLT. |
-| `MASKBLT` | typed | no | yes |  |
+| `MASKBLT` | typed | full | yes | Per-pixel ROP3 from the mask; scaled transfers pad as their foreground ROP decides. |
 | `PLGBLT` | typed | no | yes | Needs rotated transfers. |
 | `SETDIBITSTODEVICE` | typed | partial | yes | Partial bands are unverified under scaling. |
 | `STRETCHDIBITS` | typed | full | yes |  |
@@ -151,7 +151,7 @@ the codec and reference columns against the code and fixtures.
 | `SETICMPROFILEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
 | `ALPHABLEND` | typed | no | yes | Needs alpha compositing. |
 | `SETLAYOUT` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
-| `TRANSPARENTBLT` | typed | no | yes |  |
+| `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | no | yes |  |
 | `SETLINKEDUFIS` | typed | full | yes | No effect on shapes; font-limited. |
 | `SETTEXTJUSTIFICATION` | typed | full | no | Text is font-limited. |

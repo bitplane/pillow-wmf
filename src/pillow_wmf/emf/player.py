@@ -137,6 +137,50 @@ def _source_blit(record):
     return "dib_bit_blt", arguments
 
 
+def _identity_source(record):
+    source_transform = (record.src_m11, record.src_m12, record.src_m21, record.src_m22, record.src_dx, record.src_dy)
+    if source_transform != IDENTITY:
+        raise Unsupported("Transformed blit sources are not yet supported")
+    if record.usage != DIB_RGB_COLORS:
+        raise Unsupported("Palette-indexed blit sources are not yet supported")
+
+
+def _transparent_blt(record):
+    _identity_source(record)
+    return "transparent_blt", {
+        "x": record.x,
+        "y": record.y,
+        "width": record.width,
+        "height": record.height,
+        "src_x": record.src_x,
+        "src_y": record.src_y,
+        "src_width": record.src_width,
+        "src_height": record.src_height,
+        "transparent": record.transparent,
+        "source": _dib(record),
+    }
+
+
+def _mask_blt(record):
+    if record.bitmap_size:
+        _identity_source(record)
+    mask = BitmapData("dib", record.mask_info + record.mask_bits) if record.mask_size else None
+    return "mask_blt", {
+        "x": record.x,
+        "y": record.y,
+        "width": record.width,
+        "height": record.height,
+        "src_x": record.src_x,
+        "src_y": record.src_y,
+        "rop": record.rop,
+        "source": _dib(record) if record.bitmap_size else None,
+        "mask": mask,
+        "mask_x": record.mask_x,
+        "mask_y": record.mask_y,
+        "mask_usage": record.mask_usage,
+    }
+
+
 def _stretch_dib(record):
     if not record.bitmap_size:
         raise Unsupported("StretchDIBits without a bitmap")
@@ -314,6 +358,8 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.BitBlt: _source_blit,
     bitmaps.StretchBlt: _source_blit,
     bitmaps.StretchDIBits: _stretch_dib,
+    bitmaps.TransparentBlt: _transparent_blt,
+    bitmaps.MaskBlt: _mask_blt,
     bitmaps.CreateMonoBrush: _mono_brush,
     bitmaps.CreateDIBPatternBrushPt: lambda r: (
         "create_dib_pattern_brush",

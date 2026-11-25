@@ -1,6 +1,6 @@
 """Pixel painting against a surface and explicitly supplied drawing state."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 
 from .bitmap import DIBLayout
@@ -36,13 +36,22 @@ class RasterPainter:
         self._pixels = self.surface.pixels()
         self._width, self._height = self.surface.width, self.surface.height
 
-    def source_blt(self, bitmap, horizontal, vertical, operation, *, pad_bounds=None):
+    def source_blt(
+        self, bitmap, horizontal, vertical, operation, *, pad_bounds=None, transparent=None, mask=None, mode=None
+    ):
+        """Apply a realized source. ``transparent`` skips source pixels of that colour.
+
+        ``mask`` is ``(sample, background)``: where ``sample(sx, sy)`` is false
+        the ``background`` ROP3 applies instead of ``operation``.
+        """
         coverage = getattr(bitmap, "coverage", None)
         table = (operation >> 16) & 255
         # EngStretchBltROP downgrades HALFTONE for ternary operations. Keep
         # this per-transfer; the saved DC stretch mode must remain unchanged.
-        mode = COLORONCOLOR if self.state.stretch_mode == HALFTONE and table != 0xCC else self.state.stretch_mode
-        needs_pattern = (table & 15) != (table >> 4)
+        if mode is None:
+            mode = COLORONCOLOR if self.state.stretch_mode == HALFTONE and table != 0xCC else self.state.stretch_mode
+        tables = (table, (mask[1] >> 16) & 255) if mask is not None else (table,)
+        needs_pattern = any((t & 15) != (t >> 4) for t in tables)
         reduce = (lambda a, b: a & b) if self.state.stretch_mode == BLACKONWHITE else (lambda a, b: a | b)
         left, top, right, bottom = pad_bounds or (
             horizontal.destination,
@@ -56,11 +65,16 @@ class RasterPainter:
         clip, pixels = self.state.clip, self._pixels
         # Sample selection depends on one axis only; resolve each column once.
         columns = range(max(0, left), min(self._width, right))
+        # Mask positions extrapolate past the source bitmap; sources are padded.
+        mask_horizontal = replace(horizontal, limit=1 << 30) if hasattr(horizontal, "limit") else horizontal
+        mask_vertical = replace(vertical, limit=1 << 30) if hasattr(vertical, "limit") else vertical
+        raw_columns = [tuple(mask_horizontal.samples(x, mode)) for x in columns]
         column_samples = [tuple(sx for sx in horizontal.samples(x, mode) if 0 <= sx < width) for x in columns]
         for y in range(max(0, top), min(self._height, bottom)):
+            raw_rows = tuple(mask_vertical.samples(y, mode))
             row_samples = tuple(sy for sy in vertical.samples(y, mode) if 0 <= sy < height)
             in_rows = source_top <= y < source_bottom
-            for x, xs in zip(columns, column_samples, strict=True):
+            for x, xs, raw_xs in zip(columns, column_samples, raw_columns, strict=True):
                 if not clip.contains(x, y):
                     continue
                 samples = (
@@ -69,6 +83,11 @@ class RasterPainter:
                     for sx in xs
                     if coverage is None or coverage[sy * width + sx]
                 )
+                op, op_table = operation, table
+                # The mask covers the transfer rectangle; outside it, its bits are 0.
+                if mask is not None and not (raw_rows and raw_xs and mask[0](raw_xs[0], raw_rows[0])):
+                    op = mask[1]
+                    op_table = (op >> 16) & 255
                 source = next(samples, None)
                 if source is not None:
                     for sample in samples:
@@ -77,13 +96,17 @@ class RasterPainter:
                 if not in_source and pad_bounds is None:
                     continue
                 source = source if in_source else (0, 0, 0)
-                if table == 0xCC:
+                if transparent is not None and tuple(channel & 255 for channel in source) == transparent:
+                    continue
+                if op_table == 0xCC:
                     # SRCCOPY's truth table selects the source in every channel.
                     pixels[x, y] = tuple(channel & 255 for channel in source)
                     continue
+                if op_table == 0xAA:
+                    continue  # The destination is unchanged.
                 pattern = self.brush_color_at(x, y, self.state.brush, opaque=True) if needs_pattern else (0, 0, 0)
                 if pattern is not None:
-                    pixels[x, y] = rop3(operation, pattern, source, pixels[x, y])
+                    pixels[x, y] = rop3(op, pattern, source, pixels[x, y])
 
     def pat_blt(self, x, y, width, height, rop):
         operation = pattern_rop2(rop)

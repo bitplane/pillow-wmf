@@ -8,6 +8,7 @@ from fractions import Fraction
 from .binary import FormatError, ResourceLimitError
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, read_dib
 from .bitmap16 import read_bitmap16
+from .blit import StretchAxis
 from .clip import RegionMask
 from .constants import (
     ALTERNATE,
@@ -58,6 +59,7 @@ from .limits import DEFAULT_LIMITS
 from .mapping import IDENTITY_TRANSFORM, Mapping
 from .numeric import float32
 from .objects import FontRequest, GlyphIndices
+from .paint import pattern_rop2
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
 from .raster_paint import RasterPainter
 from .raster_state import Brush as Brush
@@ -135,6 +137,8 @@ BITMAP_NOOP_ESCAPES = frozenset(
     }
 )
 
+
+SRCCOPY = 0x00CC0020
 
 # Operations whose GM_ADVANCED output has no native references yet. They
 # raise rather than reuse GM_COMPATIBLE rules that may not match.
@@ -671,6 +675,78 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_set_dib_to_device(self, a):
         return self._prepare_device_transfer(a)
+
+    def _prepare_transparent_blt(self, a):
+        # TransparentBlt stretches without combining samples, then skips the key.
+        preparation = replace(self._transfer_preparation(), stretch_mode=COLORONCOLOR)
+        transfer = preparation.prepare_dib("dib_stretch_blt", {**a, "rop": SRCCOPY})
+        return transfer, self._state.palette.colorref(logical_color(a["transparent"]))
+
+    def _apply_transparent_blt(self, call, prepared, result):
+        transfer, transparent = prepared
+        if isinstance(transfer, SourceTransfer):
+            self._painter().source_blt(
+                transfer.bitmap,
+                transfer.horizontal,
+                transfer.vertical,
+                SRCCOPY,
+                transparent=transparent,
+                mode=COLORONCOLOR,
+            )
+
+    def _prepare_mask_blt(self, a):
+        """MAKEROP4 packs the background ROP3's table in the high byte."""
+        foreground = a["rop"] & 0x00FFFFFF
+        background = ((a["rop"] >> 24) & 255) << 16
+        arguments = {key: a[key] for key in ("x", "y", "width", "height", "src_x", "src_y", "source")}
+        if a["source"] is None:
+            if pattern_rop2(foreground) is None or (a["mask"] is not None and pattern_rop2(background) is None):
+                raise UnsupportedOperation("mask_blt: source-less operation uses its source")
+            if a["mask"] is None:
+                return TransferAction.PATTERN, foreground, None
+            raise UnsupportedOperation("mask_blt: masked pattern transfers")
+        if a["mask"] is None:
+            return self._prepare_transfer("dib_bit_blt", {**arguments, "rop": foreground}), foreground, None
+        # Realize the source as for a copy; each pixel's ROP3 is chosen later.
+        transfer = self._prepare_transfer("dib_bit_blt", {**arguments, "rop": SRCCOPY})
+        if not isinstance(transfer, SourceTransfer):
+            return transfer, foreground, None
+        scaled = any(isinstance(axis, StretchAxis) for axis in (transfer.horizontal, transfer.vertical))
+        if scaled and (foreground >> 16) & 255 != 0xCC:
+            # As for other stretches, a foreground other than SRCCOPY pads
+            # samples outside the source with black.
+            horizontal, vertical = transfer.horizontal, transfer.vertical
+            bounds = (horizontal.destination, vertical.destination)
+            bounds += (bounds[0] + horizontal.length, bounds[1] + vertical.length)
+            transfer = replace(transfer, pad_bounds=bounds)
+        mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
+        source = read_dib(a["source"], max_pixels=self.max_bitmap_pixels)
+        if mask.depth != 1 or not mask.complete:
+            raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
+        # Source samples are top-down; place the mask's rectangle over the source's.
+        source_top = a["src_y"] if source.top_down else source.height - a["src_y"] - a["height"]
+        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - a["height"]
+
+        def sample(x, y):
+            mx, my = x - a["src_x"] + a["mask_x"], y - source_top + mask_top
+            return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
+
+        return transfer, foreground, (sample, background)
+
+    def _apply_mask_blt(self, call, prepared, result):
+        transfer, foreground, mask = prepared
+        a = call.kwargs
+        if isinstance(transfer, SourceTransfer):
+            self._painter().source_blt(
+                transfer.bitmap,
+                transfer.horizontal,
+                transfer.vertical,
+                foreground,
+                mask=mask,
+                pad_bounds=transfer.pad_bounds,
+            )
+        elif transfer is TransferAction.PATTERN:
+            self._pat_blt(a["x"], a["y"], a["width"], a["height"], foreground)
 
     def _apply_bit_blt(self, call, prepared, result):
         a = call.kwargs
