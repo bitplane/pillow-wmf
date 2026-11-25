@@ -237,8 +237,10 @@ Recordings of the covered calls are byte-identical to native ones
 ([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Text output
 waits for the font work. Refused: pattern brushes from device bitmaps other
 than 1- and 32-bpp (native `CreateBitmap` cannot make them), compressed
-transfer sources, `SelectClipPath` of paths holding curves or shapes other
-than rectangles, and null object selections. Unverified: the `ArcTo` end
+transfer sources (a recorded transfer carries uncompressed samples, which
+cannot keep an RLE source's unwritten pixels), and `SelectClipPath` of paths
+holding curves or shapes other than rectangles. Null object and palette
+selections fail without a record, as natively. Unverified: the `ArcTo` end
 position for one clockwise arc on an odd-sized box lands a pixel earlier
 natively than the ellipse rule gives.
 

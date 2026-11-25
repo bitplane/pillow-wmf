@@ -406,6 +406,16 @@ def gap_scenarios():
 
     yield "angle-arc-turns", None, angle_arc_turns
 
+    def null_selections(r):
+        # Null object and palette selections fail without a record.
+        r.rectangle(0, 0, 10, 10)
+        r.select_object(None)
+        r.rectangle(20, 0, 30, 10)
+        r.select_palette(None)
+        r.rectangle(40, 0, 50, 10)
+
+    yield "null-selections", None, null_selections
+
     def pattern_brushes(r):
         mono = BitmapData("bitmap16", struct.pack("<hhhhBB", 0, 8, 8, 2, 1, 1) + bytes((0xAA, 0, 0x55, 0) * 4))
         r.select_object(r.create_pattern_brush(mono))

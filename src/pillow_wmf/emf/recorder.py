@@ -583,7 +583,7 @@ class Recorder(TraceContext):
     def _record_select_object(self, a, state, records):
         handle = a["handle"]
         if handle is None:
-            raise UnsupportedOperation("A null object selection has no EMF record")
+            return  # Selecting a null object fails natively without a record.
         entry = self._object(state, handle)
         if entry.kind == "region":
             self._record_ext_select_clip_region({"region": handle, "mode": RGN_COPY}, state, records)
@@ -597,7 +597,7 @@ class Recorder(TraceContext):
     def _record_select_palette(self, a, state, records):
         handle = a["handle"]
         if handle is None:
-            raise UnsupportedOperation("A null palette selection has no EMF record")
+            return  # As a null object selection.
         entry = self._object(state, handle)
         records.append(fixed.SelectPalette(self._slot(state, entry, records)))
         state.palette = entry
