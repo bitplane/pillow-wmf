@@ -124,6 +124,13 @@ class GDI:
     def set_map_mode(self, mode: int) -> None:
         return self.invoke(Call.make("set_map_mode", mode=mode))
 
+    def set_graphics_mode(self, mode: int) -> None:
+        return self.invoke(Call.make("set_graphics_mode", mode=mode))
+
+    def set_world_transform(self, m11: float, m12: float, m21: float, m22: float, dx: float, dy: float) -> None:
+        """Replace the GM_ADVANCED world transform: x' = x*m11 + y*m21 + dx, y' = x*m12 + y*m22 + dy."""
+        return self.invoke(Call.make("set_world_transform", m11=m11, m12=m12, m21=m21, m22=m22, dx=dx, dy=dy))
+
     def set_rop2(self, mode: int) -> None:
         return self.invoke(Call.make("set_rop2", mode=mode))
 

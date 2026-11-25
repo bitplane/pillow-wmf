@@ -1,12 +1,13 @@
-"""Pillow's entry point for the metafile formats rendered here.
+"""Pillow's entry point for the metafile formats rendered here: WMF and EMF.
 
-Formats without a loader, such as EMF, remain with Pillow's existing handler.
+Input no loader accepts remains with Pillow's existing handler.
 """
 
 import math
 
 from PIL import Image, ImageFile, WmfImagePlugin
 
+from .emf import loader as emf_loader
 from .gdi import UnsupportedOperation
 from .raster import RasterContext
 from .system_fonts import SystemFontCollection
@@ -16,7 +17,7 @@ from .wmf.player import PlaybackError
 
 # Each loader identifies its format from a prefix, reads the declared
 # placement from the headers, and plays the whole file into a context.
-LOADERS = (wmf_loader,)
+LOADERS = (wmf_loader, emf_loader)
 HEADER_BYTES = max(loader.HEADER_BYTES for loader in LOADERS)
 
 
@@ -44,6 +45,9 @@ class WmfImageFile(ImageFile.ImageFile):
             inch = self._placement.units_per_inch
             self._size = (max(1, (right - left) * 72 // inch), max(1, (bottom - top) * 72 // inch))
             self.info.update(dpi=72, wmf_bbox=self._placement.bounds)
+            if self._placement.size is not None:
+                self._size = self._placement.size
+                del self.info["dpi"]
         self._mode = "RGB"
 
     def load(self, *, size=None, dpi=None, fonts=None):
@@ -98,7 +102,7 @@ class WmfImageFile(ImageFile.ImageFile):
 
 
 def _factory(fp, filename):
-    prefix = fp.read(16)
+    prefix = fp.read(HEADER_BYTES)
     fp.seek(0)
     if _loader(prefix) is not None:
         return WmfImageFile(fp, filename)

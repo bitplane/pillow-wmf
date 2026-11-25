@@ -5,6 +5,7 @@ from fractions import Fraction
 from math import floor
 
 from .constants import (
+    GM_COMPATIBLE,
     MM_ANISOTROPIC,
     MM_HIENGLISH,
     MM_HIMETRIC,
@@ -47,6 +48,10 @@ UNITS_PER_INCH = {
 }
 
 
+# World transforms are (m11, m12, m21, m22, dx, dy): x' = x*m11 + y*m21 + dx.
+IDENTITY_TRANSFORM = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
 @dataclass(frozen=True)
 class ReferenceDevice:
     """Device capabilities behind the physical mapping modes.
@@ -54,20 +59,27 @@ class ReferenceDevice:
     These describe the device a DC belongs to, not the canvas being drawn.
     The default is the Windows reference bitmap device, the only profile
     with native references; others follow the same arithmetic unverified.
+
+    Without a ``dpi``, physical window extents derive from the millimetre
+    size instead, as native EMF playback does for the metafile's reference
+    device.
     """
 
     pixels: tuple[int, int] = (1024, 768)
     millimetres: tuple[int, int] = (271, 203)
-    dpi: tuple[int, int] = (96, 96)
+    dpi: tuple[int, int] | None = (96, 96)
 
     def __post_init__(self):
-        if any(value <= 0 for value in (*self.pixels, *self.millimetres, *self.dpi)):
+        if any(value <= 0 for value in (*self.pixels, *self.millimetres, *(self.dpi or ()))):
             raise ValueError("Device capabilities must be positive")
 
     def extents(self, mode: int) -> tuple[tuple[int, int], tuple[int, int]]:
         """Window and viewport extents selected by a physical mapping mode."""
         units = UNITS_PER_INCH[mode]
-        window = tuple(rounded(pixels * units / dpi) for pixels, dpi in zip(self.pixels, self.dpi, strict=True))
+        if self.dpi is None:
+            window = tuple(rounded(size * units / 25.4) for size in self.millimetres)
+        else:
+            window = tuple(rounded(pixels * units / dpi) for pixels, dpi in zip(self.pixels, self.dpi, strict=True))
         return window, (self.pixels[0], -self.pixels[1])
 
 
@@ -84,6 +96,10 @@ class Mapping:
     layout: int = 0
     surface_width: int = 128
     device: ReferenceDevice = REFERENCE_DEVICE
+    graphics_mode: int = GM_COMPATIBLE
+    # Float32 world transform applied before the page mapping. Only
+    # axis-aligned transforms are represented; GM_ADVANCED is required.
+    world: tuple[float, float, float, float, float, float] = IDENTITY_TRANSFORM
 
     @property
     def rtl(self):
@@ -96,6 +112,7 @@ class Mapping:
         Point mapping separately preserves native product/translation rounding.
         """
         x, y = (Fraction(v, w) for v, w in zip(self.viewport_extent, self.window_extent, strict=True))
+        x, y = x * Fraction(self.world[0]), y * Fraction(self.world[3])
         return (-x if self.rtl else x), y
 
     @property
@@ -127,11 +144,24 @@ class Mapping:
             origin = float32(window_translation + viewport_origin)
             yield viewport, window, origin
 
+    def _transform(self):
+        """Per-axis float32 (scale, origin): the world transform, then the page mapping.
+
+        Each FLOAT product and sum is realized separately. With an identity
+        page, as during EMF playback, these are the world transform itself.
+        """
+        for axis, (viewport, window, origin) in enumerate(self._axes()):
+            scale = float32(viewport / window)
+            if self.world != IDENTITY_TRANSFORM:
+                world_scale, world_origin = self.world[3 * axis], self.world[4 + axis]
+                scale, origin = float32(world_scale * scale), float32(float32(world_origin * scale) + origin)
+            yield scale, origin
+
     def point(self, x: int, y: int) -> tuple[int, int]:
-        if self.rtl:
+        if self.rtl or self.world != IDENTITY_TRANSFORM:
             return tuple(
-                rounded(value * viewport / window + origin)
-                for value, (viewport, window, origin) in zip((x, y), self._axes(), strict=True)
+                rounded(value * scale + origin)
+                for value, (scale, origin) in zip((x, y), self._transform(), strict=True)
             )
         return (
             rounded(
@@ -143,10 +173,8 @@ class Mapping:
         )
 
     def vector(self, x: int, y: int) -> tuple[int, int]:
-        return (
-            rounded(x * self.viewport_extent[0] / self.window_extent[0] * (-1 if self.rtl else 1)),
-            rounded(y * self.viewport_extent[1] / self.window_extent[1]),
-        )
+        scale_x, scale_y = self.linear_scale
+        return rounded(x * scale_x), rounded(y * scale_y)
 
     def clip_point(self, x: int, y: int) -> tuple[int, int]:
         """Rectangular clip edges use the driver's fixed-point transform."""
@@ -172,8 +200,8 @@ class Mapping:
     def fixed_point(self, x, y):
         """Map a point without discarding its device-space sixteenths."""
         result = []
-        for value, (viewport, window, origin) in zip((x, y), self._axes(), strict=True):
-            product = float32(value * float32(viewport / window))
+        for value, (scale, origin) in zip((x, y), self._transform(), strict=True):
+            product = float32(value * scale)
             coordinate = fixed(product) + fixed(origin)
             result.append(coordinate)
         return tuple(result)
@@ -232,18 +260,25 @@ class Mapping:
             self.viewport_extent = (x, y)
         self._fix_isotropic()
 
-    def _fix_isotropic(self) -> None:
-        if self.mode != MM_ISOTROPIC:
-            return
+    def isotropic_viewport(self) -> tuple[int, int]:
+        """The viewport extent with the window's physical aspect ratio.
+
+        The shrunk axis can round to zero; callers decide how to treat that.
+        """
         wx, wy = self.window_extent
         vx, vy = self.viewport_extent
         (width_mm, height_mm), (width, height) = self.device.millimetres, self.device.pixels
         xdim = abs(vx * width_mm / (width * wx))
         ydim = abs(vy * height_mm / (height * wy))
         if xdim > ydim:
-            vx = rounded(vx * ydim / xdim)
-            vx = vx or (1 if self.viewport_extent[0] > 0 else -1)
-        else:
-            vy = rounded(vy * xdim / ydim)
-            vy = vy or (1 if self.viewport_extent[1] > 0 else -1)
-        self.viewport_extent = (vx, vy)
+            return rounded(vx * ydim / xdim), vy
+        return vx, rounded(vy * xdim / ydim)
+
+    def _fix_isotropic(self) -> None:
+        if self.mode != MM_ISOTROPIC:
+            return
+        # GDI keeps a collapsed axis at one unit in its original direction.
+        self.viewport_extent = tuple(
+            value or (1 if original > 0 else -1)
+            for value, original in zip(self.isotropic_viewport(), self.viewport_extent, strict=True)
+        )

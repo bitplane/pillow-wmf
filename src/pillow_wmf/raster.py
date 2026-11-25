@@ -26,6 +26,8 @@ from .constants import (
     ETO_RTLREADING,
     FLOODFILLBORDER,
     FLOODFILLSURFACE,
+    GM_ADVANCED,
+    GM_COMPATIBLE,
     HALFTONE,
     MM_ANISOTROPIC,
     MM_TEXT,
@@ -46,7 +48,8 @@ from .execution import CREATED_KINDS, ExecutionContext
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon
 from .limits import DEFAULT_LIMITS
-from .mapping import Mapping
+from .mapping import IDENTITY_TRANSFORM, Mapping
+from .numeric import float32
 from .objects import FontRequest, GlyphIndices
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
 from .raster_paint import RasterPainter
@@ -182,12 +185,15 @@ class RasterContext(ExecutionContext[DrawingState]):
             return region.transformed(lambda x, y: (self.surface.width - x, y))
         return region
 
+    def _path_point(self, x: int, y: int) -> tuple[int, int]:
+        """A 28.4 path vertex: whole pixels in GM_COMPATIBLE, sixteenths in GM_ADVANCED."""
+        if self.mapping.graphics_mode == GM_ADVANCED:
+            return self.mapping.fixed_point(x, y)
+        x, y = self._point(x, y)
+        return x * 16, y * 16
+
     def _mapped_path(self, points) -> Polygon:
-        path = []
-        for logical_x, logical_y in points:
-            x, y = self._point(logical_x, logical_y)
-            path.append((x * 16, y * 16))
-        return path
+        return [self._path_point(x, y) for x, y in points]
 
     def _prepare_effect(self, call):
         """Preparation lives beside its handler; simple state calls need none."""
@@ -293,6 +299,28 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_map_mode(self, call, prepared, result):
         a = call.kwargs
         self.mapping.set_mode(a["mode"])
+
+    def _prepare_set_graphics_mode(self, a):
+        if a["mode"] not in (GM_COMPATIBLE, GM_ADVANCED):
+            raise InvalidOperation(f"Graphics mode {a['mode']}")
+        if a["mode"] == GM_COMPATIBLE and self.mapping.world != IDENTITY_TRANSFORM:
+            raise InvalidOperation("GM_COMPATIBLE requires an identity world transform")
+
+    def _apply_set_graphics_mode(self, call, prepared, result):
+        self.mapping.graphics_mode = call.kwargs["mode"]
+
+    def _prepare_set_world_transform(self, a):
+        transform = tuple(float32(a[name]) for name in ("m11", "m12", "m21", "m22", "dx", "dy"))
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            raise InvalidOperation("World transforms require GM_ADVANCED")
+        if transform[0] * transform[3] - transform[1] * transform[2] == 0:
+            raise InvalidOperation("Singular world transform")
+        if transform[1] or transform[2]:
+            raise UnsupportedOperation("Rotated or sheared world transforms")
+        return transform
+
+    def _apply_set_world_transform(self, call, prepared, result):
+        self.mapping.world = prepared
 
     def _prepare_set_layout(self, a):
         if a["layout"] & ~9:
@@ -511,7 +539,7 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_line_to(self, call, prepared, result):
         a = call.kwargs
-        self._line(self._point(*self._state.position), self._point(a["x"], a["y"]))
+        self._stroke_path(DevicePath.polyline(self._mapped_path((self._state.position, (a["x"], a["y"])))))
         self._state.position = a["x"], a["y"]
 
     def _apply_polyline(self, call, prepared, result):
@@ -655,12 +683,27 @@ class RasterContext(ExecutionContext[DrawingState]):
         # Native EBOX decrements RTL logical X edges before transforming.
         # Rectangle's wide-pen path enters EBOX after its own decrement.
         shift = int(self.mapping.rtl) * (1 + (name == "rectangle" and not pen.cosmetic))
-        left, top = self._point(a["left"] - shift, a["top"])
-        right, bottom = self._point(a["right"] - shift, a["bottom"])
+        advanced_bounds = None
+        if self.mapping.graphics_mode == GM_ADVANCED:
+            # GM_ADVANCED paths use the transformed 28.4 box itself, lower-right
+            # inclusive. The integer box takes the ceiling of each edge.
+            (x0, y0), (x1, y1) = (
+                self.mapping.fixed_point(a["left"], a["top"]),
+                self.mapping.fixed_point(a["right"], a["bottom"]),
+            )
+            x0, x1 = sorted((x0, x1))
+            y0, y1 = sorted((y0, y1))
+            advanced_bounds = (x0, y0, x1, y1)
+            left, top, right, bottom = ((value + 15) // 16 for value in advanced_bounds)
+        else:
+            left, top = self._point(a["left"] - shift, a["top"])
+            right, bottom = self._point(a["right"] - shift, a["bottom"])
         left, right = sorted((left, right))
         top, bottom = sorted((top, bottom))
+        if self.mapping.graphics_mode == GM_ADVANCED:
+            right, bottom = right + 1, bottom + 1
         if right > left and bottom > top:
-            drawing_bounds = None
+            drawing_bounds = advanced_bounds
             covered = False
             if self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
                 covered, drawing_bounds = inside_frame_bounds(
@@ -673,7 +716,9 @@ class RasterContext(ExecutionContext[DrawingState]):
                     return
             rectangle = name == "rectangle"
             if name == "rectangle":
-                bounds = drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
+                bounds = (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
+                if drawing_bounds and not (pen.cosmetic and advanced_bounds):
+                    bounds = drawing_bounds
                 path = DevicePath.polyline(box_corners(bounds), closed=True)
             elif name == "ellipse":
                 path = DevicePath(

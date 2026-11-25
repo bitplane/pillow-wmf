@@ -120,8 +120,14 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
         calls.append((source, width, height))
         return Output()
 
+    def render_emf(source, width, height):
+        calls.append(("emf", source, width, height))
+        return Output()
+
     monkeypatch.setitem(
-        sys.modules, "windows_wmf_render", SimpleNamespace(render_wmf=render, private_fonts=private_fonts)
+        sys.modules,
+        "windows_wmf_render",
+        SimpleNamespace(render_wmf=render, render_emf=render_emf, private_fonts=private_fonts),
     )
     script = runpy.run_path(str(SCRIPTS / "update-goldens.py"))
     main = script["main"]
@@ -145,6 +151,11 @@ def test_updater_only_renders_missing_pngs(monkeypatch, tmp_path):
     assert (profile / "existing.png").read_bytes() == b"leave-this-alone"
     assert main([]) == 0
     assert len(calls) == 3
+    # EMF inputs use the enhanced-metafile renderer.
+    (tmp_path / "picture.emf").write_bytes(b"emf-input")
+    assert main([]) == 0
+    assert calls[3:] == [("emf", b"emf-input", 128, 128), ("emf", b"emf-input", 257, 193)]
+    assert (profile / "picture.png").read_bytes() == b"new-reference"
 
 
 def test_explicit_pair_uses_png_dimensions_not_directory_label(tmp_path):
@@ -179,7 +190,7 @@ def test_discovery_requires_each_input_at_each_active_size(tmp_path):
         ("two.WMF", "257x193/two.png"),
     }
     (corpus / "257x193/orphan.png").touch()
-    with pytest.raises(ValueError, match="without a matching WMF"):
+    with pytest.raises(ValueError, match="without a matching metafile"):
         discover(tmp_path)
 
 
@@ -210,7 +221,7 @@ def test_discovery_rejects_adjacent_pngs(tmp_path):
     (tmp_path / "one.wmf").touch()
     (tmp_path / "one.png").touch()
     (tmp_path / "128x128").mkdir()
-    with pytest.raises(ValueError, match="without a matching WMF"):
+    with pytest.raises(ValueError, match="without a matching metafile"):
         discover(tmp_path)
 
 

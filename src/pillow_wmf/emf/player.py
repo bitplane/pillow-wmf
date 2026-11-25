@@ -1,17 +1,22 @@
 """Translate EMF records to backend calls without rasterizing or decoding text.
 
-Only records whose meaning matches an existing GDI call are translated. The
-rest are reported as omissions, so a caller can tell a complete rendering
-from a partial one. Comments never draw; EMF+ drawing is reported only when
-a file has no GDI fallback for it.
+Playback follows PlayEnhMetaFile: the backend is put in GM_ADVANCED, and the
+metafile's mapping records become one world transform that also fits the
+picture frame to the target rectangle (see ``transform``). Other records
+translate only where their meaning matches an existing GDI call; the rest
+are reported as omissions, so a caller can tell a complete rendering from a
+partial one. Comments never draw; EMF+ drawing is reported only when a file
+has no GDI fallback for it.
 """
 
 import struct
 from collections.abc import Callable
 
 from ..binary import FormatError, Limits
-from ..constants import ETO_CLIPPED, ETO_GLYPH_INDEX, ETO_OPAQUE, PS_NULL, PS_SOLID
+from ..constants import ETO_CLIPPED, ETO_GLYPH_INDEX, ETO_OPAQUE, GM_ADVANCED, PS_NULL, PS_SOLID
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
+from ..mapping import fixed as to_fixed
+from ..numeric import float32
 from ..objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, RegionGeometry
 from ..playback import Omission as Omission
 from ..playback import Omissions, PlaybackError, SaveLevels
@@ -20,6 +25,7 @@ from .constants import CREATION_TYPES, RecordType
 from .file import Metafile
 from .objects import region_rectangles
 from .records import UnknownRecord, record_type
+from .transform import PlaybackTransform, natural_size
 
 STOCK_OBJECT = 0x80000000
 BS_NULL = 1
@@ -34,10 +40,6 @@ PS_USERSTYLE = 7
 EMFPLUS_HEADER = 0x4001
 EMFPLUS_DUAL = 0x0001
 RGN_COPY = 5
-MWT_IDENTITY = 1
-MWT_LEFTMULTIPLY = 2
-MWT_RIGHTMULTIPLY = 3
-MWT_SET = 4
 IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 # Stock brushes and pens (MS-EMF 2.1.31) as equivalent creations. Stock
@@ -66,15 +68,6 @@ def _rect(record):
 def _box_points(record):
     points = {"start_x": record.start_x, "start_y": record.start_y, "end_x": record.end_x, "end_y": record.end_y}
     return _rect(record) | points
-
-
-def _scale(record):
-    return {
-        "x_numerator": record.x_num,
-        "x_denominator": record.x_denom,
-        "y_numerator": record.y_num,
-        "y_denominator": record.y_denom,
-    }
 
 
 def _font(record):
@@ -205,23 +198,6 @@ def _ext_text_out(record):
     }
 
 
-def _world_transform(record):
-    """Accept transforms that leave the world transform the identity.
-
-    Anything else is unsupported until the shared mapping has a world
-    transform, and is reported rather than drawn untransformed.
-    """
-    matrix = (record.m11, record.m12, record.m21, record.m22, record.dx, record.dy)
-    mode = MWT_SET if isinstance(record, fixed.SetWorldTransform) else record.mode
-    if mode == MWT_IDENTITY or (mode == MWT_SET and matrix == IDENTITY):
-        return
-    if mode in (MWT_LEFTMULTIPLY, MWT_RIGHTMULTIPLY) and matrix == IDENTITY:
-        return
-    if mode not in (MWT_IDENTITY, MWT_LEFTMULTIPLY, MWT_RIGHTMULTIPLY, MWT_SET):
-        return  # Native ModifyWorldTransform rejects other modes.
-    raise Unsupported("World transforms are not yet supported")
-
-
 def _direct(name, *fields, **renamed):
     def translate(record):
         return name, {field: getattr(record, field) for field in fields} | {
@@ -232,13 +208,8 @@ def _direct(name, *fields, **renamed):
 
 
 TRANSLATIONS: dict[type, Callable] = {
-    fixed.SetWindowExtEx: _direct("set_window_extent", x="cx", y="cy"),
-    fixed.SetWindowOrgEx: _direct("set_window_origin", "x", "y"),
-    fixed.SetViewportExtEx: _direct("set_viewport_extent", x="cx", y="cy"),
-    fixed.SetViewportOrgEx: _direct("set_viewport_origin", "x", "y"),
     fixed.SetPixelV: _direct("set_pixel", "x", "y", "color"),
     fixed.SetMapperFlags: _direct("set_mapper_flags", "flags"),
-    fixed.SetMapMode: _direct("set_map_mode", "mode"),
     fixed.SetBkMode: _direct("set_background_mode", "mode"),
     fixed.SetPolyFillMode: _direct("set_polygon_fill_mode", "mode"),
     fixed.SetROP2: _direct("set_rop2", "mode"),
@@ -251,8 +222,6 @@ TRANSLATIONS: dict[type, Callable] = {
     fixed.LineTo: _direct("line_to", "x", "y"),
     fixed.ExcludeClipRect: lambda r: ("exclude_clip_rect", _rect(r)),
     fixed.IntersectClipRect: lambda r: ("intersect_clip_rect", _rect(r)),
-    fixed.ScaleViewportExtEx: lambda r: ("scale_viewport_extent", _scale(r)),
-    fixed.ScaleWindowExtEx: lambda r: ("scale_window_extent", _scale(r)),
     fixed.CreatePen: _direct("create_pen", "style", "width", "color"),
     fixed.CreateBrushIndirect: _direct("create_brush", "style", "color", "hatch"),
     fixed.Ellipse: lambda r: ("ellipse", _rect(r)),
@@ -290,6 +259,21 @@ TRANSLATIONS: dict[type, Callable] = {
 }
 
 
+def fitted_rectangles(rectangles, fit):
+    """Region rectangles are reference-device pixels; fit them like points."""
+    scale_x, _, _, scale_y, origin_x, origin_y = fit
+
+    def edge(value, scale, origin):
+        return (to_fixed(float32(value * scale)) + to_fixed(origin) + 8) // 16
+
+    result = []
+    for left, top, right, bottom in rectangles:
+        x0, x1 = sorted((edge(left, scale_x, origin_x), edge(right, scale_x, origin_x)))
+        y0, y1 = sorted((edge(top, scale_y, origin_y), edge(bottom, scale_y, origin_y)))
+        result.append((x0, y0, x1, y1))
+    return tuple(result)
+
+
 def record_name(kind: int) -> str:
     try:
         return RecordType(kind).name
@@ -312,13 +296,16 @@ def play(
     *,
     strict: bool = False,
     limits: Limits | None = None,
+    rect: tuple[int, int, int, int] | None = None,
     comment: Callable[[int, variable.Comment], None] | None = None,
 ) -> tuple[Omission, ...]:
     """Play into a supplied context; return diagnostics for unsupported work.
 
-    The caller owns the backend, its initial state and any placement of the
-    picture frame. ``comment`` receives every EMR_COMMENT record with its
-    index, for a front-end that interprets EMF+ or other comment payloads.
+    The picture frame is fitted to ``rect`` in the backend's device pixels;
+    the default is the frame's own size in header device pixels at the
+    origin. The caller owns the backend's other initial state. ``comment``
+    receives every EMR_COMMENT record with its index, for a front-end that
+    interprets EMF+ or other comment payloads.
     """
     limits = limits if limits is not None else Limits()
     if metafile.header.handle_count > limits.max_objects or len(metafile.records) > limits.max_records:
@@ -329,6 +316,7 @@ def play(
     stock: dict[int, Handle] = {}
     omissions = Omissions(strict=strict)
     levels = SaveLevels()
+    transform = PlaybackTransform(metafile.header, rect if rect is not None else (0, 0, *natural_size(metafile.header)))
 
     def invoke(index, kind, name, arguments):
         try:
@@ -356,6 +344,14 @@ def play(
             return None
         return slots[object_index]
 
+    def set_transform(index, kind):
+        matrix = transform.matrix()
+        names = ("m11", "m12", "m21", "m22", "dx", "dy")
+        invoke(index, kind, "set_world_transform", dict(zip(names, matrix, strict=True)))
+
+    # Attributed to the header record, which native playback starts from.
+    invoke(-1, RecordType.HEADER, "set_graphics_mode", {"mode": GM_ADVANCED})
+    set_transform(-1, RecordType.HEADER)
     for index, record in enumerate(metafile.records):
         kind = record_type(record)
         if kind == RecordType.EOF:
@@ -373,6 +369,7 @@ def play(
             if levels.depth >= limits.max_saved_states:
                 raise PlaybackError(f"Record {index}: saved-state limit exceeded")
             levels.save()
+            transform.save()
             ok, result = invoke(index, kind, "save_dc", {})
             if ok and not levels.saved(result):
                 raise PlaybackError(f"Record {index}: save did not return a valid saved DC identifier")
@@ -383,6 +380,8 @@ def play(
                 omissions.omit(index, kind, "Absolute RestoreDC levels are not yet supported")
                 continue
             native_saved = levels.restore(level)
+            if native_saved is not SaveLevels.MISSING:
+                transform.restore(level)
             if native_saved is SaveLevels.MISSING:
                 continue  # A failed native restore leaves the DC unchanged.
             if native_saved is None:
@@ -409,11 +408,11 @@ def play(
             if isinstance(handle, Handle):
                 invoke(index, kind, "delete_object", {"handle": handle})
             continue
-        if isinstance(record, (fixed.SetWorldTransform, fixed.ModifyWorldTransform)):
-            try:
-                _world_transform(record)
-            except Unsupported as reason:
-                omissions.omit(index, kind, str(reason))
+        if isinstance(record, PlaybackTransform.MAPPING_RECORDS):
+            before = transform.matrix()
+            transform.apply(record)
+            if transform.matrix() != before:
+                set_transform(index, kind)
             continue
         if isinstance(record, variable.ExtSelectClipRgn):
             if record.mode != RGN_COPY:
@@ -422,7 +421,7 @@ def play(
                 invoke(index, kind, "select_clip_region", {"region": None})
             else:
                 try:
-                    geometry = RegionGeometry(region_rectangles(record.region))
+                    geometry = RegionGeometry(fitted_rectangles(region_rectangles(record.region), transform.fit))
                 except FormatError as error:
                     omissions.omit(index, kind, str(error))
                     continue

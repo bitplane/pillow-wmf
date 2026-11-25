@@ -1,8 +1,8 @@
 """Load WMF data for rendering: identify it from its headers, then play it."""
 
 import struct
-from dataclasses import dataclass
 
+from ..placement import Placement as Placement
 from .binary import FormatError, Limits, Reader
 from .file import Header, Metafile
 from .player import play
@@ -11,14 +11,6 @@ PLACEABLE_KEY = b"\xd7\xcd\xc6\x9a"
 PLACEABLE_SIZE = 22
 # Enough to identify the format and read its placement.
 HEADER_BYTES = PLACEABLE_SIZE + 18
-
-
-@dataclass(frozen=True)
-class Placement:
-    """A drawing area the file declares: logical bounds and their units per inch."""
-
-    bounds: tuple[int, int, int, int]
-    units_per_inch: int
 
 
 def accepts(prefix: bytes) -> bool:

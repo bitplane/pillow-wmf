@@ -1,11 +1,13 @@
 import random
 import struct
+from dataclasses import replace
 
 import pytest
 
 from pillow_wmf import Call, Handle, PlaybackError, TraceContext, UnsupportedOperation
 from pillow_wmf.emf import FormatError, Limits, LogFont, Metafile, UnknownRecord, bitmaps, fixed, text, variable
 from pillow_wmf.emf.player import play
+from pillow_wmf.numeric import float32
 from pillow_wmf.objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, RegionGeometry
 
 DIB = bytes.fromhex("28000000 01000000 01000000 0100 1800 00000000 04000000 00000000 00000000 00000000 00000000")
@@ -15,22 +17,23 @@ NULL_PEN = 0x80000008
 SYSTEM_FONT = 0x8000000D
 
 
+# A frame of 128 reference pixels; fitted to 128 pixels it is exactly 1:1.
+UNIT_FRAME = (0, 0, 3388, 3383)
+IDENTITY = dict(m11=1.0, m12=0.0, m21=0.0, m22=1.0, dx=0.0, dy=0.0)
+PREAMBLE = [Call.make("set_graphics_mode", mode=2), Call.make("set_world_transform", **IDENTITY)]
+
+
 def run(records, **options):
+    """Play at 1:1 and return the calls after the playback preamble."""
     trace = TraceContext()
-    omissions = play(Metafile.build(records), trace, **options)
-    return trace.calls, omissions
+    omissions = play(Metafile.build(records, frame=UNIT_FRAME), trace, rect=(0, 0, 128, 128), **options)
+    assert trace.calls[:2] == PREAMBLE
+    return trace.calls[2:], omissions
 
 
 def test_state_and_drawing_records_translate_to_gdi_calls():
     calls, omissions = run(
         [
-            fixed.SetMapMode(8),
-            fixed.SetWindowOrgEx(-1, -2),
-            fixed.SetWindowExtEx(100, 200),
-            fixed.SetViewportOrgEx(3, 4),
-            fixed.SetViewportExtEx(300, 400),
-            fixed.ScaleWindowExtEx(1, 2, 3, 4),
-            fixed.ScaleViewportExtEx(5, 6, 7, 8),
             fixed.SetBkMode(1),
             fixed.SetBkColor(0x00112233),
             fixed.SetTextColor(0x00445566),
@@ -68,13 +71,6 @@ def test_state_and_drawing_records_translate_to_gdi_calls():
     rect = {"left": 1, "top": 2, "right": 3, "bottom": 4}
     box = rect | {"start_x": 5, "start_y": 6, "end_x": 7, "end_y": 8}
     assert calls == [
-        Call.make("set_map_mode", mode=8),
-        Call.make("set_window_origin", x=-1, y=-2),
-        Call.make("set_window_extent", x=100, y=200),
-        Call.make("set_viewport_origin", x=3, y=4),
-        Call.make("set_viewport_extent", x=300, y=400),
-        Call.make("scale_window_extent", x_numerator=1, x_denominator=2, y_numerator=3, y_denominator=4),
-        Call.make("scale_viewport_extent", x_numerator=5, x_denominator=6, y_numerator=7, y_denominator=8),
         Call.make("set_background_mode", mode=1),
         Call.make("set_background_color", color=0x00112233),
         Call.make("set_text_color", color=0x00445566),
@@ -224,23 +220,83 @@ def test_relative_save_levels():
     assert [(o.record_index, o.reason) for o in omissions] == [(5, "Absolute RestoreDC levels are not yet supported")]
 
 
-def test_identity_world_transforms_need_no_support():
-    identity = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
-    scale = (2.0, 0.0, 0.0, 2.0, 0.0, 0.0)
+def transform(**values):
+    return Call.make("set_world_transform", **IDENTITY | values)
+
+
+def test_mapping_records_become_world_transforms():
     calls, omissions = run(
         [
-            fixed.SetWorldTransform(*identity),
-            fixed.ModifyWorldTransform(*scale, 1),  # MWT_IDENTITY ignores the matrix.
-            fixed.ModifyWorldTransform(*identity, 2),
-            fixed.ModifyWorldTransform(*identity, 3),
-            fixed.ModifyWorldTransform(*identity, 4),
-            fixed.ModifyWorldTransform(*scale, 9),  # Rejected natively.
-            fixed.SetWorldTransform(*scale),
-            fixed.ModifyWorldTransform(*scale, 2),
-        ]
+            fixed.SetMapMode(8),  # The extents are still 1:1, so nothing changes yet.
+            fixed.SetWindowExtEx(256, 64),
+            fixed.SetViewportOrgEx(3, 4),
+            fixed.SetViewportExtEx(128, 128),
+            fixed.SetWindowOrgEx(-2, 2),
+            fixed.SetWindowOrgEx(-2, 2),  # The same matrix is not set again.
+        ],
+        strict=True,
     )
-    assert calls == []
-    assert [o.record_index for o in omissions] == [6, 7]
+    assert omissions == ()
+    assert calls == [
+        transform(m11=1 / 256, m22=1 / 64),
+        transform(m11=1 / 256, m22=1 / 64, dx=3.0, dy=4.0),
+        transform(m11=0.5, m22=2.0, dx=3.0, dy=4.0),
+        transform(m11=0.5, m22=2.0, dx=4.0, dy=0.0),
+    ]
+
+
+def test_physical_modes_and_world_transforms():
+    calls, omissions = run(
+        [
+            fixed.SetMapMode(2),  # MM_LOMETRIC: extents from the header millimetres, not a DPI.
+            fixed.SetWorldTransform(2.0, 0.0, 0.0, 2.0, 1.0, 0.0),
+            fixed.SetWorldTransform(1.0, 0.0, 0.0, 0.0, 0.0, 0.0),  # Singular: rejected.
+            fixed.ModifyWorldTransform(2.0, 0.0, 0.0, 2.0, 0.0, 0.0, 9),  # Unknown mode: rejected.
+            fixed.ModifyWorldTransform(3.0, 0.0, 0.0, 3.0, 0.0, 0.0, 1),  # MWT_IDENTITY ignores the matrix.
+        ],
+        strict=True,
+    )
+    assert omissions == ()
+    x, y = float32(1024 / 2710), float32(-768 / 2030)
+    assert calls == [
+        transform(m11=x, m22=y),
+        transform(m11=float32(2 * x), m22=float32(2 * y), dx=x),
+        transform(m11=x, m22=y),
+    ]
+
+
+def test_frame_fit_and_saved_transforms():
+    trace = TraceContext()
+    records = [
+        fixed.SaveDC(),
+        fixed.SetWorldTransform(2.0, 0.0, 0.0, 2.0, 0.0, 0.0),
+        fixed.RestoreDC(-1),
+        fixed.SetMapMode(1),
+    ]
+    play(Metafile.build(records, frame=(100, 0, 1100, 1000)), trace, rect=(10, 20, 74, 52), strict=True)
+    fit = dict(
+        m11=float32(float32(64 / 1000) * float32(27100 / 1024)), m22=float32(float32(32 / 1000) * float32(20300 / 768))
+    )
+    fit |= dict(dx=float32(10 - float32(100 * float32(64 / 1000))), dy=20.0)
+    assert [call.name for call in trace.calls] == [
+        "set_graphics_mode",
+        "set_world_transform",
+        "save_dc",
+        "set_world_transform",
+        "restore_dc",
+    ]
+    assert trace.calls[1] == transform(**fit)
+    assert trace.calls[3] == transform(
+        **{key: float32(2 * value) if key in ("m11", "m22") else value for key, value in fit.items()}
+    )
+
+
+def test_frames_native_playback_rejects():
+    with pytest.raises(PlaybackError, match="reversed"):
+        play(Metafile.build([], frame=(10, 0, 0, 10)), TraceContext())
+    header = Metafile.build([], frame=UNIT_FRAME).header
+    with pytest.raises(PlaybackError, match="device size"):
+        play(Metafile(replace(header, millimetres=(0, 1)), (variable.Eof(),)), TraceContext())
 
 
 def test_blits():
@@ -386,17 +442,18 @@ def test_unsupported_records_are_reported_or_raise_when_strict():
 
 
 def test_playback_stops_at_eof_and_enforces_limits():
-    file = Metafile.build([fixed.CreatePen(5, 0, 1, 0, 0)])
+    file = Metafile.build([fixed.CreatePen(5, 0, 1, 0, 0)], frame=UNIT_FRAME)
     with pytest.raises(PlaybackError, match="resource limit"):
         play(file, TraceContext(), limits=Limits(max_objects=5))
     with pytest.raises(PlaybackError, match="saved-state"):
-        play(Metafile.build([fixed.SaveDC()] * 3), TraceContext(), limits=Limits(max_saved_states=2))
+        play(Metafile.build([fixed.SaveDC()] * 3, frame=UNIT_FRAME), TraceContext(), limits=Limits(max_saved_states=2))
 
 
 def test_mutated_files_play_or_raise_playback_error():
     from test_emf_codec import CASES, mutations
 
-    seed = Metafile.build([case for case in CASES if not isinstance(case, variable.Eof)]).to_bytes()
+    records = [case for case in CASES if not isinstance(case, variable.Eof)]
+    seed = Metafile.build(records, frame=UNIT_FRAME).to_bytes()
     played = 0
     for data in mutations(seed, random.Random(0x91A7), 1500):
         try:
