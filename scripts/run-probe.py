@@ -130,6 +130,7 @@ PROBES = {
     "color-match": Probe("probe-windows-color-match.py", output="color-match"),
     "emf-recording": Probe("probe-windows-emf-recording.py", output="emf-recording"),
     "rotated-regions": Probe("probe-windows-rotated-regions.py", output="rotated-regions"),
+    "rotated-transfers": Probe("probe-windows-rotated-transfers.py", output="rotated-transfers"),
 }
 
 
