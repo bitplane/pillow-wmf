@@ -1,7 +1,7 @@
-"""EMF reader/writer and player. Import record classes from fixed, variable, bitmaps and text."""
+"""EMF reader/writer and player. Import record classes from fixed, variable, bitmaps, text and system."""
 
 from ..binary import FormatError, Limits
-from . import bitmaps, fixed, text, variable
+from . import bitmaps, fixed, system, text, variable
 from .constants import CommentIdentifier, RecordType
 from .file import Header, Metafile, accepts
 from .objects import LogFont
@@ -23,6 +23,7 @@ __all__ = [
     "bitmaps",
     "fixed",
     "play",
+    "system",
     "text",
     "variable",
 ]

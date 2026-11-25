@@ -107,15 +107,15 @@ the codec and reference columns against the code and fixtures.
 | `SELECTCLIPPATH` | typed | no | no | Needs path recording. |
 | `ABORTPATH` | typed | no | no | Needs path recording. |
 | `COMMENT` | typed | partial | no | Never draws; EMF+ is not rendered and embedded metafiles are not played. |
-| `FILLRGN` | opaque | no | no | Region records are not decoded. |
-| `FRAMERGN` | opaque | no | no | Region records are not decoded. |
-| `INVERTRGN` | opaque | no | no | Region records are not decoded. |
-| `PAINTRGN` | opaque | no | no | Region records are not decoded. |
+| `FILLRGN` | typed | no | no | Region records are not decoded. |
+| `FRAMERGN` | typed | no | no | Region records are not decoded. |
+| `INVERTRGN` | typed | no | no | Region records are not decoded. |
+| `PAINTRGN` | typed | no | no | Region records are not decoded. |
 | `EXTSELECTCLIPRGN` | typed | partial | yes | RGN_COPY only. |
 | `BITBLT` | typed | partial | yes | Source transforms and palette-indexed sources are missing. |
 | `STRETCHBLT` | typed | partial | yes | As BITBLT. |
-| `MASKBLT` | opaque | no | no |  |
-| `PLGBLT` | opaque | no | no | Needs rotated transfers. |
+| `MASKBLT` | typed | no | no |  |
+| `PLGBLT` | typed | no | no | Needs rotated transfers. |
 | `SETDIBITSTODEVICE` | typed | partial | yes | Partial bands are unverified under scaling. |
 | `STRETCHDIBITS` | typed | full | yes |  |
 | `EXTCREATEFONTINDIRECTW` | typed | full | no | Text is font-limited. |
@@ -132,31 +132,31 @@ the codec and reference columns against the code and fixtures.
 | `CREATEMONOBRUSH` | typed | no | no |  |
 | `CREATEDIBPATTERNBRUSHPT` | typed | full | no |  |
 | `EXTCREATEPEN` | typed | partial | no | Pens CreatePen can express; caps, joins, styles and pattern pens are missing. |
-| `POLYTEXTOUTA` | opaque | no | no |  |
-| `POLYTEXTOUTW` | opaque | no | no |  |
+| `POLYTEXTOUTA` | typed | no | no |  |
+| `POLYTEXTOUTW` | typed | no | no |  |
 | `SETICMMODE` | typed | no | no |  |
-| `CREATECOLORSPACE` | opaque | no | no |  |
+| `CREATECOLORSPACE` | typed | no | no |  |
 | `SETCOLORSPACE` | typed | no | no |  |
 | `DELETECOLORSPACE` | typed | no | no |  |
-| `GLSRECORD` | opaque | no | no | OpenGL. |
-| `GLSBOUNDEDRECORD` | opaque | no | no | OpenGL. |
-| `PIXELFORMAT` | opaque | no | no | OpenGL. |
-| `DRAWESCAPE` | opaque | no | no |  |
-| `EXTESCAPE` | opaque | no | no |  |
-| `SMALLTEXTOUT` | opaque | no | no |  |
+| `GLSRECORD` | typed | no | no | OpenGL. |
+| `GLSBOUNDEDRECORD` | typed | no | no | OpenGL. |
+| `PIXELFORMAT` | typed | no | no | OpenGL. |
+| `DRAWESCAPE` | typed | no | no |  |
+| `EXTESCAPE` | typed | no | no |  |
+| `SMALLTEXTOUT` | typed | no | no |  |
 | `FORCEUFIMAPPING` | typed | no | no |  |
-| `NAMEDESCAPE` | opaque | no | no |  |
+| `NAMEDESCAPE` | typed | no | no |  |
 | `COLORCORRECTPALETTE` | typed | no | no |  |
-| `SETICMPROFILEA` | opaque | no | no |  |
-| `SETICMPROFILEW` | opaque | no | no |  |
-| `ALPHABLEND` | opaque | no | no | Needs alpha compositing. |
+| `SETICMPROFILEA` | typed | no | no |  |
+| `SETICMPROFILEW` | typed | no | no |  |
+| `ALPHABLEND` | typed | no | no | Needs alpha compositing. |
 | `SETLAYOUT` | typed | no | no | Refused in GM_ADVANCED until referenced. |
-| `TRANSPARENTBLT` | opaque | no | no |  |
-| `GRADIENTFILL` | opaque | no | no |  |
-| `SETLINKEDUFIS` | opaque | no | no |  |
+| `TRANSPARENTBLT` | typed | no | no |  |
+| `GRADIENTFILL` | typed | no | no |  |
+| `SETLINKEDUFIS` | typed | no | no |  |
 | `SETTEXTJUSTIFICATION` | typed | full | no | Text is font-limited. |
-| `COLORMATCHTOTARGETW` | opaque | no | no |  |
-| `CREATECOLORSPACEW` | opaque | no | no |  |
+| `COLORMATCHTOTARGETW` | typed | no | no |  |
+| `CREATECOLORSPACEW` | typed | no | no |  |
 
 ## Playback behaviours not yet modelled
 

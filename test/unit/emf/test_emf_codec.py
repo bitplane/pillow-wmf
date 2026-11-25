@@ -17,6 +17,7 @@ from pillow_wmf.emf import (
     accepts,
     bitmaps,
     fixed,
+    system,
     text,
     variable,
 )
@@ -99,39 +100,43 @@ def examples():
         (0, 0, 9, 9), 1, 1.5, 2.0, 3, 4, 2, 76, 6, (1, 2, 3, 4), 80, "hi".encode("utf-16-le") + bytes(8)
     )
     yield variable.Eof(((1, 2, 3, 0),))
+    region = struct.pack("<4I4i", 32, 1, 1, 16, 0, 0, 4, 4) + struct.pack("<4i", 0, 0, 4, 4)
+    yield variable.FillRgn(bounds=(0, 0, 4, 4), brush=1, region=region)
+    yield variable.FrameRgn(bounds=(0, 0, 4, 4), brush=1, width=2, height=3, region=region)
+    yield variable.InvertRgn(bounds=(0, 0, 4, 4), region=region)
+    yield variable.PaintRgn(bounds=(0, 0, 4, 4), region=region)
+    yield variable.GradientFill((0, 0, 9, 9), 0, ((0, 0, 0xFF00, 0, 0, 0), (9, 9, 0, 0xFF00, 0, 0)), ((0, 1),))
+    yield variable.GradientFill(
+        (0, 0, 9, 9), 2, ((0, 0, 1, 2, 3, 4), (9, 0, 5, 6, 7, 8), (0, 9, 9, 9, 9, 9)), ((0, 1, 2),)
+    )
+    for cls in (bitmaps.MaskBlt, bitmaps.PlgBlt, bitmaps.AlphaBlend, bitmaps.TransparentBlt):
+        offset = 8 + struct.calcsize("<" + cls.wire_layout)
+        yield zeroed(cls, **blit_source(offset))
+    entry = text.EmrText(1, 2, 2, 108, 0x100, None, 112)
+    yield text.PolyTextOutA((0, 0, 9, 9), 1, 0.0, 0.0, (entry,), b"hi\0\0" + bytes(8))
+    entry = text.EmrText(1, 2, 1, 108, 0, (0, 0, 9, 9), 0)
+    yield text.PolyTextOutW((0, 0, 9, 9), 1, 0.0, 0.0, (entry,), "x\0".encode("utf-16-le"))
+    yield text.SmallTextOut(1, 2, 0x300, 1, 0.0, 0.0, None, b"abc", b"\xa5")
+    yield text.SmallTextOut(1, 2, 0, 1, 0.0, 0.0, (0, 0, 9, 9), "hi".encode("utf-16-le"))
+    yield system.CreateColorSpace(1, bytes(328))
+    yield system.CreateColorSpaceW(2, bytes(588), 1, b"icc!")
+    yield system.SetICMProfileA(0, b"name", b"data")
+    yield system.SetICMProfileW(0, "na".encode("utf-16-le"), b"")
+    yield system.ColorMatchToTargetW(1, 0, b"name", b"")
+    yield system.GlsRecord(b"opengl!!")
+    yield system.GlsBoundedRecord((0, 0, 1, 1), b"gl!!")
+    yield system.PixelFormat(bytes(40))
+    yield system.DrawEscape(1, b"esc!")
+    yield system.ExtEscape(2, b"")
+    yield system.NamedEscape(3, b"drv\0", b"data")
+    yield system.SetLinkedUFIs(((1, 2), (3, 4)))
     yield text.ExtTextOutA((0, 0, 9, 9), 1, 0.0, 0.0, 3, 4, 3, 60, 0x0100, None, 64, b"abc\0" + bytes(12))
 
 
 CASES = tuple(examples())
 
-# Record types deliberately left opaque: their payloads stay UnknownRecord bytes.
-OPAQUE = {
-    RecordType.HEADER,  # Always decoded as the Metafile header instead.
-    RecordType.FILLRGN,
-    RecordType.FRAMERGN,
-    RecordType.INVERTRGN,
-    RecordType.PAINTRGN,
-    RecordType.MASKBLT,
-    RecordType.PLGBLT,
-    RecordType.POLYTEXTOUTA,
-    RecordType.POLYTEXTOUTW,
-    RecordType.CREATECOLORSPACE,
-    RecordType.CREATECOLORSPACEW,
-    RecordType.GLSRECORD,
-    RecordType.GLSBOUNDEDRECORD,
-    RecordType.PIXELFORMAT,
-    RecordType.DRAWESCAPE,
-    RecordType.EXTESCAPE,
-    RecordType.SMALLTEXTOUT,
-    RecordType.NAMEDESCAPE,
-    RecordType.SETICMPROFILEA,
-    RecordType.SETICMPROFILEW,
-    RecordType.ALPHABLEND,
-    RecordType.TRANSPARENTBLT,
-    RecordType.GRADIENTFILL,
-    RecordType.SETLINKEDUFIS,
-    RecordType.COLORMATCHTOTARGETW,
-}
+# Only the header is not a registered record: Metafile decodes it itself.
+OPAQUE = {RecordType.HEADER}
 
 
 def test_independent_input_and_output():
@@ -266,7 +271,7 @@ def test_canonical_output_recalculates_accounting():
     source = Metafile.build(
         [
             fixed.CreatePen(7, 0, 1, 0, 0),
-            UnknownRecord(RecordType.CREATECOLORSPACEW, struct.pack("<I", 9) + bytes(4)),
+            system.CreateColorSpaceW(9, bytes(588)),
             variable.Eof(palette, size_last=1),
         ],
         description="App\0Picture\0\0",
