@@ -38,6 +38,7 @@ ETO_NO_RECT = text.ETO_NO_RECT
 EMFPLUS_HEADER = 0x4001
 EMFPLUS_DUAL = 0x0001
 RGN_COPY = 5
+CS_ENABLE = 1
 IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 # Records with no effect on a bitmap DC's output, established against native
@@ -668,6 +669,10 @@ def play(
             continue
         if isinstance(record, NO_OP_RECORDS):
             continue
+        if isinstance(record, system.ColorMatchToTargetW):
+            if record.action == CS_ENABLE and not record.name:
+                break  # Native playback stops here; earlier drawing remains.
+            continue  # Colour matching has no effect on a bitmap DC.
         if isinstance(record, variable.Comment):
             if comment is not None:
                 comment(index, record)

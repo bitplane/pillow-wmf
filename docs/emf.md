@@ -155,7 +155,7 @@ the codec and reference columns against the code and fixtures.
 | `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; playback refuses them without it. |
 | `SETLINKEDUFIS` | typed | full | yes | No effect on shapes; font-limited. |
 | `SETTEXTJUSTIFICATION` | typed | full | no | Text is font-limited. |
-| `COLORMATCHTOTARGETW` | typed | no | yes | The fixture record stops native playback; its validity rules are unknown. |
+| `COLORMATCHTOTARGETW` | typed | full | yes | `CS_ENABLE` without a profile name stops playback; otherwise no effect on a bitmap DC. |
 | `CREATECOLORSPACEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
 
 ## Geometric pens

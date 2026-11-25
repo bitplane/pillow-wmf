@@ -561,3 +561,24 @@ def test_right_to_left_layout_mirrors_the_playback_transform():
     # the DC's own layout is never set.
     assert [(t["m11"], t["dx"]) for t in transforms] == [(1.0, 0.0), (-1.0, 1023.0), (1.0, 0.0)]
     assert "set_layout" not in [call.name for call in trace.calls]
+
+
+@pytest.mark.parametrize(
+    ("action", "name", "drawn"),
+    [
+        (1, b"", 1),  # CS_ENABLE without a profile stops native playback.
+        (2, b"", 2),
+        (3, b"", 2),
+        (1, "sRGB Color Space Profile.icm\0\0".encode("utf-16-le"), 2),
+    ],
+)
+def test_color_match_to_target_stops_playback_only_when_enabling_without_a_profile(action, name, drawn):
+    from pillow_wmf.emf import system
+
+    records = [
+        fixed.Rectangle(0, 0, 1, 1),
+        system.ColorMatchToTargetW(action, 0, name, b""),
+        fixed.Rectangle(2, 2, 3, 3),
+    ]
+    calls, omissions = run(records)
+    assert omissions == () and [call.name for call in calls].count("rectangle") == drawn
