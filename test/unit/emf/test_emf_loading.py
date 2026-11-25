@@ -48,17 +48,14 @@ def test_pillow_opens_and_sizes_emf():
 
 
 def test_pillow_reports_unrenderable_emf_as_oserror():
-    # A HALFTONE reduction through the colour engine is not yet modelled.
+    # A clipped, mirrored HALFTONE stretch through the colour engine is not yet modelled.
     info = struct.pack("<IiiHHIIiiII", 40, 4, -4, 1, 32, 0, 64, 0, 0, 0, 0)
     offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
-    shrink = bitmaps.StretchDIBits(
-        0, 0, 0, 0, 0, 0, 0, 0, 4, 4, offset, 40, offset + 40, 64, 0, 0xCC0020, 2, 2, info + bytes(64)
+    mirrored = bitmaps.StretchDIBits(
+        0, 0, 0, 0, 11, 0, 0, 0, 4, 4, offset, 40, offset + 40, 64, 0, 0xCC0020, -12, 12, info + bytes(64)
     )
-    records = [
-        fixed.SetStretchBltMode(4),
-        fixed.SetColorAdjustment(24, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 50, 0),
-        shrink,
-    ]
+    adjustment = fixed.SetColorAdjustment(24, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 50, 0)
+    records = [fixed.SetStretchBltMode(4), adjustment, fixed.IntersectClipRect(2, 2, 10, 10), mirrored]
     data = Metafile.build(records, frame=UNIT_FRAME).to_bytes()
     with Image.open(BytesIO(data)) as image, pytest.raises(OSError, match="colour engine"):
         image.load()

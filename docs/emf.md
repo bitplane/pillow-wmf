@@ -80,7 +80,7 @@ the codec and reference columns against the code and fixtures.
 | `SETROP2` | typed | full | yes |  |
 | `SETSTRETCHBLTMODE` | typed | full | yes |  |
 | `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
-| `SETCOLORADJUSTMENT` | typed | partial | yes | Scaled HALFTONE copies; colourfulness, tint and illuminants are refused for reductions, general enlargements and offset sources. |
+| `SETCOLORADJUSTMENT` | typed | partial | yes | Scaled HALFTONE copies; clipped or vertically mirrored transfers through the colour engine are partly refused. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
 | `OFFSETCLIPRGN` | typed | full | yes | Offsets scale through the world transform, ties rounding away from zero. |
@@ -343,15 +343,14 @@ native output on its own and contrast with brightness or negative together;
 other combinations are unverified.
 
 Colourfulness, red-green tint and illuminants other than the default (D65)
-mix channels. Native GDI then reads the source through a colour engine
-([`color_engine.py`](../src/pillow_wmf/color_engine.py)) before stretching it,
-and the channel tables above apply to the engine's output:
+mix channels. Native GDI then maps colours through a colour engine
+([`color_engine.py`](../src/pillow_wmf/color_engine.py)), and the channel
+tables above apply to the engine's output:
 
-1. Each source pixel is ordered-dithered to 5 bits per channel: a channel
-   byte `v` becomes `(256 + round(v * 7935 / 255) - d) >> 8`, with one
-   threshold `d` per pixel shared by the three channels from a 66 x 65
-   table anchored at source pixel (0, 0). Each scan read advances the table
-   one row.
+1. Pixels are ordered-dithered to 5 bits per channel: a channel byte `v`
+   becomes `(256 + round(v * 7935 / 255) - d) >> 8`, with one threshold `d`
+   per pixel shared by the three channels from a 66 x 65 table (64
+   thresholds per row and a wrap that repeats the first).
 2. The three 5-bit indexes select one of 32**3 precomputed colours. Each is
    its node `(r, g, b) / 31` taken to CIE XYZ with the sRGB primaries and
    the adjustment's illuminant as white, then to CIE L\*u\*v\*, where
@@ -361,12 +360,26 @@ and the channel tables above apply to the engine's output:
    All arithmetic is fixed point with six decimal places, rounded half
    up; cube roots go through six-digit base-10 logarithms.
 
-A replicated enlargement reads each source row once, from row 0. The
-enlargement filter for up to five times the source size first reads row 0
-twice more for its window, so source row `y` takes table row `y + 2`, and
-the rows it repeats beyond either edge each take their own table row.
-Reductions, other enlargements and source rectangles away from the bitmap
-origin are refused until native references cover them.
+Enlargements map source pixels as their scans are read, before the stretch
+replicates or filters them; each scan read advances the dither one row.
+Reductions map the reduced destination pixels. Either way the dither
+starts at the first visible destination pixel, at its column modulo 65 and
+its row, for the source pixel it samples (by the stretch's centre-phase
+step):
+
+- replication reads from that source pixel;
+- the enlargement filter for up to five times the source size first reads
+  two scans above it, re-reading the bitmap's top row where there are
+  none, and pads its columns with mapped pixels;
+- larger enlargements first read up to two real columns and scans before
+  it, and re-read the bitmap's last scan below it;
+- scans repeated beyond the bitmap's edges are each dithered afresh;
+- a vertically flipped filtered enlargement dithers from its bottom
+  destination row upwards.
+
+The source's storage orientation does not matter. Clipped mirrored
+transfers and vertically mirrored ones other than unclipped filtered
+enlargements are refused until native references cover them.
 
 ## Right-to-left layout
 

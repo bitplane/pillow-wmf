@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from math import exp, floor, log
 
-from .color_engine import map_bitmap, uses_engine
+from .color_engine import colour_map, uses_engine
 
 CA_NEGATIVE, CA_LOG_FILTER = 1, 2
 # Native contrast is exponential: +100 multiplies by about 4.4313.
@@ -52,8 +52,9 @@ class ColorAdjustment:
         """Whether colours are mapped through the colour engine before the tables apply."""
         return uses_engine(self.colorfulness, self.tint, self.illuminant)
 
-    def map(self, bitmap, *, row_offset=0):
-        return map_bitmap(bitmap, self.colorfulness, self.tint, self.illuminant, row_offset=row_offset)
+    @property
+    def colour_map(self) -> bytes:
+        return colour_map(self.colorfulness, self.tint, self.illuminant)
 
     @cached_property
     def tables(self) -> tuple[tuple[int, ...], ...]:

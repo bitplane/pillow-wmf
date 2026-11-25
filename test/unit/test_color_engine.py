@@ -9,8 +9,15 @@
   source stretched 4x (and 2x, ``-x2``) under colourfulness 1, one byte
   per source pixel. These enlargements filter the mapped source; the
   first and last rows show the edge rows dithered as separate reads.
+
+``phase`` holds, per case of ``probe-windows-color-engine-phase.py``, the
+SHA-256 of the native destination (RGB bytes) of a source stretched under
+colourfulness 40 and tint -30: filtered, general and replicated
+enlargements, reductions, offset source rectangles, and placed, clipped
+and mirrored destinations, which fix where the dither starts.
 """
 
+import hashlib
 import json
 import struct
 from pathlib import Path
@@ -79,10 +86,28 @@ def test_greys_keep_their_level_under_the_engine():
         assert table[entry : entry + 3] == bytes([round(level * 255 / 31)] * 3)
 
 
-def test_reductions_under_the_engine_are_refused():
+@pytest.mark.parametrize("name", sorted(NATIVE["phase"]))
+def test_dither_phase_matches_native(load_script, name):
+    probe = load_script("probe-windows-color-engine-phase.py")
+    case = NATIVE["phase"][name]
+    width, height = case["source"]
+    colour = next(f for w, h, f in probe["SOURCES"].values() if (w, h) == (width, height))
+    pixels = b"".join(bytes((b, g, r, 0)) for y in range(height) for x in range(width) for r, g, b in [colour(x, y)])
+    info = struct.pack("<IiiHHIIiiII", 40, width, -height, 1, 32, 0, len(pixels), 0, 0, 0, 0)
+    context = RasterContext(*case["surface"], background=(255, 255, 255), trace_calls=False)
+    context.set_stretch_mode(4)
+    context.set_color_adjustment(0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 40, -30)
+    if case["clip"]:
+        context.intersect_clip_rect(*case["clip"])
+    context.stretch_dib(*case["dest"], *case["rect"], 0xCC0020, 0, BitmapData("dib", info + pixels))
+    assert hashlib.sha256(context.image.convert("RGB").tobytes()).hexdigest() == case["sha256"]
+
+
+def test_clipped_mirrored_transfers_under_the_engine_are_refused():
     info = struct.pack("<IiiHHIIiiII", 40, 4, -4, 1, 32, 0, 64, 0, 0, 0, 0)
-    context = RasterContext(4, 4, trace_calls=False)
+    context = RasterContext(16, 16, trace_calls=False)
     context.set_stretch_mode(4)
     context.set_color_adjustment(0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 50, 0)
+    context.intersect_clip_rect(2, 2, 10, 10)
     with pytest.raises(UnsupportedOperation, match="colour engine"):
-        context.stretch_dib(0, 0, 2, 2, 0, 0, 4, 4, 0xCC0020, 0, BitmapData("dib", info + bytes(64)))
+        context.stretch_dib(11, 0, -12, 12, 0, 0, 4, 4, 0xCC0020, 0, BitmapData("dib", info + bytes(64)))

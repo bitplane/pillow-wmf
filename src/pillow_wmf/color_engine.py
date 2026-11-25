@@ -3,10 +3,11 @@
 These adjustments mix channels, so native GDI realizes them with a colour
 map instead of per-channel tables:
 
-1. Each source pixel is quantized to 5 bits per channel with an ordered
-   dither anchored at source pixel (0, 0). A channel byte ``v`` becomes
-   ``(256 + round(v * 7935 / 255) - d) >> 8`` with one threshold ``d`` per
-   pixel from a 66 x 65 table (``DITHER``) shared by the three channels.
+1. Each pixel is quantized to 5 bits per channel with an ordered dither. A
+   channel byte ``v`` becomes ``(256 + round(v * 7935 / 255) - d) >> 8``
+   with one threshold ``d`` per pixel from a 66 x 65 table (``DITHER``)
+   shared by the three channels. Where the dither starts depends on the
+   stretch; see ``TransferPreparation._engine_source``.
 2. The three 5-bit indexes select one of 32**3 map entries. Each entry is
    the node colour ``(r, g, b) / 31`` converted to CIE XYZ with the sRGB
    primaries and the adjustment's illuminant as white, then to CIE L*u*v*,
@@ -389,18 +390,34 @@ def colour_map(colorfulness: int, tint: int, illuminant: int) -> bytes:
 INDEX = tuple(256 + round(v * 7935 / 255) for v in range(256))
 
 
+def _map_row(pixels: bytes, table: bytes, dither: bytes, column: int) -> bytes:
+    result = bytearray(len(pixels))
+    for x in range(len(pixels) // 3):
+        d = dither[(x + column) % DITHER_WIDTH]
+        r, g, b = ((INDEX[c] - d) >> 8 for c in pixels[x * 3 : x * 3 + 3])
+        entry = (r + 32 * g + 1024 * b) * 3
+        result[x * 3 : x * 3 + 3] = table[entry : entry + 3]
+    return bytes(result)
+
+
+def _dither_row(phase: int) -> bytes:
+    phase %= DITHER_HEIGHT
+    return DITHER[phase * DITHER_WIDTH : (phase + 1) * DITHER_WIDTH]
+
+
 class MappedBitmap:
     """A source bitmap seen through the engine, dithered as native scans are read.
 
-    Each read scan advances the dither one row. ``row_offset`` counts the
-    scans read before source row 0; rows outside the bitmap repeat its
-    nearest edge row, each with its own dither row.
+    Source pixel (x, y) takes dither column ``x + column`` and row
+    ``row + step * y``; a vertically flipped destination reads its rows in
+    reverse dither order. Rows outside the bitmap repeat its nearest edge
+    row, each with its own dither row, as re-read scans do.
     """
 
     virtual_rows = True
 
-    def __init__(self, bitmap: RGBBitmap, table: bytes, row_offset: int):
-        self.bitmap, self.table, self.row_offset = bitmap, table, row_offset
+    def __init__(self, bitmap: RGBBitmap, table: bytes, column: int, row: int, step: int = 1):
+        self.bitmap, self.table, self.column, self.row_offset, self.step = bitmap, table, column, row, step
         self.width, self.height = bitmap.width, bitmap.height
         self.rows: dict[int, bytes] = {}
 
@@ -409,15 +426,9 @@ class MappedBitmap:
         if cached is None:
             source = max(0, min(self.height - 1, y))
             pixels = self.bitmap.pixels[source * self.width * 3 : (source + 1) * self.width * 3]
-            phase = (y + self.row_offset) % DITHER_HEIGHT
-            dither = DITHER[phase * DITHER_WIDTH : (phase + 1) * DITHER_WIDTH]
-            table, result = self.table, bytearray(len(pixels))
-            for x in range(self.width):
-                d = dither[x % DITHER_WIDTH]
-                r, g, b = ((INDEX[c] - d) >> 8 for c in pixels[x * 3 : x * 3 + 3])
-                entry = (r + 32 * g + 1024 * b) * 3
-                result[x * 3 : x * 3 + 3] = table[entry : entry + 3]
-            cached = self.rows[y] = bytes(result)
+            cached = self.rows[y] = _map_row(
+                pixels, self.table, _dither_row(self.row_offset + self.step * y), self.column
+            )
         return cached
 
     def pixel(self, x: int, y: int) -> tuple[int, int, int]:
@@ -428,6 +439,15 @@ class MappedBitmap:
         return RGBBitmap(self.width, self.height, pixels, self.bitmap.coverage)
 
 
-def map_bitmap(bitmap: RGBBitmap, colorfulness: int, tint: int, illuminant: int, *, row_offset: int = 0):
-    """``bitmap`` dithered to 5 bits per channel and mapped through the engine."""
-    return MappedBitmap(bitmap, colour_map(colorfulness, tint, illuminant), row_offset)
+class MappedView:
+    """A filtered destination view mapped through the engine at destination positions."""
+
+    def __init__(self, view, table: bytes, column: int, row: int):
+        self.view, self.table, self.column, self.row = view, table, column, row
+        self.width, self.height, self.valid = view.width, view.height, view.valid
+
+    def pixel(self, x: int, y: int) -> tuple[int, int, int]:
+        d = _dither_row(y + self.row)[(x + self.column) % DITHER_WIDTH]
+        r, g, b = ((INDEX[c] - d) >> 8 for c in self.view.pixel(x, y))
+        entry = (r + 32 * g + 1024 * b) * 3
+        return tuple(self.table[entry : entry + 3])

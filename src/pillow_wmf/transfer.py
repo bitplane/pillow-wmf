@@ -8,6 +8,7 @@ from .bitmap16 import read_bitmap16
 from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
 from .color_adjustment import AdjustedBitmap, ColorAdjustment
+from .color_engine import MappedBitmap, MappedView
 from .constants import HALFTONE
 from .gdi import UnsupportedOperation
 from .halftone import (
@@ -213,21 +214,64 @@ class TransferPreparation:
         return layout.decode(preserve_gaps=True, palette=self.palette.colors(), clip_spans=clip.spans)
 
     def _engine_source(self, bitmap, hx, hy, sw, sh, dw, dh, content):
-        """The source mapped through the colour engine before HALFTONE stretching.
+        """The source, and a wrapper for the filtered view, for the colour engine.
 
-        Native reads source scans through the engine, so each scan read is
-        dithered one row further on: replication reads every row once from
-        row 0; the fast enlargement first reads source row 0 twice more for
-        its filter window, and its edge rows repeat with their own dither.
+        Native reads source scans through the engine when it enlarges, so each
+        scan read is dithered one row further on. Dithering starts at the first
+        visible destination pixel, at its column modulo 65 (each dither row
+        holds 64 thresholds and a copy of its first) and its row, for the
+        source pixel that pixel samples:
+
+        - replication reads from that pixel;
+        - the fast enlargement first reads two scans above it, re-reading the
+          bitmap's top row where it ends, and pads columns with mapped pixels;
+        - the general enlargement first reads up to two real columns and scans
+          before it;
+        - edge rows beyond the bitmap repeat with their own dither;
+        - reductions map the reduced destination pixels from that phase.
+
+        A vertically flipped fast enlargement dithers from its bottom row
+        upwards. Other mirrored combinations are not yet verified.
         """
-        if hx.source != 0 or hy.source != 0:
-            raise UnsupportedOperation("HALFTONE colour engine: source rectangles away from the bitmap origin")
-        mode = halftone_bitmap(bitmap, 0, 0, abs(sw), abs(sh), abs(dw), abs(dh), content=content)
+        width, height = abs(dw), abs(dh)
+        left, top = hx.destination, hy.destination
+        bounds = (
+            max(0, left),
+            max(0, top),
+            min(self.surface.width, left + width),
+            min(self.surface.height, top + height),
+        )
+        visible = list(self.clip.within(bounds).rectangles()) if bounds[0] < bounds[2] and bounds[1] < bounds[3] else []
+        if not visible:
+            return bitmap, None
+        first_x, first_y = min(r[0] for r in visible) - left, min(r[1] for r in visible) - top
+        clipped = first_x or first_y or max(r[2] for r in visible) < left + width
+        clipped = clipped or max(r[3] for r in visible) < top + height
+        if (hx.mirrored or hy.mirrored) and clipped:
+            raise UnsupportedOperation("HALFTONE colour engine: clipped mirrored transfers")
+        phase_x, phase_y = (first_x + left) % 65, first_y + top
+        table = self.color_adjustment.colour_map
+        mode = halftone_bitmap(bitmap, hx.source, hy.source, abs(sw), abs(sh), width, height, content=content)
+        fast = isinstance(mode, HalftoneExpansion) and mode.fast
+        if hy.mirrored:
+            if not fast or hy.source:
+                raise UnsupportedOperation("HALFTONE colour engine: vertically mirrored transfers")
+            return MappedBitmap(bitmap, table, phase_x - hx.source, top + height - 3, -1), None
         if mode is HalftoneMode.REPLICATE or mode is HalftoneMode.NOOP:
-            return self.color_adjustment.map(bitmap).materialize()
-        if not (isinstance(mode, HalftoneExpansion) and mode.fast):
-            raise UnsupportedOperation("HALFTONE colour engine: reductions and general enlargements")
-        return self.color_adjustment.map(bitmap, row_offset=2)
+            source_x = hx.source + (2 * first_x + 1) * abs(sw) // (2 * width)
+            source_y = hy.source + (2 * first_y + 1) * abs(sh) // (2 * height)
+            return MappedBitmap(bitmap, table, phase_x - source_x, phase_y - source_y).materialize(), None
+        if fast:
+            source_x = hx.source + ((2 * first_x + 1) * abs(sw) - 1) // (2 * width)
+            source_y = hy.source + ((2 * first_y + 1) * abs(sh) - 1) // (2 * height)
+            row = phase_y - source_y + 2 - min(2, max(0, source_y))
+            return MappedBitmap(bitmap, table, phase_x - source_x, row), None
+        if isinstance(mode, HalftoneExpansion):
+            source_x = hx.source + (2 * first_x + 1) * abs(sw) // (2 * width)
+            source_y = hy.source + (2 * first_y + 1) * abs(sh) // (2 * height)
+            column = phase_x - source_x + min(2, max(0, source_x))
+            return MappedBitmap(bitmap, table, column, phase_y - source_y + min(2, max(0, source_y))), None
+        return bitmap, lambda view: MappedView(view, table, phase_x - first_x, phase_y - first_y)
 
     def _prepare_bitmap_transfer(self, a, bitmap, sy, *, depth, halftone, monochrome_bitblt=False, source_dc=False):
         x, y = self.mapping.device_point(a["x"], a["y"])
@@ -258,8 +302,9 @@ class TransferPreparation:
             content = classify_content(bitmap, left, top, right - left, bottom - top, depth=depth)
             if content.fixup and fixup_candidate(abs(sw), abs(sh), abs(dw), abs(dh)):
                 bitmap = fixup_bitmap(bitmap, left, top, right, bottom)
+        engine_view = None
         if scaled and halftone and self.color_adjustment.engine:
-            bitmap = self._engine_source(bitmap, hx, hy, sw, sh, dw, dh, content)
+            bitmap, engine_view = self._engine_source(bitmap, hx, hy, sw, sh, dw, dh, content)
         if scaled and halftone:
             filtered = halftone_bitmap(
                 bitmap, hx.source, hy.source, abs(sw), abs(sh), abs(dw), abs(dh), content=content
@@ -269,6 +314,8 @@ class TransferPreparation:
             if filtered is not HalftoneMode.REPLICATE:
                 if not filtered.valid:
                     return TransferAction.NOOP
+                if engine_view:
+                    filtered = engine_view(filtered)
                 if not self.color_adjustment.neutral_tables:
                     filtered = AdjustedBitmap(filtered, self.color_adjustment)
                 return SourceTransfer(
