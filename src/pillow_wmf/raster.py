@@ -1147,8 +1147,10 @@ class RasterContext(ExecutionContext[DrawingState]):
             if covered:
                 for x, y in painter.contour_pixels((path.vertices,)):
                     painter.pixel(x, y, self._state.pen.color)
+            elif self._state.recording_path:
+                self._record_figure(path if name == "arc" else replace(path, closed=True))
             elif name == "arc":
-                self._stroke_path(path)
+                painter.stroke_path(path)
             else:
                 brush = self._state.brush
                 # Rectangle's block-fill realization simplifies ROPs
@@ -1156,7 +1158,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                 # transparency. Region/path fills retain the hatch mask.
                 if rectangle and brush.style == BS_HATCHED and self._state.rop2 in (R2_BLACK, R2_NOT, R2_NOP, R2_WHITE):
                     brush = replace(brush, style=0)
-                self._paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
+                painter.paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
 
     _apply_ellipse = _apply_rectangle
     _apply_arc = _apply_rectangle
@@ -1384,6 +1386,12 @@ class RasterContext(ExecutionContext[DrawingState]):
             flat = DevicePath(commands).flattened()
             figures.append((flat.commands, closed))
         self._state.path = tuple(figures)
+
+    def _prepare_widen_path(self, a):
+        raise UnsupportedOperation("widen_path: geometric stroke outlines are not yet supported")
+
+    def _apply_widen_path(self, call, prepared, result):
+        raise AssertionError("widen_path is refused during preparation")
 
     def _prepare_select_clip_path(self, a):
         if a["mode"] not in range(1, 6):
