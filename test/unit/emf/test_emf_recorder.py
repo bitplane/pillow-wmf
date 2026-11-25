@@ -416,6 +416,37 @@ def gap_scenarios():
 
     yield "null-selections", None, null_selections
 
+    def clip_path_shapes(r):
+        # SelectClipPath of paths holding shapes and curves; each clipped
+        # polyline's bounds give the clip region's box.
+        shapes = (
+            lambda: r.ellipse(5, 5, 40, 30),
+            lambda: r.round_rect(6, 4, 41, 33, 12, 9),
+            lambda: r.pie(5, 5, 41, 31, 40, 5, 5, 6),
+            lambda: r.chord(3, 7, 44, 30, 2, 30, 44, 8),
+            lambda: (r.move_to(2, 2), r.arc_to(10, 10, 50, 35, 50, 20, 10, 12), r.line_to(2, 2)),
+            lambda: (r.move_to(30, 30), r.angle_arc(20, 20, 13, 30.0, 200.0)),
+            lambda: (r.move_to(4, 4), r.poly_bezier_to(((60, 0), (0, 60), (50, 50)))),
+            lambda: (r.arc(5, 5, 45, 35, 45, 10, 5, 30), r.ellipse(30, 30, 45, 50)),
+        )
+        for shape in shapes:
+            r.save_dc()
+            r.begin_path()
+            shape()
+            r.end_path()
+            r.select_clip_path(5)
+            r.polyline(((0, 0), (90, 0), (90, 90), (0, 90), (0, 0)))
+            r.restore_dc(-1)
+        r.set_graphics_mode(2)
+        r.set_world_transform(0.9, 0.4, -0.4, 0.9, 20, 0)
+        r.begin_path()
+        r.ellipse(5, 5, 40, 30)
+        r.end_path()
+        r.select_clip_path(5)
+        r.polyline(((-50, -50), (90, -50), (90, 90), (-50, 90), (-50, -50)))
+
+    yield "clip-path-shapes", None, clip_path_shapes
+
     def pattern_brushes(r):
         mono = BitmapData("bitmap16", struct.pack("<hhhhBB", 0, 8, 8, 2, 1, 1) + bytes((0xAA, 0, 0x55, 0) * 4))
         r.select_object(r.create_pattern_brush(mono))

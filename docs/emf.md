@@ -225,10 +225,13 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
 - `AngleArc` and `ArcTo` leave the current position at the exact end point,
   floored; `ArcTo` measures it on the recorded, inclusive box's ellipse.
 - Header bounds count what reaches the device: drawing inside a path bracket
-  only measures the path, which `StrokePath` and `FillPath` then add. An
+  only measures the path, which `StrokePath` and `FillPath` then add, and a
+  point-list record inside the bracket has empty bounds of its own. An
   excluded clip rectangle shrinks the clip box to what it leaves, and
   `SelectClipPath` clips to the bounding box of the path's fill coverage, or
-  of the pen's stroke footprint once widened.
+  of the pen's stroke footprint once widened. Shapes and arcs in the path
+  take the playback figures; in `GM_COMPATIBLE`, `ArcTo` and `AngleArc`
+  build them as in `GM_ADVANCED`, `ArcTo` from its inclusive box.
 - Without an explicit frame, the frame is the bounds in 0.01 mm of the
   reference device; the header's micrometre extension is the reference
   display's size at 96 DPI.
@@ -238,9 +241,9 @@ Recordings of the covered calls are byte-identical to native ones
 waits for the font work. Refused: pattern brushes from device bitmaps other
 than 1- and 32-bpp (native `CreateBitmap` cannot make them), compressed
 transfer sources (a recorded transfer carries uncompressed samples, which
-cannot keep an RLE source's unwritten pixels), and `SelectClipPath` of paths
-holding curves or shapes other than rectangles. Null object and palette
-selections fail without a record, as natively. Unverified: the `ArcTo` end
+cannot keep an RLE source's unwritten pixels), and `SelectClipPath` of
+widened paths holding shapes or arcs. Null object and palette selections
+fail without a record, as natively. Unverified: the `ArcTo` end
 position for one clockwise arc on an odd-sized box lands a pixel earlier
 natively than the ellipse rule gives.
 

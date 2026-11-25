@@ -265,6 +265,9 @@ class _State:
     # Path figures as (28.4 device points, closed), while they can be traced;
     # None once a figure the recorder does not trace joins the path.
     figures: list | None = field(default_factory=list)
+    # A raster DC building the same path, for figures the recorder does not
+    # trace; None once it cannot follow the path.
+    shadow: object | None = None
     widened: bool = False
     fill_mode: int = 1
     miter_limit: float = 10.0
@@ -442,6 +445,8 @@ class Recorder(TraceContext):
         handler = getattr(self, f"_record_{name}", None)
         if handler is None:
             raise UnsupportedOperation(f"EMF recording of {name} is not yet supported")
+        if state.recording_path and state.shadow is not None and name in _PATH_CALLS:
+            self._follow_path(call, state)
         handler(a, state, records)
         return records
 
@@ -848,7 +853,9 @@ class Recorder(TraceContext):
         bounds = self._clipped(state, self._stroked(state, self._device_box(state, reached)))
         record_type = narrow if _fits16(points) else wide
         extra = (a["types"],) if "types" in a else ()
-        records.append(record_type(bounds or (0, 0, -1, -1), points, *extra))
+        # Inside a path bracket the record's own bounds are empty.
+        written = None if state.recording_path else bounds
+        records.append(record_type(written or (0, 0, -1, -1), points, *extra))
         self._draw(state, bounds)
         if to and points:
             state.position = points[-1]
@@ -878,7 +885,8 @@ class Recorder(TraceContext):
         flat = tuple(point for figure in figures for point in figure)
         bounds = self._clipped(state, self._stroked(state, self._device_box(state, flat)))
         record_type = narrow if _fits16(flat) else wide
-        records.append(record_type(bounds or (0, 0, -1, -1), figures))
+        written = None if state.recording_path else bounds
+        records.append(record_type(written or (0, 0, -1, -1), figures))
         self._draw(state, bounds)
 
     def _record_poly_polygon(self, a, state, records):
@@ -952,9 +960,37 @@ class Recorder(TraceContext):
             state.figures = None
 
     def _record_begin_path(self, a, state, records):
+        from ..raster import RasterContext
+
         records.append(fixed.BeginPath())
         state.recording_path, state.path = True, None
         state.figures, state.widened = [], False
+        state.shadow = RasterContext(1, 1, trace_calls=False)
+        state.shadow.begin_path()
+
+    def _follow_path(self, call: Call, state: _State) -> None:
+        """Replay a path-building call on the shadow DC from the current state.
+
+        In GM_COMPATIBLE, ArcTo and AngleArc build their figures as in
+        GM_ADVANCED, ArcTo from its inclusive box, as the recording DC does.
+        """
+        shadow = state.shadow
+        graphics_mode = state.graphics_mode
+        if call.name in ("arc_to", "angle_arc") and graphics_mode != GM_ADVANCED:
+            graphics_mode, arguments = GM_ADVANCED, dict(call.kwargs)
+            if call.name == "arc_to":
+                arguments["right"], arguments["bottom"] = self._inclusive(
+                    state, arguments["right"], arguments["bottom"]
+                )
+            call = Call.make(call.name, **arguments)
+        try:
+            shadow.mapping = deepcopy(state.mapping)
+            shadow.mapping.graphics_mode = graphics_mode
+            shadow._state.position = state.position
+            shadow._state.arc_direction = state.arc_direction
+            shadow.invoke(call)
+        except (UnsupportedOperation, InvalidOperation):
+            state.shadow = None
 
     def _record_close_figure(self, a, state, records):
         records.append(fixed.CloseFigure())
@@ -974,9 +1010,13 @@ class Recorder(TraceContext):
         A path is filled by the polygon fill mode; a widened one covers its
         pen's stroke footprint.
         """
-        if state.figures is None or state.pen.miter or state.pen.style == PS_INSIDEFRAME:
-            raise UnsupportedOperation("SelectClipPath of paths with shapes or extended pens is not yet recorded")
-        figures = [(points, closed) for points, closed in state.figures if points]
+        figures = state.figures
+        if figures is None and not state.widened and state.shadow is not None:
+            # Shapes and arcs: the shadow DC's flattened figures, closed.
+            figures = [(list(path.flattened().vertices), True) for path in state.shadow._path_figures(close=True)]
+        if figures is None or state.pen.miter or state.pen.style == PS_INSIDEFRAME:
+            raise UnsupportedOperation("SelectClipPath of widened shapes or extended pens is not yet recorded")
+        figures = [(points, closed) for points, closed in figures if points]
         if not figures:
             return (0, 0, -1, -1)
         xs = [x for points, _ in figures for x, _ in points]
@@ -1035,7 +1075,7 @@ class Recorder(TraceContext):
         box = self._clip_path_box(state)
         records.append(fixed.SelectClipPath(a["mode"]))
         self._combine_clip(state, box, a["mode"])
-        state.path, state.figures = None, []
+        state.path, state.figures, state.shadow = None, [], None
 
     # Regions and clipping
 
@@ -1294,6 +1334,33 @@ class Recorder(TraceContext):
 
 
 # Recording-DC state that SaveDC and RestoreDC carry.
+# Calls that build the open path, which the shadow DC follows.
+_PATH_CALLS = frozenset(
+    (
+        "move_to",
+        "line_to",
+        "polyline",
+        "polyline_to",
+        "polygon",
+        "poly_polygon",
+        "poly_polyline",
+        "poly_bezier",
+        "poly_bezier_to",
+        "poly_draw",
+        "rectangle",
+        "ellipse",
+        "round_rect",
+        "arc",
+        "arc_to",
+        "chord",
+        "pie",
+        "angle_arc",
+        "close_figure",
+        "end_path",
+        "flatten_path",
+    )
+)
+
 _SAVED = (
     "mapping",
     "graphics_mode",
