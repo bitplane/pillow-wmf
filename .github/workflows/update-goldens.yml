@@ -88,6 +88,7 @@ on:
           - cosmetic-widen
           - color-engine
           - module-ids
+          - color-engine-phase
   push:
     branches: [master]
     paths:

@@ -176,6 +176,7 @@ EXPECTED = {
     "cosmetic-widen": ("scripts/probe-windows-cosmetic-widen.py", "cosmetic-widen", True, True),
     "color-engine": ("scripts/probe-windows-color-engine.py", "color-engine", True, True),
     "module-ids": ("scripts/probe-windows-module-ids.py", "module-ids", True, True),
+    "color-engine-phase": ("scripts/probe-windows-color-engine-phase.py", "color-engine-phase", True, True),
 }
 
 

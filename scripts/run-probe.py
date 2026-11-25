@@ -139,6 +139,7 @@ PROBES = {
     "cosmetic-widen": Probe("probe-windows-cosmetic-widen.py", output="cosmetic-widen"),
     "color-engine": Probe("probe-windows-color-engine.py", output="color-engine"),
     "module-ids": Probe("probe-windows-module-ids.py", output="module-ids"),
+    "color-engine-phase": Probe("probe-windows-color-engine-phase.py", output="color-engine-phase"),
 }
 
 
