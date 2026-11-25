@@ -134,6 +134,7 @@ PROBES = {
     "rotated-blends": Probe("probe-windows-rotated-blends.py", output="rotated-blends"),
     "rotated-wide-pens": Probe("probe-windows-rotated-wide-pens.py", output="rotated-wide-pens"),
     "rotated-pen-styles": Probe("probe-windows-rotated-pen-styles.py", output="rotated-pen-styles"),
+    "pen-style-ends": Probe("probe-windows-pen-style-ends.py", output="pen-style-ends"),
 }
 
 

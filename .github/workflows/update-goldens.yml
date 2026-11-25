@@ -83,6 +83,7 @@ on:
           - rotated-blends
           - rotated-wide-pens
           - rotated-pen-styles
+          - pen-style-ends
   push:
     branches: [master]
     paths:
