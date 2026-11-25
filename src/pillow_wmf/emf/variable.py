@@ -353,23 +353,36 @@ GRADIENT_FILL_RECT_H, GRADIENT_FILL_RECT_V, GRADIENT_FILL_TRIANGLE = 0, 1, 2
 @register
 @dataclass(frozen=True)
 class GradientFill(Record):
-    """TriVertex objects (x, y, red, green, blue, alpha) and rectangle or triangle indexes."""
+    """TriVertex objects (x, y, red, green, blue, alpha) and rectangle or triangle indexes.
+
+    Native recording reserves twelve bytes per mesh in every mode: rectangle
+    index pairs are packed, followed by four unused bytes per rectangle.
+    Native playback rejects a rectangle record without that space.
+    """
 
     kind: ClassVar[RecordType] = RecordType.GRADIENTFILL
     bounds: Rect
     mode: int
     vertices: tuple[tuple[int, int, int, int, int, int], ...]
     shapes: tuple[tuple[int, ...], ...]
+    padding: bytes | None = None
 
     @property
     def shape_layout(self) -> str:
         return "3I" if self.mode == GRADIENT_FILL_TRIANGLE else "2I"
 
+    @property
+    def reserved(self) -> int:
+        """Unused bytes after rectangle indexes; explicit ``padding`` may differ, as read."""
+        return 0 if self.mode == GRADIENT_FILL_TRIANGLE else 4 * len(self.shapes)
+
     def payload(self) -> bytes:
+        padding = bytes(self.reserved) if self.padding is None else self.padding
         return (
             pack("4iIII", *self.bounds, len(self.vertices), len(self.shapes), self.mode)
             + b"".join(pack("2i4H", *vertex) for vertex in self.vertices)
             + b"".join(pack(self.shape_layout, *shape) for shape in self.shapes)
+            + padding
         )
 
     @classmethod
@@ -382,4 +395,8 @@ class GradientFill(Record):
         if shape_count > limits.max_points or shape_count > reader.remaining // size:
             raise FormatError("Invalid gradient shape count")
         shapes = tuple(reader.unpack("3I" if size == 12 else "2I") for _ in range(shape_count))
-        return cls(tuple(bounds), mode, vertices, shapes, trailing=reader.rest())
+        # Keep a short reservation as read, so playback can refuse it as native does.
+        reserved = 0 if size == 12 else 4 * shape_count
+        padding = reader.take(min(reserved, reader.remaining))
+        padding = None if len(padding) == reserved and not any(padding) else padding
+        return cls(tuple(bounds), mode, vertices, shapes, padding, trailing=reader.rest())
