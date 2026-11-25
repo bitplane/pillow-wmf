@@ -390,6 +390,22 @@ def gap_scenarios():
 
         yield f"clip-path-{variant}", None, clip_path
 
+    def angle_arc_turns(r):
+        # Sweeps of a full turn or more: the bounds and current position.
+        for args in (
+            (60, 60, 10, 30.0, 360.0),
+            (60, 60, 10, 90.0, 1080.0),
+            (50, 50, 17, 45.0, 400.0),
+            (50, 50, 17, 300.0, -540.0),
+        ):
+            r.move_to(0, 0)
+            r.angle_arc(*args)
+            r.polyline_to(((300, 300),))
+        r.move_to(70, 70)
+        r.angle_arc(70, 70, 20, 10.0, 725.0)
+
+    yield "angle-arc-turns", None, angle_arc_turns
+
     def pattern_brushes(r):
         mono = BitmapData("bitmap16", struct.pack("<hhhhBB", 0, 8, 8, 2, 1, 1) + bytes((0xAA, 0, 0x55, 0) * 4))
         r.select_object(r.create_pattern_brush(mono))

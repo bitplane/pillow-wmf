@@ -23,6 +23,12 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   of boxes, builds curves from the transformed box in world orientation and
   scales width-1 pens. Device-space clip regions are fitted like points.
   `SetDIBitsToDevice` with every scan line plays as a `SRCCOPY` stretch.
+- `AngleArc` builds its arc from the start and end angles directly, each in
+  the quadrant of its angle's floor, with the arc constructions of `Arc`.
+  A sweep of a turn or more draws the remainder (the sweep less its whole
+  turns) and then, for each turn, the arc from the remainder's end round to
+  the start followed by the remainder again; a zero remainder is one
+  zero-length Bezier. The current position ends at the final angle.
 
 The raster refuses operations whose `GM_ADVANCED` output has no native
 references yet (`UNVERIFIED_IN_ADVANCED_MODE` in `raster.py`), and the player
@@ -78,7 +84,7 @@ the codec and reference columns against the code and fixtures.
 | `CREATEPEN` | typed | full | yes |  |
 | `CREATEBRUSHINDIRECT` | typed | full | yes | Solid, null and hatched brushes. |
 | `DELETEOBJECT` | typed | full | no |  |
-| `ANGLEARC` | typed | partial | yes | Sweeps of a full turn or more are not yet drawn. |
+| `ANGLEARC` | typed | full | yes | Sweeps of a full turn or more repeat the circle. |
 | `ELLIPSE` | typed | full | yes |  |
 | `RECTANGLE` | typed | full | yes |  |
 | `ROUNDRECT` | typed | full | yes |  |

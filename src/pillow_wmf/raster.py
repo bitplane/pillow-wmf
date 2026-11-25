@@ -438,11 +438,12 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_arc_direction(self, call, prepared, result):
         self._state.arc_direction = call.kwargs["direction"]
 
-    def _advanced_arc(self, box, start, end, closure="open"):
+    def _advanced_arc(self, box, start, end, closure="open", angles=None):
         """A GM_ADVANCED arc figure in world orientation.
 
         A clockwise arc is the y-mirror image of a counterclockwise one,
-        as a mirroring transform gives.
+        as a mirroring transform gives. ``angles`` gives the arc's directions
+        in degrees in place of the radial points.
         """
         left, right = sorted(box[0::2])
         top, bottom = sorted(box[1::2])
@@ -450,6 +451,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self._state.arc_direction == 2:
             y0, y1 = y1, y0
             start, end = (start[0], top + bottom - start[1]), (end[0], top + bottom - end[1])
+            angles = angles and tuple(-value for value in angles)
         ceil = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
         corners = None
         if self.mapping.rotated:
@@ -469,6 +471,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             radial_bounds=(left, top, right, bottom),
             advanced=True,
             corners=corners,
+            angles=angles,
         )
 
     def _stroke_from_position(self, path, end):
@@ -500,23 +503,40 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _prepare_angle_arc(self, a):
         if self.mapping.graphics_mode != GM_ADVANCED:
             raise UnsupportedOperation("angle_arc in GM_COMPATIBLE")
-        if a["radius"] < 0 or abs(a["sweep"]) >= 360:
-            raise UnsupportedOperation("angle_arc: negative radii and full turns")
+        if a["radius"] < 0:
+            raise UnsupportedOperation("angle_arc: negative radii")
 
     def _apply_angle_arc(self, call, prepared, result):
         a = call.kwargs
         x, y, radius = a["x"], a["y"], a["radius"]
-        first, last = math.radians(a["start"]), math.radians(a["start"] + a["sweep"])
-        start = (x + radius * math.cos(first), y - radius * math.sin(first))
-        end = (x + radius * math.cos(last), y - radius * math.sin(last))
+        box = (x - radius, y - radius, x + radius, y + radius)
+
+        def point(angle):
+            # Angles reduce to one turn first, as native trigonometry does.
+            angle = math.radians(angle % 360)
+            return (x + radius * math.cos(angle), y - radius * math.sin(angle))
+
+        def arc(start, sweep):
+            """Bezier pieces of one arc; a zero sweep is one zero-length piece."""
+            angles = (start, start + sweep)
+            commands = self._advanced_arc(box, point(start), point(start + sweep), angles=angles).commands
+            return ((commands[0][0],) * 4,) if not sweep else commands
+
+        # A sweep of a turn or more draws the remainder, then each turn as the
+        # arc from the remainder's end round to the start and the remainder again.
+        start, sweep = a["start"], a["sweep"]
+        turns = int(abs(sweep) // 360)
+        remainder = sweep - math.copysign(360 * turns, sweep)
         direction = self._state.arc_direction
         # AngleArc sweeps counterclockwise for positive angles, whatever the arc direction.
-        self._state.arc_direction = 2 if a["sweep"] < 0 else 1
+        self._state.arc_direction = 2 if sweep < 0 else 1
         try:
-            path = self._advanced_arc((x - radius, y - radius, x + radius, y + radius), start, end)
+            commands = arc(start, remainder if turns else sweep)
+            for _ in range(turns):
+                commands += arc(start + remainder, math.copysign(360, sweep) - remainder) + arc(start, remainder)
         finally:
             self._state.arc_direction = direction
-        self._stroke_from_position(path, end)
+        self._stroke_from_position(DevicePath(tuple(commands)), point(start + sweep))
 
     def _prepare_set_miter_limit(self, a):
         if not a["limit"] >= 1:

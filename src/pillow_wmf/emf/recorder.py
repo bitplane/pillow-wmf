@@ -892,12 +892,15 @@ class Recorder(TraceContext):
         x, y, radius = a["x"], a["y"], a["radius"]
         self._arc_direction(state, records)
         records.append(fixed.AngleArc(x, y, radius, a["start"], a["sweep"]))
-        first, last = radians(a["start"]), radians(a["start"] + a["sweep"])
+        # Angles reduce to one turn first, as native trigonometry does.
+        first, last = radians(a["start"] % 360), radians((a["start"] + a["sweep"]) % 360)
         start = (x + radius * cos(first), y - radius * sin(first))
         end = (x + radius * cos(last), y - radius * sin(last))
-        # AngleArc sweeps counterclockwise for positive angles, whatever the arc direction.
+        # AngleArc sweeps counterclockwise for positive angles, whatever the arc
+        # direction; a sweep of a turn or more covers the whole circle.
+        box = (x - radius, y - radius, x + radius, y + radius)
         path = self._arc_path(
-            state, (x - radius, y - radius, x + radius, y + radius), start, end, direction=2 if a["sweep"] < 0 else 1
+            state, box, start, start if abs(a["sweep"]) >= 360 else end, direction=2 if a["sweep"] < 0 else 1
         )
         self._stroke_from_position(state, path, end)
 
