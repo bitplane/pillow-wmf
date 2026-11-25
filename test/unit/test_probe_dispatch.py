@@ -158,6 +158,7 @@ EXPECTED = {
     "advanced-paths": ("scripts/probe-windows-advanced-paths.py", "advanced-paths", True, True),
     "emf-record": ("scripts/probe-windows-emf-record.py", "emf-record", True, True),
     "pen-widen": ("scripts/probe-windows-pen-widen.py", "pen-widen", True, True),
+    "gradient": ("scripts/probe-windows-gradient.py", "gradient", True, True),
 }
 
 
