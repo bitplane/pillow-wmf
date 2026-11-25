@@ -409,13 +409,28 @@ def test_dib_transfers_join_the_header_and_bits():
 
 
 def test_set_dib_to_device_bands():
-    tall = DIB[:8] + struct.pack("<i", 2) + DIB[12:]  # Two scan lines, one supplied.
-    band = bitmaps.SetDIBitsToDevice(0, 0, 0, 0, 1, 2, 0, 0, 1, 1, 76, 40, 116, 4, 0, 1, 1, tall + PIXEL)
-    calls, omissions = run([band], strict=True)
-    assert [call.name for call in calls] == ["set_dib_to_device"]
-    trace = TraceContext()
-    omissions = play(Metafile.build([band], frame=(0, 0, 1000, 1000)), trace, rect=(0, 0, 128, 128))
-    assert [o.reason for o in omissions] == ["Scaled SetDIBitsToDevice bands are not yet supported"]
+    """A band stretches the whole source rectangle over a bitmap of its own lines."""
+    tall = DIB[:8] + struct.pack("<i", 2) + DIB[12:]  # Two scan lines, the upper one supplied.
+    band = bitmaps.SetDIBitsToDevice(0, 0, 0, 0, 1, 2, 0, 0, 1, 2, 76, 40, 116, 4, 0, 1, 1, tall + PIXEL)
+    outside = replace(band, src_height=1)  # The rectangle holds only scan line 0.
+    calls, omissions = run([band, outside], strict=True)
+    line = DIB[:8] + struct.pack("<i", 1) + DIB[12:20] + bytes(4) + DIB[24:]
+    assert calls == [
+        Call.make(
+            "stretch_dib",
+            x=1,
+            y=2,
+            width=1,
+            height=2,
+            src_x=0,
+            src_y=-1,
+            src_width=1,
+            src_height=2,
+            rop=0x00CC0020,
+            color_usage=0,
+            source=BitmapData("dib", line + PIXEL),
+        )
+    ]
 
 
 def test_offsets_outside_the_record_are_reported():

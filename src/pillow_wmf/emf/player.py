@@ -313,12 +313,12 @@ def _dib_height(info: bytes) -> int | None:
     return struct.unpack_from("<i", info, 8)[0] if len(info) >= 12 else None
 
 
-def _set_dib_to_device(record, matrix):
+def _set_dib_to_device(record):
     """Native playback scales the transfer with the playback transform.
 
     A record carrying every scan line plays exactly as a SRCCOPY stretch of
-    the whole source rectangle. Partial bands are unverified unless the
-    transform only translates.
+    the whole source rectangle. A partial band carries only its own scan
+    lines; see ``_scan_band``.
     """
     if not record.bitmap_size:
         raise Unsupported("SetDIBitsToDevice without a bitmap")
@@ -337,19 +337,53 @@ def _set_dib_to_device(record, matrix):
             "color_usage": record.usage,
             "source": _dib(record),
         }
-    if (matrix[0], matrix[3]) != (1.0, 1.0):
-        raise Unsupported("Scaled SetDIBitsToDevice bands are not yet supported")
-    return "set_dib_to_device", {
+    return _scan_band(record)
+
+
+def _scan_band(record):
+    """A partial scan band as a stretch of the whole source rectangle.
+
+    The band's lines form a bitmap of their own whose top row is a bottom-up
+    band's last line or a top-down band's first. The source rectangle's top
+    is row ``start + count - src_y - src_height`` of that bitmap, with a
+    bottom-up count limited to the lines the DIB has. The
+    rectangle stretches as a whole; its rows outside the band draw nothing.
+    """
+    info = record.bitmap_info
+    if len(info) < 40 or struct.unpack_from("<I", info)[0] < 40:
+        raise Unsupported("SetDIBitsToDevice bands need a BITMAPINFOHEADER")
+    width, height, _, depth, compression = struct.unpack_from("<iiHHI", info, 4)
+    if compression not in (0, 3) or width <= 0 or height == 0:
+        raise Unsupported("SetDIBitsToDevice bands of compressed or empty DIBs")
+    top_down, lines = height < 0, abs(height)
+    if record.start_scan >= lines or not record.scan_count:
+        return None, None
+    count = record.scan_count if top_down else min(record.scan_count, lines - record.start_scan)
+    rows = min(count, lines)
+    stride = (width * depth + 31) // 32 * 4
+    bits = record.bits
+    if len(bits) < stride * rows:
+        raise Unsupported("SetDIBitsToDevice band bits are truncated")
+    scans = [bits[row * stride : (row + 1) * stride] for row in range(rows)]
+    # Stored bottom-up, where StretchDIBits measures rows from the last line.
+    band = b"".join(reversed(scans) if top_down else scans)
+    offset = record.start_scan + count - record.src_y - record.src_height
+    if not (-record.src_height < offset < rows):
+        return None, None
+    header = info[:4] + struct.pack("<ii", width, rows) + info[12:20] + struct.pack("<I", 0) + info[24:]
+    # Rows of the rectangle beyond the band have no source scan and are skipped.
+    return "stretch_dib", {
         "x": record.x,
         "y": record.y,
         "width": record.src_width,
         "height": record.src_height,
         "src_x": record.src_x,
-        "src_y": record.src_y,
-        "start_scan": record.start_scan,
-        "scan_count": record.scan_count,
+        "src_y": rows - offset - record.src_height,
+        "src_width": record.src_width,
+        "src_height": record.src_height,
+        "rop": SRCCOPY,
         "color_usage": record.usage,
-        "source": _dib(record),
+        "source": BitmapData("dib", header + band),
     }
 
 
@@ -503,6 +537,7 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.BitBlt: _source_blit,
     bitmaps.StretchBlt: _source_blit,
     bitmaps.StretchDIBits: _stretch_dib,
+    bitmaps.SetDIBitsToDevice: _set_dib_to_device,
     bitmaps.TransparentBlt: _transparent_blt,
     bitmaps.MaskBlt: _mask_blt,
     bitmaps.PlgBlt: _plg_blt,
@@ -818,12 +853,6 @@ def play(
             paint_region(index, kind, record)
             continue
         translate = TRANSLATIONS.get(type(record))
-        if isinstance(record, bitmaps.SetDIBitsToDevice):
-            matrix = transform.matrix()
-
-            def translate(record, matrix=matrix):
-                return _set_dib_to_device(record, matrix)
-
         creation = kind in CREATION_TYPES
         if creation and not 0 < record.object_index < len(slots):
             continue  # Native playback cannot store the object.

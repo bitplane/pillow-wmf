@@ -23,6 +23,11 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   of boxes, builds curves from the transformed box in world orientation and
   scales width-1 pens. Device-space clip regions are fitted like points.
   `SetDIBitsToDevice` with every scan line plays as a `SRCCOPY` stretch.
+  A partial band carries only its own scan lines. They form a bitmap whose
+  top row is a bottom-up band's last line or a top-down band's first, and
+  the source rectangle's top is row `start + count - ySrc - cySrc` of it,
+  a bottom-up count being limited to the lines the DIB has. The whole
+  rectangle stretches; its rows outside the band draw nothing.
 - `AngleArc` builds its arc from the start and end angles directly, each in
   the quadrant of its angle's floor, with the arc constructions of `Arc`.
   A sweep of a turn or more draws the remainder (the sweep less its whole
@@ -131,7 +136,7 @@ the codec and reference columns against the code and fixtures.
 | `STRETCHBLT` | typed | full | yes | As BITBLT. |
 | `MASKBLT` | typed | full | yes | Per-pixel ROP3 from the mask; scaled transfers pad as their foreground ROP decides. |
 | `PLGBLT` | typed | full | yes | A masked transfer keeps an identity source transform. |
-| `SETDIBITSTODEVICE` | typed | partial | yes | Partial bands are unverified under scaling. |
+| `SETDIBITSTODEVICE` | typed | full | yes | Scaled with the playback transform, partial bands included; RLE bands are refused. |
 | `STRETCHDIBITS` | typed | full | yes |  |
 | `EXTCREATEFONTINDIRECTW` | typed | full | no | Text is font-limited. |
 | `EXTTEXTOUTA` | typed | partial | no | Not yet drawn in GM_ADVANCED; font-limited. |
