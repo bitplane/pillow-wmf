@@ -576,6 +576,144 @@ def more_scenarios():
     yield "paths-more", None, paths_more
 
 
+class LogFontW(ctypes.Structure):
+    _fields_ = [(name, wintypes.LONG) for name in ("height", "width", "escapement", "orientation", "weight")]
+    _fields_ += [(name, ctypes.c_ubyte) for name in ("italic", "underline", "strikeout", "charset")]
+    _fields_ += [(name, ctypes.c_ubyte) for name in ("out_precision", "clip_precision", "quality", "pitch_and_family")]
+    _fields_ += [("face", ctypes.c_wchar * 32)]
+
+
+create_font_indirect = api("CreateFontIndirectW", ptr, ctypes.POINTER(LogFontW))
+
+
+def dib_section(depth, colors, *, height=-3, compression=0, masks=()):
+    """A memory DC holding a 4-pixel-wide DIB section of ``depth``."""
+    dc = create_dc(None)
+    header = struct.pack("<IiiHHIIiiII", 40, 4, height, 1, depth, compression, 0, 0, 0, len(colors), 0)
+    data = header + b"".join(struct.pack("<I", value) for value in (*masks, *colors))
+    info = ctypes.create_string_buffer(data, len(data) + 1024)
+    bits = ptr()
+    bitmap = create_dib_section(dc, info, 0, ctypes.byref(bits), None, 0)
+    stride = ((4 * depth + 31) // 32) * 4
+    ctypes.memmove(bits, bytes((37 * i + 11) % 256 for i in range(stride * abs(height))), stride * abs(height))
+    select(dc, bitmap)
+    return dc
+
+
+def gap_scenarios():
+    def fonts(dc):
+        for height, weight, italic, face, charset in (
+            (-12, 400, 0, "Arial", 0),
+            (20, 700, 1, "Courier New", 0),
+            (-9, 0, 0, "", 1),
+            (-30, 400, 0, "A Face Name Of Thirty-One Chars", 238),
+        ):
+            font = create_font_indirect(
+                ctypes.byref(LogFontW(height, 0, 0, 0, weight, italic, 0, 0, charset, 0, 0, 0, 0, face))
+            )
+            select(dc, font)
+            delete(font)
+        select(dc, stock(13))
+        select(dc, stock(17))
+
+    yield "fonts", None, fonts
+
+    def arc_positions(dc):
+        for x, y, radius, start, sweep in (
+            (60, 60, 10, 30.0, 120.0),
+            (60, 60, 10, 0.0, 90.0),
+            (60, 60, 10, 45.0, -60.0),
+            (50, 50, 17, 200.0, 75.0),
+            (50, 50, 17, 10.0, 350.0),
+            (40, 40, 5, 123.0, 1.5),
+            (40, 40, 9, 300.0, -200.0),
+        ):
+            move_to(dc, 0, 0, None)
+            angle_arc(dc, x, y, radius, start, sweep)
+            polyline_to(dc, *points((300, 300)))
+        set_arc_direction(dc, 2)
+        for box, radials in (
+            ((10, 10, 40, 30), (40, 20, 10, 10)),
+            ((10, 10, 41, 31), (40, 10, 10, 30)),
+            ((5, 7, 60, 50), (0, 0, 60, 60)),
+        ):
+            move_to(dc, 0, 0, None)
+            arc_to(dc, *box, *radials)
+            polyline_to(dc, *points((300, 300)))
+        set_arc_direction(dc, 1)
+        move_to(dc, 0, 0, None)
+        arc_to(dc, 10, 10, 40, 30, 40, 20, 10, 10)
+        polyline_to(dc, *points((300, 300)))
+
+    yield "arc-positions", None, arc_positions
+
+    def colour_patterns(dc):
+        for depth in (1, 4, 8, 16, 24, 32):
+            stride = ((8 * depth + 15) // 16) * 2
+            data = bytes((53 * i + 7) % 256 for i in range(stride * 8))
+            bitmap = create_bitmap(8, 8, 1, depth, ctypes.create_string_buffer(data, len(data)))
+            select(dc, pattern_brush(bitmap))
+            rectangle(dc, 0, 0, 10, 10)
+            select(dc, stock(0))
+
+    yield "colour-patterns", None, colour_patterns
+
+    def source_depths(dc):
+        sources = (
+            ("1", dib_section(1, (0x000000, 0xFFFFFF))),
+            ("1-colours", dib_section(1, (0x123456, 0xABCDEF))),
+            ("4", dib_section(4, tuple(0x111111 * i for i in range(16)))),
+            ("4-short", dib_section(4, (0xFF0000, 0x00FF00, 0x0000FF))),
+            ("8", dib_section(8, tuple(0x010203 * i for i in range(256)))),
+            ("8-short", dib_section(8, tuple(0x0A0B0C * i for i in range(5)))),
+            ("16", dib_section(16, ())),
+            ("16-565", dib_section(16, (), compression=3, masks=(0xF800, 0x07E0, 0x001F))),
+            ("24", dib_section(24, ())),
+            ("24-bottom-up", dib_section(24, (), height=3)),
+            ("32-bitfields", dib_section(32, (), compression=3, masks=(0xFF0000, 0xFF00, 0xFF))),
+        )
+        for index, (_, source) in enumerate(sources):
+            bit_blt(dc, 5 * index, 2, 4, 3, source, 0, 0, 0x00CC0020)
+            delete_dc(source)
+
+    yield "source-depths", None, source_depths
+
+    def excluded(dc):
+        intersect_clip(dc, 10, 10, 50, 50)
+        exclude_clip(dc, 0, 0, 30, 60)
+        rectangle(dc, 0, 0, 60, 60)
+
+    yield "excluded-left", None, excluded
+
+    def excluded_middle(dc):
+        intersect_clip(dc, 10, 10, 50, 50)
+        exclude_clip(dc, 20, 20, 40, 40)
+        rectangle(dc, 0, 0, 60, 60)
+
+    yield "excluded-middle", None, excluded_middle
+
+    for variant in ("plain", "close", "flatten", "widen", "widen5", "close-widen"):
+
+        def clip_path(dc, variant=variant):
+            if variant == "widen5":
+                select(dc, create_pen(0, 5, 0))
+            begin_path(dc)
+            move_to(dc, 5, 5, None)
+            line_to(dc, 40, 10)
+            line_to(dc, 20, 40)
+            if "close" in variant:
+                close_figure(dc)
+            end_path(dc)
+            if variant == "flatten":
+                flatten_path(dc)
+            if "widen" in variant:
+                widen_path(dc)
+            select_clip_path(dc, 5)
+            rectangle(dc, 0, 0, 60, 60)
+
+        yield f"clip-path-{variant}", None, clip_path
+
+
 def records(data):
     position = 0
     while position < len(data):
@@ -587,7 +725,7 @@ def records(data):
 def main():
     print(f"Windows EMF recording probe: {platform.platform()}")
     print(f"Module versions: {module_versions()}")
-    for name, frame, draw in (*scenarios(), *more_scenarios()):
+    for name, frame, draw in (*scenarios(), *more_scenarios(), *gap_scenarios()):
         with reference_surface(128, 128) as (_, reference, _bits):
             rect = wintypes.RECT(*frame) if frame else None
             dc = create_emf(reference, None, ctypes.byref(rect) if rect else None, None)
