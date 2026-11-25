@@ -7,6 +7,7 @@ import pytest
 from pillow_wmf.emf import Header, fixed
 from pillow_wmf.emf.transform import PlaybackTransform, frame_fit, multiply, natural_size
 from pillow_wmf.mapping import REFERENCE_DEVICE, ReferenceDevice
+from pillow_wmf.numeric import float32
 from pillow_wmf.playback import PlaybackError
 
 FULL = (0, 0, 128, 128)
@@ -142,3 +143,57 @@ def test_save_and_restore_the_emulated_state():
     assert transform.matrix() != saved
     transform.restore(-1)
     assert transform.matrix() == saved
+
+
+def test_products_sum_offsets_in_native_order():
+    from pillow_wmf.emf.transform import multiply
+
+    first = (0.9, 0.3, -0.3, 0.9, 1.1, 2.3)
+    second = (0.7, 0.2, -0.4, 1.3, 5.7, -3.1)
+    f = float32
+    m11, _, _, _, dx, dy = multiply(first, second)
+    assert m11 == f(f(-0.4 * 0.3) + f(0.7 * 0.9))
+    # The second's off-diagonal term on the first's y offset, plus the second's
+    # offset, then the diagonal product.
+    assert dx == f(f(f(-0.4 * 2.3) + 5.7) + f(0.7 * 1.1))
+    assert dy == f(f(f(1.3 * 2.3) + -3.1) + f(0.2 * 1.1))
+    # A product whose offset reaches 2**32 fails.
+    assert multiply((1.0, 0.0, 0.0, 1.0, 3e9, 0.0), (2.0, 0.0, 0.0, 2.0, 0.0, 0.0)) is None
+    assert multiply((1.0, 0.0, 0.0, 1.0, 3e9, 0.0), (2.0, 0.0, 0.0, 2.0, 0.0, 0.0), checked=False) is not None
+
+
+def test_singularity_is_judged_in_single_precision():
+    from pillow_wmf.emf.transform import in_range
+
+    assert not in_range((3.0, 1.0, 1.0, float32(1 / 3), 0.0, 0.0))
+    assert in_range((3.0, 1.0, 1.0, 0.3, 0.0, 0.0))
+    assert not in_range((0.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+    assert in_range((0.0, 1.0, 1.0, 0.0, 0.0, 0.0))
+
+
+def test_rejected_transforms_keep_the_target_transform():
+    transform = played([], frame=(0, 0, 1350, 1348))
+    fitted = transform.device
+    # The fitted offset overflows: the target keeps its transform.
+    transform.apply(fixed.SetWorldTransform(1.0, 0.0, 0.0, 1.0, 3e9, 0.0))
+    assert transform.device == fitted
+    transform.apply(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+    transform.apply(fixed.SetWorldTransform(3.0, 1.0, 1.0, 1 / 3, 0.0, 0.0))
+    assert transform.world == (1.0, 0.0, 0.0, 1.0, 0.0, 0.0) and transform.device == fitted
+
+
+def test_left_multiplication_applies_to_the_target_transform():
+    from pillow_wmf.emf.transform import multiply
+
+    transform = played([fixed.SetWorldTransform(0.004, 0.0, 0.0, 0.004, 20.0, 30.0)], frame=(0, 0, 1350, 1348))
+    rotation = (float32(0.98), float32(0.199), float32(-0.199), float32(0.98), float32(1.7), float32(-2.3))
+    before = transform.device
+    transform.apply(fixed.ModifyWorldTransform(*rotation, 2))
+    assert transform.device == multiply(rotation, before)
+    assert transform.world == multiply(rotation, (float32(0.004), 0.0, 0.0, float32(0.004), 20.0, 30.0))
+
+
+def test_scaled_extents_wrap_in_32_bits():
+    transform = played([fixed.SetMapMode(8), fixed.SetWindowExtEx(1, 1), fixed.SetViewportExtEx(65536, 65536)])
+    transform.apply(fixed.ScaleViewportExtEx(65537, 65536, 65537, 65536))
+    assert transform.page.viewport_extent == (1, 1)

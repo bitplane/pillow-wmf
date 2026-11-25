@@ -33,8 +33,22 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   are skipped; reversed (empty) bounds never are. Nothing plays when the
   clip is empty.
 - The frame fit maps the header frame (0.01 mm) onto the target rectangle using
-  the header's device pixels and millimetres. Fits within 0.001 of 1:1 on both
-  axes use exactly 1.0. A reversed frame does not play.
+  the header's device pixels and millimetres, in binary32. A reversed frame
+  does not play.
+- The page state lives in a hidden DC. After a mapping record it reads that
+  DC's world-to-device transform, multiplies it by the frame fit and sets the
+  product on the target DC; a left-multiplying `ModifyWorldTransform` is
+  applied to the target's transform directly instead. Products follow GDI's
+  binary32 order (`multiply` in `emf/transform.py`): each offset is the
+  second matrix's off-diagonal term on the first's other offset, plus the
+  second's offset, plus the diagonal product. A product whose offset reaches
+  2^32, or a transform that is singular in binary32, leaves the target's
+  transform unchanged. `ScaleWindowExtEx` and `ScaleViewportExtEx` multiply
+  in wrapping 32-bit integers and divide truncating toward zero, and only
+  play in the isotropic and anisotropic modes.
+- The frame fit is composed with the target DC's own transform before its
+  scales snap to exactly 1 when both lie within [0.999, 1.001] and neither
+  matrix has off-diagonal terms.
 - Physical mapping modes take their extents from the header millimetres.
   Singular world transforms, unknown `ModifyWorldTransform` modes and isotropic
   adjustments that would collapse an axis leave the state unchanged.
@@ -107,8 +121,8 @@ the codec and reference columns against the code and fixtures.
 | `SETMETARGN` | typed | full | yes |  |
 | `EXCLUDECLIPRECT` | typed | full | yes |  |
 | `INTERSECTCLIPRECT` | typed | full | yes |  |
-| `SCALEVIEWPORTEXTEX` | typed | partial | no | Transforms whose offsets overflow are not rejected as natively. |
-| `SCALEWINDOWEXTEX` | typed | partial | no | As SCALEVIEWPORTEXTEX. |
+| `SCALEVIEWPORTEXTEX` | typed | full | yes | 32-bit products and truncating division, as natively. |
+| `SCALEWINDOWEXTEX` | typed | full | no | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
 | `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing except text; see below. |
@@ -506,7 +520,6 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
-- Absolute `RestoreDC` levels and the native limit on transform offsets.
 - Under rotating or shearing transforms: text is refused.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
   mask mirrored within the source rectangle; only fully mirrored cases have

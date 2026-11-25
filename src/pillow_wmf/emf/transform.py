@@ -11,9 +11,12 @@ as one float32 matrix. The frame fit maps the header's picture frame, in
 extents from the header's millimetre size, not from a display's DPI.
 """
 
+import math
+import struct
 from copy import copy
+from fractions import Fraction
 
-from ..constants import MM_ISOTROPIC, MM_TEXT
+from ..constants import MM_ANISOTROPIC, MM_ISOTROPIC, MM_TEXT
 from ..mapping import IDENTITY_TRANSFORM, Mapping, ReferenceDevice
 from ..numeric import float32
 from ..playback import PlaybackError
@@ -27,26 +30,76 @@ MWT_LEFTMULTIPLY = 2
 MWT_RIGHTMULTIPLY = 3
 MWT_SET = 4
 # Frame fits this close to 1:1 on both axes use an exact unit scale.
-UNIT_SCALE_TOLERANCE = 0.001
+UNIT_SCALE_BOUNDS = (float32(0.999), float32(1.001))
 
 
-def multiply(first: Transform, second: Transform) -> Transform:
-    """``first`` then ``second``, realizing each float32 product and sum.
+def _f32(value) -> float:
+    """Round an exact (rational) value once to binary32, ties to even."""
+    value = Fraction(value)
+    candidate = float32(float(value))
+    if Fraction(candidate) == value or not math.isfinite(candidate):
+        return candidate
+    bits = struct.unpack("<i", struct.pack("<f", candidate))[0]
+    neighbours = [struct.unpack("<f", struct.pack("<i", bits + step))[0] for step in (-1, 1)]
+    best = candidate
+    for neighbour in neighbours:
+        if not math.isfinite(neighbour):
+            continue
+        distance, current = abs(Fraction(neighbour) - value), abs(Fraction(best) - value)
+        if distance < current or (
+            distance == current and struct.unpack("<i", struct.pack("<f", neighbour))[0] % 2 == 0
+        ):
+            best = neighbour
+    return best
 
-    Axis-aligned products are exact under any evaluation order; the order
-    of rotated or sheared terms is not verified against native output.
+
+def divide(numerator, denominator) -> float:
+    """A binary32 division of two binary32 values, correctly rounded."""
+    return _f32(Fraction(float32(numerator)) / Fraction(float32(denominator)))
+
+
+def fits_long(value: float) -> bool:
+    """Whether GDI's float-to-long conversion accepts ``value``: magnitude below 2**32."""
+    exponent = (struct.unpack("<I", struct.pack("<f", value))[0] >> 23) & 0xFF
+    return exponent < 159
+
+
+def multiply(first: Transform, second: Transform, *, checked: bool = True) -> Transform | None:
+    """``first`` then ``second`` as native GDI multiplies them, in binary32.
+
+    Without off-diagonal terms on either side the diagonal is a single
+    product. Each offset is the second's off-diagonal term on the first's
+    other offset, plus the second's offset, plus the diagonal product, in
+    that order; a first with no offset passes the second's through. A
+    checked product fails (None) when an offset reaches 2**32.
     """
     a11, a12, a21, a22, adx, ady = first
     b11, b12, b21, b22, bdx, bdy = second
     f = float32
-    return (
-        f(f(a11 * b11) + f(a12 * b21)),
-        f(f(a11 * b12) + f(a12 * b22)),
-        f(f(a21 * b11) + f(a22 * b21)),
-        f(f(a21 * b12) + f(a22 * b22)),
-        f(f(f(adx * b11) + f(ady * b21)) + bdx),
-        f(f(f(adx * b12) + f(ady * b22)) + bdy),
-    )
+    if not (a12 or a21 or b12 or b21):
+        m11, m12, m21, m22 = f(b11 * a11), 0.0, 0.0, f(b22 * a22)
+    else:
+        m11 = f(f(b21 * a12) + f(b11 * a11))
+        m12 = f(f(b22 * a12) + f(b12 * a11))
+        m21 = f(f(b21 * a22) + f(b11 * a21))
+        m22 = f(f(b22 * a22) + f(b12 * a21))
+    if not adx and not ady:
+        return m11, m12, m21, m22, bdx, bdy
+    dx = f(f(f(b21 * ady) + bdx) + f(b11 * adx))
+    dy = f(f(f(b22 * ady) + bdy) + f(b12 * adx))
+    if checked and not (fits_long(dx) and fits_long(dy)):
+        return None
+    return m11, m12, m21, m22, dx, dy
+
+
+def in_range(transform: Transform) -> bool:
+    """GDI's acceptance of a world transform: invertible, judged in binary32."""
+    m11, m12, m21, m22 = transform[:4]
+    if not m12 and not m21:
+        return bool(m11) and bool(m22)
+    if not m11 and not m22:
+        return bool(m12) and bool(m21)
+    return float32(float32(m22 * m11) - float32(m12 * m21)) != 0
 
 
 def _check_device(header: Header) -> None:
@@ -54,33 +107,38 @@ def _check_device(header: Header) -> None:
         raise PlaybackError("EMF header has no reference device size")
 
 
-def frame_fit(header: Header, rect: tuple[int, int, int, int]) -> Transform:
+def frame_fit(header: Header, rect: tuple[int, int, int, int], parent: Transform = IDENTITY_TRANSFORM) -> Transform:
     """Map reference-device logical units onto ``rect`` through the picture frame.
 
     A logical unit is one header device pixel, ``millimetres * 100 / pixels``
     frame units across. The frame width is ``right - left``; an empty axis
     counts as one frame unit over a target one pixel wider. A reversed frame
-    makes native playback fail.
+    makes native playback fail. The fit is composed with the target DC's
+    transform (``parent``) and then, when neither has off-diagonal terms and
+    both scales lie within [0.999, 1.001] in binary32, the scales become
+    exactly 1.
     """
     _check_device(header)
     axes = []
     frame = header.frame
+    f = float32
     for axis in range(2):
         low, high = frame[axis], frame[axis + 2]
         target = rect[axis + 2] - rect[axis]
-        width = high - low
-        if width < 0:
+        if high < low:
             raise PlaybackError("EMF picture frame is reversed")
-        if width == 0:
-            width, target = 1, target + 1
-        ratio = float32(target / width)
-        scale = float32(ratio * float32(header.millimetres[axis] * 100 / header.device[axis]))
-        origin = float32(rect[axis] - float32(low * ratio))
+        ratio = f(target + 1) if high == low else divide(target, high - low)
+        scale = f(divide(f(f(header.millimetres[axis]) * 100), header.device[axis]) * ratio)
+        origin = f(f(rect[axis]) - f(f(low) * ratio))
         axes.append((scale, origin))
-    (scale_x, origin_x), (scale_y, origin_y) = axes
-    if abs(scale_x - 1) < UNIT_SCALE_TOLERANCE and abs(scale_y - 1) < UNIT_SCALE_TOLERANCE:
-        scale_x = scale_y = 1.0
-    return scale_x, 0.0, 0.0, scale_y, origin_x, origin_y
+    (sx, ox), (sy, oy) = axes
+    p11, p12, p21, p22, pdx, pdy = parent
+    fit = [f(p11 * sx), f(p12 * sx), f(p21 * sy), f(p22 * sy)]
+    fit += [f(f(f(p21 * oy) + f(p11 * ox)) + pdx), f(f(f(p22 * oy) + f(p12 * ox)) + pdy)]
+    low, high = UNIT_SCALE_BOUNDS
+    if not (p12 or p21 or fit[1] or fit[2]) and low <= fit[0] <= high and low <= fit[3] <= high:
+        fit[0] = fit[3] = 1.0
+    return tuple(fit)
 
 
 def natural_size(header: Header) -> tuple[int, int]:
@@ -133,12 +191,16 @@ class MetafilePage(Mapping):
         return scale_x, 0.0, 0.0, scale_y, origin_x, origin_y
 
 
-def _nonsingular(transform: Transform) -> bool:
-    return transform[0] * transform[3] - transform[1] * transform[2] != 0
-
-
 class PlaybackTransform:
-    """Track mapping records; ``matrix`` is the DC world transform to set."""
+    """Track mapping records and the target DC's world transform (``device``).
+
+    Native playback keeps the metafile's page state and world transform in a
+    hidden DC. After a record changes them it reads that DC's world-to-device
+    transform, multiplies it by the frame fit and sets the product on the
+    target; a product whose offset overflows, or that is not invertible,
+    leaves the target unchanged. A left-multiplying ModifyWorldTransform is
+    instead applied to the target's own transform directly.
+    """
 
     MAPPING_RECORDS = (
         fixed.SetMapMode,
@@ -155,7 +217,7 @@ class PlaybackTransform:
 
     def __init__(self, header: Header, rect: tuple[int, int, int, int], *, parent: Transform | None = None):
         # An embedded metafile's rectangle is in its parent's logical units.
-        self.fit = frame_fit(header, rect) if parent is None else multiply(frame_fit(header, rect), parent)
+        self.fit = frame_fit(header, rect, parent or IDENTITY_TRANSFORM)
         device = ReferenceDevice(tuple(header.device), tuple(header.millimetres), dpi=None)
         self.page = MetafilePage(mode=MM_TEXT, window_extent=(1, 1), viewport_extent=(1, 1), device=device)
         self.world: Transform = IDENTITY_TRANSFORM
@@ -163,28 +225,45 @@ class PlaybackTransform:
         # metafile's reference device width; the DC's own layout is unchanged.
         self.mirror: Transform = IDENTITY_TRANSFORM
         self._width = header.device[0]
-        self._saved: list[tuple[MetafilePage, Transform, Transform]] = []
+        self.device: Transform = self.fit
+        self._saved: list[tuple[MetafilePage, Transform, Transform, Transform]] = []
 
-    def matrix(self) -> Transform:
-        return multiply(multiply(multiply(self.world, self.page.matrix()), self.mirror), self.fit)
+    def matrix(self) -> Transform | None:
+        """The hidden DC's world-to-device transform times the fit; None when that overflows."""
+        page = multiply(multiply(self.world, self.page.matrix(), checked=False), self.mirror, checked=False)
+        return multiply(page, self.fit)
 
     def save(self) -> None:
-        self._saved.append((copy(self.page), self.world, self.mirror))
+        self._saved.append((copy(self.page), self.world, self.mirror, self.device))
 
     def restore(self, level: int) -> None:
         """Restore a relative level the file reached; others leave the state unchanged."""
         if level >= 0 or -level > len(self._saved):
             return
-        self.page, self.world, self.mirror = self._saved[level]
+        self.page, self.world, self.mirror, self.device = self._saved[level]
         del self._saved[level:]
 
     def apply(self, record) -> None:
+        if isinstance(record, fixed.ModifyWorldTransform) and record.mode == MWT_LEFTMULTIPLY:
+            matrix = _record_matrix(record)
+            if self._modify_world(MWT_LEFTMULTIPLY, matrix):
+                self.device = _modified(self.device, MWT_LEFTMULTIPLY, matrix) or self.device
+            return
+        if not self._apply_page(record):
+            return
+        candidate = self.matrix()
+        if candidate is not None and (candidate == IDENTITY_TRANSFORM or in_range(candidate)):
+            self.device = candidate
+
+    def _apply_page(self, record) -> bool:
+        """Update the hidden DC; whether native playback goes on to set the target's transform."""
         page = self.page
         if isinstance(record, fixed.SetLayout):
-            if not record.layout & ~9:  # Other layout bits fail natively.
-                rtl = record.layout & 1
-                self.mirror = (-1.0, 0.0, 0.0, 1.0, float32(self._width - 1), 0.0) if rtl else IDENTITY_TRANSFORM
-            return
+            if record.layout & ~9:  # Other layout bits fail natively.
+                return False
+            rtl = record.layout & 1
+            self.mirror = (-1.0, 0.0, 0.0, 1.0, float32(self._width - 1), 0.0) if rtl else IDENTITY_TRANSFORM
+            return True
         if isinstance(record, fixed.SetMapMode):
             page.set_mode(record.mode)
         elif isinstance(record, fixed.SetWindowOrgEx):
@@ -194,6 +273,8 @@ class PlaybackTransform:
         elif isinstance(record, (fixed.SetWindowExtEx, fixed.SetViewportExtEx)):
             page.set_extent(window=isinstance(record, fixed.SetWindowExtEx), x=record.cx, y=record.cy)
         elif isinstance(record, (fixed.ScaleWindowExtEx, fixed.ScaleViewportExtEx)):
+            if page.mode not in (MM_ISOTROPIC, MM_ANISOTROPIC):
+                return False  # Native playback skips the record.
             page.scale_extent(
                 window=isinstance(record, fixed.ScaleWindowExtEx),
                 xn=record.x_num,
@@ -202,21 +283,35 @@ class PlaybackTransform:
                 yd=record.y_denom,
             )
         else:
-            self._apply_world(record)
+            mode = MWT_SET if isinstance(record, fixed.SetWorldTransform) else record.mode
+            return self._modify_world(mode, _record_matrix(record))
+        return True
 
-    def _apply_world(self, record) -> None:
-        matrix = tuple(
-            float32(value) for value in (record.m11, record.m12, record.m21, record.m22, record.dx, record.dy)
-        )
-        mode = MWT_SET if isinstance(record, fixed.SetWorldTransform) else record.mode
-        if mode == MWT_IDENTITY:
-            self.world = IDENTITY_TRANSFORM
-            return
-        if mode not in (MWT_LEFTMULTIPLY, MWT_RIGHTMULTIPLY, MWT_SET) or not _nonsingular(matrix):
-            return  # Native playback rejects the record.
-        if mode == MWT_LEFTMULTIPLY:
-            matrix = multiply(matrix, self.world)
-        elif mode == MWT_RIGHTMULTIPLY:
-            matrix = multiply(self.world, matrix)
-        if _nonsingular(matrix):
-            self.world = matrix
+    def _modify_world(self, mode: int, matrix: Transform) -> bool:
+        world = _modified(self.world, mode, matrix)
+        if world is None:
+            return False
+        self.world = world
+        return True
+
+
+def _record_matrix(record) -> Transform:
+    return tuple(float32(value) for value in (record.m11, record.m12, record.m21, record.m22, record.dx, record.dy))
+
+
+def _modified(current: Transform, mode: int, matrix: Transform) -> Transform | None:
+    """ModifyWorldTransform on a DC holding ``current``; None when it fails."""
+    if mode == MWT_IDENTITY or (mode == MWT_SET and matrix == IDENTITY_TRANSFORM):
+        return IDENTITY_TRANSFORM
+    if mode == MWT_SET:
+        result = matrix
+    elif mode in (MWT_LEFTMULTIPLY, MWT_RIGHTMULTIPLY):
+        if current == IDENTITY_TRANSFORM:
+            result = matrix
+        elif mode == MWT_LEFTMULTIPLY:
+            result = multiply(matrix, current)
+        else:
+            result = multiply(current, matrix)
+    else:
+        return None
+    return result if result is not None and in_range(result) else None

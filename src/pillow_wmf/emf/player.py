@@ -755,7 +755,7 @@ def play(
         return slots[object_index]
 
     def set_transform(index, kind):
-        matrix = transform.matrix()
+        matrix = transform.device
         names = ("m11", "m12", "m21", "m22", "dx", "dy")
         invoke(index, kind, "set_world_transform", dict(zip(names, matrix, strict=True)))
 
@@ -827,7 +827,7 @@ def play(
                 limits=limits,
                 rect=output,
                 comment=None,
-                parent=transform.matrix(),
+                parent=transform.device,
                 depth=depth + 1,
             )
         except PlaybackError as error:
@@ -926,9 +926,9 @@ def play(
                 invoke(index, kind, "delete_object", {"handle": handle})
             continue
         if isinstance(record, PlaybackTransform.MAPPING_RECORDS):
-            before = transform.matrix()
+            before = transform.device
             transform.apply(record)
-            if transform.matrix() != before:
+            if transform.device != before:
                 set_transform(index, kind)
             continue
         if isinstance(record, variable.ExtSelectClipRgn):

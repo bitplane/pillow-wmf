@@ -28,6 +28,10 @@ def fixed(value: float) -> int:
     return -magnitude if value < 0 else magnitude
 
 
+def _int32(value: int) -> int:
+    return (value + 2**31) % 2**32 - 2**31
+
+
 def scaled(value: int, numerator: int, denominator: int) -> int:
     if denominator == 0:
         raise ValueError("Zero extent divisor")
@@ -322,10 +326,18 @@ class Mapping:
         self._fix_isotropic()
 
     def scale_extent(self, *, window: bool, xn: int, xd: int, yn: int, yd: int) -> None:
-        if self.mode not in (MM_ISOTROPIC, MM_ANISOTROPIC) or not xn or not xd or not yn or not yd:
+        """ScaleWindowExtEx and ScaleViewportExtEx, in GDI's 32-bit integers.
+
+        Each product wraps to 32 bits and divides truncating toward zero; a
+        zero divisor, a zero result or the one overflowing quotient fails.
+        """
+        if self.mode not in (MM_ISOTROPIC, MM_ANISOTROPIC) or not xd or not yd:
             return
         old = self.window_extent if window else self.viewport_extent
-        x, y = scaled(old[0], xn, xd), scaled(old[1], yn, yd)
+        x, y = _int32(old[0] * xn), _int32(old[1] * yn)
+        if (x == -(2**31) and xd == -1) or (y == -(2**31) and yd == -1):
+            return
+        x, y = scaled(x, 1, xd), scaled(y, 1, yd)
         if not x or not y:
             return
         if window:
