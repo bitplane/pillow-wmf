@@ -327,9 +327,21 @@ products plus the 28.4 translation.
   used by geometric pens, one per box axis taken from the left-top corner and
   shared by both parallel edges. Other figures keep the support-vertex
   bodies of wide `CreatePen` strokes.
-- DIB transfers with SRCCOPY map their destination rectangle to a
-  parallelogram and copy as PlgBlt does.
-
+- `PatBlt` and the DIB transfers (`BitBlt`, `StretchBlt`, `StretchDIBits`
+  and `MaskBlt` records, any ROP3) cover the polygon fill of their
+  destination rectangle's three 28.4 corners and the reflected fourth. Each
+  covered pixel inverts its integer point against that parallelogram and
+  takes the source sample at the floor, breaking exact ties as if the point
+  were nudged right along device x; samples clamp into the source
+  rectangle. The ROP then combines source, brush and destination as usual,
+  and a `MaskBlt` mask chooses the ROP per source pixel.
+- A direct `SetDIBitsToDevice` maps only its origin, rounded to a device
+  pixel, and copies the scan lines unscaled and unrotated.
+- `GradientFill` maps its vertices to whole device pixels. A rectangle is
+  shaded as two triangles (left-top, right-top, right-bottom and left-top,
+  right-bottom, left-bottom) whose corners take the colour of the edge they
+  lie on.
+- `AngleArc` and `ArcTo` strokes follow the curve constructions above.
 - Clip rectangles become filled parallelograms: `IntersectClipRect` rounds
   the transformed corners to device pixels first, `ExcludeClipRect` keeps
   them in 28.4. `OffsetClipRgn` moves the clip by the offset mapped through
@@ -354,9 +366,11 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
-- Under rotating or shearing transforms: text, `FrameRgn`, gradients, legacy
-  and non-SRCCOPY transfers, extended geometric pens, pens wider than the
-  small-pen table, and wide pens under non-uniform transforms are refused.
+- Under rotating or shearing transforms: text, `FrameRgn`, `WidenPath`,
+  `AlphaBlend`, `TransparentBlt`, legacy device-bitmap transfers, extended
+  geometric pens, pens wider than the small-pen table, and wide pens under
+  non-uniform transforms are refused. Hairline pens are realized under any
+  transform.
   Eroding the region by the frame size in logical units, as a box, comes
   within a few dozen pixels of native `FrameRgn` output but is not exact.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the

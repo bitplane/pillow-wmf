@@ -5,6 +5,7 @@ from PIL import Image
 
 from pillow_wmf import GDI, InvalidOperation, RasterContext, UnsupportedOperation, render
 from pillow_wmf.emf import Metafile, fixed, loader
+from pillow_wmf.objects import RegionGeometry
 from pillow_wmf.plugin import WmfImageFile
 
 UNIT_FRAME = (0, 0, 3388, 3383)  # 128 reference pixels square.
@@ -64,9 +65,9 @@ def test_raster_world_transform_contract():
         context.set_world_transform(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     context.set_world_transform(0.0, 1.0, -1.0, 0.0, 8.0, 0.0)
     assert context.mapping.rotated and context.mapping.device_point(2, 3) == (5, 2)
-    # Axis-aligned geometry is refused under rotation, not drawn unrotated.
+    # Unmodelled operations are refused under rotation, not drawn unrotated.
     with pytest.raises(UnsupportedOperation, match="rotating"):
-        context.pat_blt(0, 0, 4, 4, 0x00F00021)
+        context.frame_region(context.create_region(RegionGeometry(((0, 0, 4, 4),))), context.get_stock_object(4), 1, 1)
     context.set_world_transform(2.0, 0.0, 0.0, 3.0, 1.0, 0.5)
     assert context.mapping.world == (2.0, 0.0, 0.0, 3.0, 1.0, 0.5)
     assert context.mapping.device_point(2, 2) == (5, 7)

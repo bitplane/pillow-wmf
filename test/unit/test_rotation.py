@@ -78,12 +78,13 @@ def test_oblique_pens_narrow_by_their_rounded_width_vectors():
 
 def test_axis_aligned_operations_are_refused_under_rotation():
     from pillow_wmf.gdi import UnsupportedOperation
+    from pillow_wmf.objects import RegionGeometry
 
     context = RasterContext(8, 8, trace_calls=False)
     context.set_graphics_mode(2)
     context.set_world_transform(*FIXTURE)
     with pytest.raises(UnsupportedOperation):
-        context.gradient_fill(0, ((0, 0, 0, 0, 0, 0), (4, 4, 0, 0, 0, 0)), ((0, 1),))
+        context.frame_region(context.create_region(RegionGeometry(((0, 0, 4, 4),))), context.get_stock_object(4), 1, 1)
 
 
 def gradient_dib(width=16, height=12):

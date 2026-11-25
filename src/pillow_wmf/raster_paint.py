@@ -316,6 +316,62 @@ class RasterPainter:
                 if sample is None or sample(u, v):
                     self.pixel(x, y, source.pixel(u, v), operation=R2_COPYPEN)
 
+    def _parallelogram_spans(self, corners):
+        (x0, y0), (x1, y1), (x2, y2) = corners
+        polygon = ((x0, y0), (x1, y1), (x1 + x2 - x0, y1 + y2 - y0), (x2, y2))
+        return self.contour_spans((polygon,))
+
+    def transform_blt(self, source, corners, rectangle, rop, *, mask=None, background_rop=None) -> None:
+        """A transfer under a rotating or shearing transform.
+
+        It covers the polygon fill of its 28.4 destination parallelogram,
+        and each pixel takes the source sample at the floor of its inverted
+        integer point, nudged right along device x to break ties; samples
+        clamp into the source rectangle. ``mask`` chooses ``rop`` or ``background_rop`` per
+        source pixel, as MaskBlt does.
+        """
+        (x0, y0), (x1, y1), (x2, y2) = corners
+        ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x0, y2 - y0
+        det = ax * by - ay * bx
+        if not det:
+            return
+        left, top, width, height = rectangle
+        brush = self.state.brush
+
+        def index(numerator, step):
+            # Floor at x + epsilon: an exact boundary falls to the lower
+            # index only when the coordinate decreases along device x.
+            value = Fraction(numerator, det)
+            return floor(value) - (value.denominator == 1 and (step > 0) != (det > 0) and step != 0)
+
+        for y, start, end in self._parallelogram_spans(corners):
+            for x in range(start, end):
+                if not self.state.clip.contains(x, y):
+                    continue
+                dx, dy = 16 * x - x0, 16 * y - y0
+                u = index((dx * by - dy * bx) * width, by)
+                v = index((ax * dy - ay * dx) * height, -ay)
+                u, v = min(width - 1, max(0, u)), min(height - 1, max(0, v))
+                operation = rop if mask is None or mask(left + u, top + v) else background_rop
+                sample = source.pixel(left + u, top + v)
+                if (operation >> 16) & 255 == 0xCC:
+                    self._pixels[x, y] = sample
+                    continue
+                pattern = self.brush_color_at(x, y, brush, opaque=True) or (0, 0, 0)
+                self._pixels[x, y] = rop3(operation, pattern, sample, self._pixels[x, y])
+
+    def transform_pat_blt(self, corners, rop) -> None:
+        """PatBlt under a rotating transform: the brush fills the parallelogram."""
+        operation = pattern_rop2(rop)
+        if operation is None:
+            return
+        constant = (0, 0, 0) if operation in (1, 6, 11, 16) else None
+        for y, start, end in self._parallelogram_spans(corners):
+            for x in range(start, end):
+                paint = constant or self.brush_color_at(x, y, self.state.brush, opaque=True)
+                if paint is not None:
+                    self.pixel(x, y, paint, operation=operation)
+
     def gradient_rectangle(self, corners, *, vertical: bool) -> None:
         """Shade a device rectangle between two corner colours along one axis.
 

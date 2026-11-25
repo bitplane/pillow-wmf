@@ -160,6 +160,9 @@ class ParallelogramTransfer:
     corners: tuple
     rectangle: tuple[int, int, int, int]
     sample: object = None
+    # Set for transfers made under a rotating transform, rather than PlgBlt.
+    rop: int | None = None
+    background_rop: int | None = None
 
 
 # Operations whose geometry assumes axis-aligned mapping. A rotating or
@@ -167,15 +170,9 @@ class ParallelogramTransfer:
 AXIS_ALIGNED_ONLY = frozenset(
     {
         "alpha_blend",
-        "angle_arc",
-        "arc_to",
         "bit_blt",
         "stretch_blt",
-        "set_dib_to_device",
-        "mask_blt",
         "transparent_blt",
-        "pat_blt",
-        "gradient_fill",
         "frame_region",
         "text_out",
         "ext_text_out",
@@ -211,7 +208,6 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
     {
         "text_out",
         "ext_text_out",
-        "set_dib_to_device",
         "set_map_mode",
         "set_window_origin",
         "set_window_extent",
@@ -991,7 +987,17 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_pat_blt(self, call, prepared, result):
         a = call.kwargs
+        if prepared is not None:
+            self._painter().transform_pat_blt(prepared, a["rop"])
+            return
         self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
+
+    def _prepare_pat_blt(self, a):
+        if self.mapping.rotated:
+            x, y = a["x"], a["y"]
+            points = ((x, y), (x + a["width"], y), (x, y + a["height"]))
+            return tuple(self.mapping.fixed_point(*point) for point in points)
+        return None
 
     def _prepare_bit_blt(self, a):
         return self._prepare_legacy_transfer("bit_blt", a)
@@ -1078,7 +1084,24 @@ class RasterContext(ExecutionContext[DrawingState]):
         painter = self._painter()
         for mesh in a["meshes"]:
             corners = tuple(vertices[index] for index in mesh)
-            if a["mode"] == 2:
+            if self.mapping.rotated and a["mode"] != 2:
+                # A rotated rectangle is shaded as two triangles between its
+                # pixel-rounded corners, coloured by the edge each lies on.
+                first, second = (a["vertices"][index] for index in mesh)
+                axis = a["mode"]
+                if first[axis] > second[axis]:
+                    first, second = second, first
+                (left, right), (top, bottom) = sorted((first[0], second[0])), sorted((first[1], second[1]))
+                ends = (first[2:5], second[2:5])
+
+                def corner(x, y, ends=ends, axis=axis, near=(left, top)):
+                    return (*self.mapping.device_point(x, y), *ends[(x, y)[axis] != near[axis]])
+
+                top_left, top_right = corner(left, top), corner(right, top)
+                bottom_right, bottom_left = corner(right, bottom), corner(left, bottom)
+                painter.gradient_triangle((top_left, top_right, bottom_right))
+                painter.gradient_triangle((top_left, bottom_right, bottom_left))
+            elif a["mode"] == 2:
                 painter.gradient_triangle(corners)
             else:
                 painter.gradient_rectangle(corners, vertical=a["mode"] == 1)
@@ -1124,10 +1147,10 @@ class RasterContext(ExecutionContext[DrawingState]):
         return rectangle
 
     def _prepare_rotated_transfer(self, name, a):
-        """A rotating or shearing transform maps a SRCCOPY destination
-        rectangle to a parallelogram, transferred as PlgBlt transfers."""
-        if a["rop"] != SRCCOPY or a.get("color_usage", 0) != 0 or a["source"] is None:
-            raise UnsupportedOperation(f"{name}: only SRCCOPY RGB transfers under a rotating transform")
+        """A rotating or shearing transform maps a destination rectangle to a
+        parallelogram; see ``RasterPainter.transform_blt``."""
+        if a.get("color_usage", 0) != 0 or a["source"] is None:
+            raise UnsupportedOperation(f"{name}: only RGB transfers with a source under a rotating transform")
         source = self._parallelogram_source(a["source"])
         width, height = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         top = a["src_y"]
@@ -1138,9 +1161,20 @@ class RasterContext(ExecutionContext[DrawingState]):
         corners = tuple(
             self.mapping.fixed_point(*point) for point in ((x, y), (x + a["width"], y), (x, y + a["height"]))
         )
-        return ParallelogramTransfer(source, corners, self._source_rectangle(source, (a["src_x"], top, width, height)))
+        rectangle = self._source_rectangle(source, (a["src_x"], top, width, height))
+        return ParallelogramTransfer(source, corners, rectangle, rop=a["rop"])
 
     def _apply_plg_blt(self, call, prepared, result):
+        if prepared.rop is not None:
+            self._painter().transform_blt(
+                prepared.source,
+                prepared.corners,
+                prepared.rectangle,
+                prepared.rop,
+                mask=prepared.sample,
+                background_rop=prepared.background_rop,
+            )
+            return
         self._painter().plg_blt(prepared.source, prepared.corners, prepared.rectangle, prepared.sample)
 
     def _prepare_mask_blt(self, a):
@@ -1154,6 +1188,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             if a["mask"] is None:
                 return TransferAction.PATTERN, foreground, None
             raise UnsupportedOperation("mask_blt: masked pattern transfers")
+        if self.mapping.rotated:
+            return self._prepare_rotated_mask_blt(a, arguments, foreground, background), foreground, None
         if a["mask"] is None:
             return self._prepare_transfer("dib_bit_blt", {**arguments, "rop": foreground}), foreground, None
         # Realize the source as for a copy; each pixel's ROP3 is chosen later.
@@ -1182,10 +1218,28 @@ class RasterContext(ExecutionContext[DrawingState]):
 
         return transfer, foreground, (sample, background)
 
+    def _prepare_rotated_mask_blt(self, a, arguments, foreground, background):
+        transfer = self._prepare_rotated_transfer("dib_bit_blt", {**arguments, "rop": foreground})
+        if a["mask"] is None:
+            return transfer
+        mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
+        if mask.depth != 1 or not mask.complete:
+            raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
+        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - a["height"]
+        left, top = transfer.rectangle[:2]
+
+        def sample(x, y):
+            mx, my = x - left + a["mask_x"], y - top + mask_top
+            return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
+
+        return replace(transfer, sample=sample, background_rop=background)
+
     def _apply_mask_blt(self, call, prepared, result):
         transfer, foreground, mask = prepared
         a = call.kwargs
-        if isinstance(transfer, SourceTransfer):
+        if isinstance(transfer, ParallelogramTransfer):
+            self._apply_plg_blt(call, transfer, result)
+        elif isinstance(transfer, SourceTransfer):
             self._painter().source_blt(
                 transfer.bitmap,
                 transfer.horizontal,
@@ -1195,6 +1249,9 @@ class RasterContext(ExecutionContext[DrawingState]):
                 pad_bounds=transfer.pad_bounds,
             )
         elif transfer is TransferAction.PATTERN:
+            if self.mapping.rotated:
+                self._painter().transform_pat_blt(self._prepare_pat_blt(a), foreground)
+                return
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], foreground)
 
     def _apply_bit_blt(self, call, prepared, result):
