@@ -341,7 +341,12 @@ scale:
 then it is clamped and rounded to the nearest 8-bit level. Each step matches
 native output on its own and contrast with brightness or negative together;
 other combinations are unverified. Colourfulness, red-green tint and
-illuminants other than the default mix channels and are refused.
+illuminants other than the default mix channels and are refused. Natively
+they switch the copy to a different colour engine: its output is
+ordered-dithered to 32 levels per channel, with greys landing exactly on
+round(k * 255 / 31) and colours within a level or two of it, and the dither
+does not tile over source pixels. It is not modelled; see
+[`probe-windows-color-engine.py`](../scripts/probe-windows-color-engine.py).
 
 ## Right-to-left layout
 
