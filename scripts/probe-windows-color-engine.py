@@ -9,8 +9,8 @@ base + x // 8 + 8 * (y // 8), at every position of an 8x8 cell. Each
 ``grey-sixteens`` source is 128x128; pixel (x, y) is the grey
 base + x // 16 + 8 * (y // 16), at every position of a 16x16 cell. Each
 ``grey-tiles`` source is 512x512 with 16 greys, base + x // 128 +
-4 * (y // 128), few enough to be replicated; only their red channel is
-printed. The ``grey-cells`` source is 256x256; pixel
+4 * (y // 128), few enough to be replicated; their red channels are
+written as raw bytes to ``color-engine/NAME.red`` beside the observations. The ``grey-cells`` source is 256x256; pixel
 (x, y) is the grey x // 16 + 16 * (y // 16), at every position of a 16x16
 cell. Each case selects a COLORADJUSTMENT, stretches its
 source four times (or the factor after ``-x`` in the case name) with StretchDIBits in HALFTONE mode, and prints the
@@ -28,6 +28,7 @@ import subprocess
 import sys
 import time
 from ctypes import wintypes
+from pathlib import Path
 
 from windows_wmf_render import bind, check, module_versions, reference_surface
 
@@ -153,6 +154,7 @@ def colour_cases():
     yield "everything", NEUTRAL | dict(illuminant=2, rg=12000, contrast=20, brightness=-10, colorfulness=40, tint=-60)
 
 
+OUTPUT = Path("color-engine")  # the probe's uploaded artifact directory
 CASE_TIMEOUT = 60  # seconds for each grey-tiles case, run in a child process
 
 
@@ -200,15 +202,17 @@ def run_case(source_name, name, values):
         gdi.StretchDIBits(dc, 0, 0, size, size, 0, 0, side, side, pixels, ctypes.byref(header), 0, 0x00CC0020)
         data = ctypes.string_at(bits, size * size * 4)
     if tiles:
-        # Greys only: the red channel at each block centre, two hex digits
-        # per source pixel; blocks are not checked for mixing.
+        # Greys only: the red channel at each block centre, one byte per
+        # source pixel, too large for the job log; blocks are not checked
+        # for mixing.
         centre = scale // 2
         red = b"".join(
             data[((y * scale + centre) * size + centre) * 4 + 2 : ((y * scale + centre + 1) * size) * 4 : scale * 4]
             for y in range(side)
         )
-        print(f"case {name} applied={applied} {values}")
-        print("  red " + red.hex())
+        OUTPUT.mkdir(exist_ok=True)
+        (OUTPUT / f"{name}.red").write_bytes(red)
+        print(f"case {name} applied={applied} {values} wrote={name}.red")
         return
 
     def pixel(x, y, data=data, size=size):
