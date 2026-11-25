@@ -20,6 +20,7 @@ from windows_wmf_render import bind, check, module_versions, reference_surface
 
 from pillow_wmf.emf import Header
 from pillow_wmf.emf.transform import frame_fit
+from pillow_wmf.numeric import float32
 
 
 class XForm(ctypes.Structure):
@@ -36,6 +37,10 @@ def fixture_scales():
     up = scales["up"]
     scales["offset"] = (up[0], up[1], 0.3125, -0.4375)
     scales["flip"] = (-up[0], up[1], 128.0, 0.0)
+    scales["flip-y"] = (up[0], -up[1], 0.0, 128.0)
+    scales["flip-xy"] = (-up[0], -up[1], 128.0, 128.0)
+    # MM_LOMETRIC played 1:1: 0.1 mm units with y up, as in emf-page-lometric.
+    scales["lometric"] = (float32(1024 / 2710), float32(-768 / 2030), 0.0, 0.0)
     return scales
 
 
