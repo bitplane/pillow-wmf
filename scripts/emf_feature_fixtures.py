@@ -896,6 +896,41 @@ def nested_reset(d):
     d.add(fixed.LineTo(d.u(100), d.u(124)))
 
 
+def transform_limits(d):
+    """Native playback's transform arithmetic at its limits.
+
+    A chain of left-multiplying ModifyWorldTransform records is applied to
+    the target's transform directly, so its rounding differs from composing
+    the world transform first; one stroke crosses that difference. A world
+    offset that overflows once fitted, and a matrix that is singular only in
+    single precision, leave the transform unchanged. ScaleViewportExtEx
+    wraps its 32-bit product.
+    """
+    import random
+
+    random.seed(0)
+    scale = random.uniform(0.002, 0.006)
+    d.add(
+        fixed.SaveDC(), fixed.SetWorldTransform(scale, 0.0, 0.0, scale, random.uniform(10, 40), random.uniform(10, 40))
+    )
+    for _ in range(30):
+        angle = random.uniform(-0.2, 0.2)
+        stretch = random.uniform(0.98, 1.02)
+        offsets = random.uniform(-3, 3), random.uniform(-3, 3)
+        rotation = (math.cos(angle) * stretch, math.sin(angle), -math.sin(angle), math.cos(angle))
+        d.add(fixed.ModifyWorldTransform(*rotation, *offsets, 2))
+    points = tuple(
+        (round(9000 + 8000 * math.cos(t * 0.37)), round(9000 + 8000 * math.sin(t * 0.53))) for t in range(1500)
+    )
+    d.pen(PS_SOLID, 0, 0x2080C0)
+    d.add(variable.Polyline((0, 0, 0, 0), points), fixed.RestoreDC(-1))
+    d.brush(BS_SOLID, 0x00A000)
+    d.add(fixed.SaveDC(), fixed.SetWorldTransform(1.0, 0.0, 0.0, 1.0, 3e9, 0.0), fixed.Rectangle(2, 30, 12, 40))
+    d.add(fixed.SetWorldTransform(3.0, 1.0, 1.0, 1 / 3, 0.0, 0.0), fixed.Rectangle(16, 30, 26, 40), fixed.RestoreDC(-1))
+    d.add(fixed.SaveDC(), fixed.SetMapMode(8), fixed.SetWindowExtEx(1, 1), fixed.SetViewportExtEx(65536, 65536))
+    d.add(fixed.ScaleViewportExtEx(65537, 65536, 65537, 65536), fixed.Rectangle(30, 30, 40, 40), fixed.RestoreDC(-1))
+
+
 def state_record(*records):
     """Records that should not change a bitmap DC's output, followed by drawing."""
 
@@ -975,6 +1010,7 @@ FEATURES = (
     ("record-culling", record_culling(False), (128, 51)),
     ("record-culling-dense", record_culling(True), (128,)),
     ("nested-reset", nested_reset, (128,)),
+    ("transform-limits", transform_limits, (51,)),
     *((f"state-{name}", state_record(*records), (128,)) for name, records in STATE_RECORDS.items()),
 )
 SCALE_NAMES = {128: "unit", 51: "up-2-5"}
