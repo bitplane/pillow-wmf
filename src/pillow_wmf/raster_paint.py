@@ -108,6 +108,33 @@ class RasterPainter:
                 if pattern is not None:
                     pixels[x, y] = rop3(op, pattern, source, pixels[x, y])
 
+    def alpha_blt(self, bitmap, alpha, horizontal, vertical, constant, blend):
+        """Composite a stretched source; ``alpha`` is per-pixel or None for ``constant`` only.
+
+        ``blend(source, destination, source_alpha, constant)`` combines one channel.
+        """
+        width, height = bitmap.width, bitmap.height
+        pixels, clip = self._pixels, self.state.clip
+        left, right = horizontal.destination, horizontal.destination + horizontal.length
+        top, bottom = vertical.destination, vertical.destination + vertical.length
+        columns = range(max(0, left), min(self._width, right))
+        column_samples = [
+            next((sx for sx in horizontal.samples(x, COLORONCOLOR) if 0 <= sx < width), None) for x in columns
+        ]
+        for y in range(max(0, top), min(self._height, bottom)):
+            sy = next((sy for sy in vertical.samples(y, COLORONCOLOR) if 0 <= sy < height), None)
+            if sy is None:
+                continue
+            for x, sx in zip(columns, column_samples, strict=True):
+                if sx is None or not clip.contains(x, y):
+                    continue
+                source = bitmap.pixel(sx, sy)
+                source_alpha = alpha[sy * width + sx] if alpha is not None else None
+                destination = pixels[x, y]
+                pixels[x, y] = tuple(
+                    blend(s, d, source_alpha, constant) for s, d in zip(source, destination, strict=True)
+                )
+
     def pat_blt(self, x, y, width, height, rop):
         operation = pattern_rop2(rop)
         if operation is None:

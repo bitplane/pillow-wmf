@@ -161,6 +161,23 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
 )
 
 
+def div255(value: int) -> int:
+    """GDI's rounded division by 255."""
+    return (value + 128 + ((value + 128) >> 8)) >> 8
+
+
+def alpha_channel(source, destination, source_alpha, constant):
+    """One channel of AlphaBlend's source-over with premultiplied alpha.
+
+    Constant-alpha blending is referenced; per-pixel alpha is referenced only
+    at full constant alpha, where the rounding of the scaling is moot.
+    """
+    if source_alpha is None:
+        return div255(source * constant + destination * (255 - constant))
+    alpha = div255(source_alpha * constant)
+    return min(255, div255(source * constant) + div255(destination * (255 - alpha)))
+
+
 class RasterContext(ExecutionContext[DrawingState]):
     """Draw the currently supported GDI calls into an RGB Pillow image.
 
@@ -692,6 +709,32 @@ class RasterContext(ExecutionContext[DrawingState]):
                 SRCCOPY,
                 transparent=transparent,
                 mode=COLORONCOLOR,
+            )
+
+    def _prepare_alpha_blend(self, a):
+        operation, flags, constant, alpha_format = (a["blend"] >> shift & 255 for shift in (0, 8, 16, 24))
+        if operation != 0 or flags != 0 or alpha_format not in (0, 1):
+            raise InvalidOperation("Unsupported BLENDFUNCTION")
+        layout = read_dib(a["source"], max_pixels=self.max_bitmap_pixels)
+        alpha = None
+        if alpha_format:
+            if layout.depth != 32 or layout.compression != 0 or not layout.complete:
+                raise UnsupportedOperation("alpha_blend: per-pixel alpha needs a 32-bit BI_RGB DIB")
+            # The fourth byte of each BGRA sample, in top-down order.
+            rows = [
+                layout.data[layout.offset + row * layout.stride : layout.offset + (row + 1) * layout.stride][3::4]
+                for row in range(layout.height)
+            ]
+            alpha = b"".join(rows if layout.top_down else reversed(rows))
+        preparation = replace(self._transfer_preparation(), stretch_mode=COLORONCOLOR)
+        transfer = preparation.prepare_dib("dib_stretch_blt", {**a, "rop": SRCCOPY})
+        return transfer, alpha, constant
+
+    def _apply_alpha_blend(self, call, prepared, result):
+        transfer, alpha, constant = prepared
+        if isinstance(transfer, SourceTransfer):
+            self._painter().alpha_blt(
+                transfer.bitmap, alpha, transfer.horizontal, transfer.vertical, constant, alpha_channel
             )
 
     def _prepare_mask_blt(self, a):

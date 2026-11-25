@@ -149,7 +149,7 @@ the codec and reference columns against the code and fixtures.
 | `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
-| `ALPHABLEND` | typed | no | yes | Needs alpha compositing. |
+| `ALPHABLEND` | typed | partial | yes | Constant and per-pixel alpha with nearest sampling; per-pixel alpha below full constant alpha is unreferenced. |
 | `SETLAYOUT` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | no | yes |  |

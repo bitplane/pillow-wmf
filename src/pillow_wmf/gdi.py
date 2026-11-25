@@ -553,6 +553,36 @@ class GDI:
             )
         )
 
+    def alpha_blend(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        src_x: int,
+        src_y: int,
+        src_width: int,
+        src_height: int,
+        blend: int,
+        source: BitmapData,
+    ) -> None:
+        """AlphaBlend: ``blend`` packs BLENDFUNCTION (op, flags, constant alpha, AC_SRC_ALPHA)."""
+        return self.invoke(
+            Call.make(
+                "alpha_blend",
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                src_x=src_x,
+                src_y=src_y,
+                src_width=src_width,
+                src_height=src_height,
+                blend=blend,
+                source=source,
+            )
+        )
+
     def mask_blt(
         self,
         x: int,

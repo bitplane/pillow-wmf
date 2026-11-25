@@ -161,6 +161,22 @@ def _transparent_blt(record):
     }
 
 
+def _alpha_blend(record):
+    _identity_source(record)
+    return "alpha_blend", {
+        "x": record.x,
+        "y": record.y,
+        "width": record.width,
+        "height": record.height,
+        "src_x": record.src_x,
+        "src_y": record.src_y,
+        "src_width": record.src_width,
+        "src_height": record.src_height,
+        "blend": record.blend,
+        "source": _dib(record),
+    }
+
+
 def _mask_blt(record):
     if record.bitmap_size:
         _identity_source(record)
@@ -360,6 +376,7 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.StretchDIBits: _stretch_dib,
     bitmaps.TransparentBlt: _transparent_blt,
     bitmaps.MaskBlt: _mask_blt,
+    bitmaps.AlphaBlend: _alpha_blend,
     bitmaps.CreateMonoBrush: _mono_brush,
     bitmaps.CreateDIBPatternBrushPt: lambda r: (
         "create_dib_pattern_brush",
