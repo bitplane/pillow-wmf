@@ -50,7 +50,7 @@ the codec and reference columns against the code and fixtures.
 | `SETWINDOWORGEX` | typed | full | yes | Folded into the playback world transform. |
 | `SETVIEWPORTEXTEX` | typed | full | yes | Folded into the playback world transform. |
 | `SETVIEWPORTORGEX` | typed | full | yes | Folded into the playback world transform. |
-| `SETBRUSHORGEX` | typed | no | yes | Needs a brush origin in the shared state. |
+| `SETBRUSHORGEX` | typed | full | yes | Device-space origin for patterns and hatches. |
 | `EOF` | typed | full | yes | Its palette is not applied. |
 | `SETPIXELV` | typed | full | yes |  |
 | `SETMAPPERFLAGS` | typed | full | yes | Font mapping; text is font-limited. |
@@ -129,7 +129,7 @@ the codec and reference columns against the code and fixtures.
 | `POLYPOLYLINE16` | typed | no | yes | As POLYPOLYLINE. |
 | `POLYPOLYGON16` | typed | full | yes |  |
 | `POLYDRAW16` | typed | no | yes | Needs paths and Béziers. |
-| `CREATEMONOBRUSH` | typed | no | yes |  |
+| `CREATEMONOBRUSH` | typed | full | yes | Colours come from the text and background colours. |
 | `CREATEDIBPATTERNBRUSHPT` | typed | full | yes |  |
 | `EXTCREATEPEN` | typed | partial | yes | Pens CreatePen can express; caps, joins, styles and pattern pens are missing. |
 | `POLYTEXTOUTA` | typed | no | no |  |

@@ -124,6 +124,10 @@ class GDI:
     def set_map_mode(self, mode: int) -> None:
         return self.invoke(Call.make("set_map_mode", mode=mode))
 
+    def set_brush_origin(self, x: int, y: int) -> None:
+        """Align pattern and hatch brushes to device point (x, y)."""
+        return self.invoke(Call.make("set_brush_origin", x=x, y=y))
+
     def set_miter_limit(self, limit: float) -> None:
         """Limit miter joins of geometric pens to ``limit`` times the pen width."""
         return self.invoke(Call.make("set_miter_limit", limit=limit))

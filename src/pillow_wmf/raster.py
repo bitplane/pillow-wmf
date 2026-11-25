@@ -337,6 +337,9 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         self.mapping.set_mode(a["mode"])
 
+    def _apply_set_brush_origin(self, call, prepared, result):
+        self._state.brush_origin = (call.kwargs["x"], call.kwargs["y"])
+
     def _prepare_set_miter_limit(self, a):
         if not a["limit"] >= 1:
             raise InvalidOperation("Miter limits are at least 1")

@@ -13,6 +13,7 @@ import struct
 from collections.abc import Callable
 
 from ..binary import FormatError, Limits
+from ..bitmap16 import encode_bitmap16
 from ..constants import ETO_CLIPPED, ETO_GLYPH_INDEX, ETO_OPAQUE, GM_ADVANCED, PS_NULL, PS_SOLID
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from ..mapping import fixed as to_fixed
@@ -218,6 +219,29 @@ def _set_dib_to_device(record, matrix):
     }
 
 
+def _mono_brush(record):
+    """CreateMonoBrush is CreatePatternBrush on a monochrome bitmap.
+
+    Its colours come from the text and background colours when drawn, so the
+    DIB's own colour table is ignored. The samples become the same native
+    pattern storage a WMF pattern brush uses.
+    """
+    info = record.bitmap_info
+    if len(info) < 16 or struct.unpack_from("<I", info)[0] < 40:
+        raise Unsupported("Monochrome brushes need a BITMAPINFOHEADER")
+    width, height, _, depth = struct.unpack_from("<iiHH", info, 4)
+    if depth != 1 or width <= 0 or height == 0:
+        raise Unsupported("Monochrome brushes need a 1-bpp bitmap")
+    stride = (width + 31) // 32 * 4
+    bits = record.bits
+    rows = abs(height)
+    if len(bits) < stride * rows:
+        raise Unsupported("Monochrome brush bits are truncated")
+    order = range(rows) if height < 0 else range(rows - 1, -1, -1)
+    samples = [bits[y * stride + x // 8] >> (7 - x % 8) & 1 for y in order for x in range(width)]
+    return "create_pattern_brush", {"bitmap": encode_bitmap16(width, rows, samples, pattern=True, native_pattern=True)}
+
+
 def _ext_create_pen(record):
     """Pens that CreatePen can also make; patterned, styled and other pens are not."""
     style = record.style & PS_STYLE_MASK
@@ -291,6 +315,7 @@ TRANSLATIONS: dict[type, Callable] = {
     fixed.RealizePalette: _direct("realize_palette"),
     fixed.ExtFloodFill: _direct("ext_flood_fill", "x", "y", "color", "mode"),
     fixed.SetLayout: _direct("set_layout", "layout"),
+    fixed.SetBrushOrgEx: _direct("set_brush_origin", "x", "y"),
     # Native recording truncates the limit to an integer; playback reads it back.
     fixed.SetMiterLimit: lambda r: ("set_miter_limit", {"limit": float(r.limit)}),
     fixed.SetTextJustification: _direct("set_text_justification", "break_count", "break_extra"),
@@ -305,6 +330,7 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.BitBlt: _source_blit,
     bitmaps.StretchBlt: _source_blit,
     bitmaps.StretchDIBits: _stretch_dib,
+    bitmaps.CreateMonoBrush: _mono_brush,
     bitmaps.CreateDIBPatternBrushPt: lambda r: (
         "create_dib_pattern_brush",
         {"style": BS_DIBPATTERN, "color_usage": r.usage, "bitmap": _dib(r)},

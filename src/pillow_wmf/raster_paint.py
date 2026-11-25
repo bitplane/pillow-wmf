@@ -373,6 +373,8 @@ class RasterPainter:
             return self.state.palette.colorref(brush.color)
         if brush.style == BS_NULL or not brush.realizable:
             return None
+        # Patterns and hatches tile from the device brush origin.
+        x, y = x - self.state.brush_origin[0], y - self.state.brush_origin[1]
         if brush.pattern is not None:
             px, py = x % brush.pattern.width, y % brush.pattern.height
             if isinstance(brush.pattern, DIBLayout):
