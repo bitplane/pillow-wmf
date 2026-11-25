@@ -164,7 +164,7 @@ the codec and reference columns against the code and fixtures.
 as the renderer and writes the records a native enhanced-metafile DC writes,
 emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
 
-- Pens, brushes, fonts and palettes are written when first selected, into
+- Pens, brushes and palettes are written when first selected, into
   the lowest free 1-based slot; objects never selected never appear, nor do
   their deletions. Stock objects are selected as `0x80000000 | index`, and
   `CreatePen(PS_NULL)` is the stock null pen.
@@ -183,8 +183,8 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   display's size at 96 DPI.
 
 Recordings of the covered calls are byte-identical to native ones
-([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Text,
-palette editing, pattern brushes, DIB pattern pens and bitmap transfers other
+([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Fonts and
+text follow the rest of EMF and are refused for now, as are palette editing, pattern brushes, DIB pattern pens and bitmap transfers other
 than `PatBlt` and `StretchDIBits` are refused, as are null object selections.
 Whether native recording clips record bounds, or the effect of an excluded
 clip rectangle on header bounds, is unverified.

@@ -304,6 +304,278 @@ def scenarios():
     yield "transfers", None, transfers
 
 
+msimg = ctypes.WinDLL("msimg32", use_last_error=True)
+modify_world_transform = api("ModifyWorldTransform", boolean, ptr, ctypes.POINTER(XForm), dword)
+exclude_clip = api("ExcludeClipRect", integer, ptr, integer, integer, integer, integer)
+create_brush_indirect = api("CreateBrushIndirect", ptr, ctypes.POINTER(LogBrush))
+create_dc = api("CreateCompatibleDC", ptr, ptr)
+delete_dc = api("DeleteDC", boolean, ptr)
+create_dib_section = api("CreateDIBSection", ptr, ptr, ptr, wintypes.UINT, ctypes.POINTER(ptr), ptr, dword)
+create_bitmap = api("CreateBitmap", ptr, integer, integer, wintypes.UINT, wintypes.UINT, ptr)
+pattern_brush = api("CreatePatternBrush", ptr, ptr)
+dib_pattern_brush = api("CreateDIBPatternBrushPt", ptr, ptr, wintypes.UINT)
+bit_blt = api("BitBlt", boolean, ptr, *(integer,) * 4, ptr, integer, integer, dword)
+stretch_blt = api("StretchBlt", boolean, ptr, *(integer,) * 4, ptr, *(integer,) * 4, dword)
+mask_blt = api("MaskBlt", boolean, ptr, *(integer,) * 4, ptr, integer, integer, ptr, integer, integer, dword)
+plg_blt = api("PlgBlt", boolean, ptr, ctypes.POINTER(wintypes.POINT), ptr, *(integer,) * 4, ptr, integer, integer)
+alpha_blend = bind(msimg, "AlphaBlend", boolean, ptr, *(integer,) * 4, ptr, *(integer,) * 4, dword)
+transparent_blt = bind(msimg, "TransparentBlt", boolean, ptr, *(integer,) * 4, ptr, *(integer,) * 4, wintypes.UINT)
+set_dib_to_device = api(
+    "SetDIBitsToDevice",
+    integer,
+    ptr,
+    integer,
+    integer,
+    dword,
+    dword,
+    integer,
+    integer,
+    wintypes.UINT,
+    wintypes.UINT,
+    ptr,
+    ptr,
+    wintypes.UINT,
+)
+set_stretch_mode = api("SetStretchBltMode", integer, ptr, integer)
+create_palette = api("CreatePalette", ptr, ptr)
+select_palette = api("SelectPalette", ptr, ptr, ptr, boolean)
+realize_palette = api("RealizePalette", wintypes.UINT, ptr)
+set_palette_entries = api("SetPaletteEntries", wintypes.UINT, ptr, wintypes.UINT, wintypes.UINT, ptr)
+resize_palette = api("ResizePalette", boolean, ptr, wintypes.UINT)
+animate_palette = api("AnimatePalette", boolean, ptr, wintypes.UINT, wintypes.UINT, ptr)
+set_arc_direction = api("SetArcDirection", integer, ptr, integer)
+arc_to = api("ArcTo", boolean, ptr, *(integer,) * 8)
+angle_arc = api("AngleArc", boolean, ptr, integer, integer, dword, ctypes.c_float, ctypes.c_float)
+chord = api("Chord", boolean, ptr, *(integer,) * 8)
+poly_draw = api("PolyDraw", boolean, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+polyline_to = api("PolylineTo", boolean, ptr, ctypes.POINTER(wintypes.POINT), dword)
+poly_bezier_to = api("PolyBezierTo", boolean, ptr, ctypes.POINTER(wintypes.POINT), dword)
+poly_polyline = api("PolyPolyline", boolean, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(dword), dword)
+scale_window_ext = api("ScaleWindowExtEx", boolean, ptr, integer, integer, integer, integer, ptr)
+set_viewport_org = api("SetViewportOrgEx", boolean, ptr, integer, integer, ptr)
+offset_window_org = api("OffsetWindowOrgEx", boolean, ptr, integer, integer, ptr)
+set_brush_org = api("SetBrushOrgEx", boolean, ptr, integer, integer, ptr)
+ext_flood_fill = api("ExtFloodFill", boolean, ptr, integer, integer, dword, wintypes.UINT)
+set_layout = api("SetLayout", dword, ptr, dword)
+set_poly_fill_mode = api("SetPolyFillMode", integer, ptr, integer)
+flatten_path = api("FlattenPath", boolean, ptr)
+widen_path = api("WidenPath", boolean, ptr)
+select_clip_path = api("SelectClipPath", boolean, ptr, integer)
+abort_path = api("AbortPath", boolean, ptr)
+close_figure = api("CloseFigure", boolean, ptr)
+frame_rgn = api("FrameRgn", boolean, ptr, ptr, ptr, integer, integer)
+invert_rgn = api("InvertRgn", boolean, ptr, ptr)
+paint_rgn = api("PaintRgn", boolean, ptr, ptr)
+ext_select_clip_rgn = api("ExtSelectClipRgn", integer, ptr, ptr, integer)
+offset_clip_rgn = api("OffsetClipRgn", integer, ptr, integer, integer)
+set_meta_rgn = api("SetMetaRgn", integer, ptr)
+gradient = bind(msimg, "GradientFill", boolean, ptr, ptr, dword, ptr, dword, dword)
+
+
+def dib_info(width, height, depth, colors=()):
+    header = struct.pack("<IiiHHIIiiII", 40, width, height, 1, depth, 0, 0, 0, 0, len(colors), 0)
+    return header + b"".join(struct.pack("<I", color) for color in colors)
+
+
+def source_dc(depth=32):
+    """A memory DC holding a 4x3 DIB section with deterministic samples."""
+    dc = create_dc(None)
+    info = ctypes.create_string_buffer(dib_info(4, -3, depth, (0x000000, 0xFFFFFF) if depth == 1 else ()), 48)
+    bits = ptr()
+    bitmap = create_dib_section(dc, info, 0, ctypes.byref(bits), None, 0)
+    stride = ((4 * depth + 31) // 32) * 4
+    ctypes.memmove(bits, bytes((7 * i) % 256 for i in range(stride * 3)), stride * 3)
+    select(dc, bitmap)
+    return dc, bitmap
+
+
+def more_scenarios():
+    def advanced_once(dc):
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(1.5, 0, 0, 2.0, 3.0, 4.0)))
+        rectangle(dc, 10, 10, 30, 20)
+
+    yield "advanced-once", None, advanced_once
+
+    def advanced_modes(dc):
+        set_graphics_mode(dc, 2)
+        set_graphics_mode(dc, 2)
+        rectangle(dc, 10, 10, 30, 20)
+        set_graphics_mode(dc, 1)
+        rectangle(dc, 10, 10, 30, 20)
+
+    yield "advanced-modes", None, advanced_modes
+
+    def advanced_modify(dc):
+        set_graphics_mode(dc, 2)
+        modify_world_transform(dc, ctypes.byref(XForm(2, 0, 0, 2, 1, 1)), 2)
+        modify_world_transform(dc, ctypes.byref(XForm(1, 0, 0.5, 1, 0, 0)), 3)
+        rectangle(dc, 10, 10, 30, 20)
+        modify_world_transform(dc, None, 1)
+        set_world_transform(dc, ctypes.byref(XForm(1, 0, 0, 1, 0, 0)))
+        set_graphics_mode(dc, 1)
+        ellipse(dc, 40, 40, 60, 60)
+
+    yield "advanced-modify", None, advanced_modify
+
+    def null_brush(dc):
+        select(dc, create_brush_indirect(ctypes.byref(LogBrush(1, 0, 0))))
+        rectangle(dc, 10, 10, 30, 20)
+        select(dc, stock(5))
+        select(dc, stock(8))
+        rectangle(dc, 40, 40, 60, 60)
+
+    yield "null-brush", None, null_brush
+
+    def clipped_bounds(dc):
+        intersect_clip(dc, 10, 10, 40, 40)
+        polyline(dc, *points((0, 0), (60, 30)))
+        exclude_clip(dc, 10, 10, 40, 25)
+        rectangle(dc, 0, 0, 60, 60)
+        select_clip_rgn(dc, None)
+        rectangle(dc, 70, 70, 80, 80)
+
+    yield "clipped-bounds", None, clipped_bounds
+
+    def regions(dc):
+        region = create_rect_rgn(10, 10, 30, 30)
+        frame_rgn(dc, region, stock(4), 2, 3)
+        invert_rgn(dc, region)
+        paint_rgn(dc, region)
+        ext_select_clip_rgn(dc, region, 1)
+        offset_clip_rgn(dc, 5, 6)
+        set_meta_rgn(dc)
+        rectangle(dc, 0, 0, 50, 50)
+        delete(region)
+
+    yield "regions", None, regions
+
+    def palettes(dc):
+        entries = struct.pack("<HH", 0x300, 4) + bytes((255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 9, 9, 9, 1))
+        buffer = ctypes.create_string_buffer(entries)
+        palette = create_palette(buffer)
+        select_palette(dc, palette, False)
+        realize_palette(dc)
+        update = ctypes.create_string_buffer(bytes((1, 2, 3, 0)))
+        set_palette_entries(palette, 1, 1, update)
+        resize_palette(palette, 6)
+        animate_palette(palette, 3, 1, update)
+        select_palette(dc, stock(15), False)
+        delete(palette)
+
+    yield "palettes", None, palettes
+
+    def pattern_brushes(dc):
+        mono = create_bitmap(8, 8, 1, 1, ctypes.create_string_buffer(bytes((0xAA, 0, 0x55, 0) * 4), 16))
+        select(dc, pattern_brush(mono))
+        rectangle(dc, 0, 0, 20, 20)
+        source, bitmap = source_dc()
+        select(dc, pattern_brush(bitmap))
+        rectangle(dc, 30, 0, 50, 20)
+        packed = ctypes.create_string_buffer(dib_info(2, 2, 24) + bytes(range(16)))
+        select(dc, dib_pattern_brush(packed, 0))
+        rectangle(dc, 60, 0, 80, 20)
+        delete_dc(source)
+
+    yield "pattern-brushes", None, pattern_brushes
+
+    def dib_pattern_pen(dc):
+        packed = ctypes.create_string_buffer(dib_info(2, 2, 24) + bytes(range(16)))
+        brush = LogBrush(6, 0, ctypes.cast(packed, ctypes.c_void_p).value)
+        select(dc, ext_create_pen(0x00010000, 4, ctypes.byref(brush), 0, None))
+        line_to(dc, 30, 30)
+
+    yield "dib-pattern-pen", None, dib_pattern_pen
+
+    def transfers(dc):
+        source, _ = source_dc()
+        bit_blt(dc, 1, 2, 4, 3, source, 0, 0, 0x00CC0020)
+        bit_blt(dc, 10, 2, 4, 3, source, 1, 1, 0x00660046)
+        set_stretch_mode(dc, 4)
+        stretch_blt(dc, 20, 2, 8, 6, source, 0, 0, 4, 3, 0x00CC0020)
+        mono = create_bitmap(4, 3, 1, 1, ctypes.create_string_buffer(bytes((0xA0, 0, 0x50, 0, 0xA0, 0)), 6))
+        mask_blt(dc, 30, 2, 4, 3, source, 0, 0, mono, 0, 0, 0xAACC0020)
+        plg_blt(
+            dc,
+            (wintypes.POINT * 3)(wintypes.POINT(45, 1), wintypes.POINT(60, 6), wintypes.POINT(42, 12)),
+            source,
+            0,
+            0,
+            4,
+            3,
+            None,
+            0,
+            0,
+        )
+        alpha_blend(dc, 1, 20, 8, 6, source, 0, 0, 4, 3, 0x00800000)
+        transparent_blt(dc, 20, 20, 8, 6, source, 0, 0, 4, 3, 0x00030201)
+        info = ctypes.create_string_buffer(dib_info(2, 2, 24))
+        set_dib_to_device(dc, 40, 20, 2, 2, 0, 0, 0, 2, bytes(range(16)), info, 0)
+        delete_dc(source)
+
+    yield "transfers-all", None, transfers
+
+    def gradients(dc):
+        class TriVertex(ctypes.Structure):
+            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)] + [(c, ctypes.c_ushort) for c in "rgba"]
+
+        vertices = (TriVertex * 3)(
+            TriVertex(1, 2, 0xFF00, 0, 0, 0), TriVertex(30, 20, 0, 0xFF00, 0, 0), TriVertex(5, 25, 0, 0, 0xFF00, 0)
+        )
+        gradient(dc, vertices, 2, (dword * 2)(0, 1), 1, 0)
+        gradient(dc, vertices, 3, (dword * 3)(0, 1, 2), 1, 2)
+
+    yield "gradients", None, gradients
+
+    def curves(dc):
+        set_arc_direction(dc, 2)
+        move_to(dc, 5, 5, None)
+        arc_to(dc, 10, 10, 40, 30, 40, 20, 10, 10)
+        angle_arc(dc, 60, 60, 10, 30.0, 120.0)
+        chord(dc, 70, 5, 100, 30, 100, 15, 70, 5)
+        polyline_to(dc, *points((1, 90), (20, 100)))
+        poly_bezier_to(dc, *points((30, 90), (40, 110), (50, 100)))
+        array, count = points((5, 5), (20, 5), (20, 20), (60, 60), (70, 60))
+        poly_polyline(dc, array, (dword * 2)(3, 2), 2)
+        types = (ctypes.c_ubyte * 4)(6, 2, 2, 3)
+        array, count = points((80, 80), (90, 80), (90, 90), (80, 90))
+        poly_draw(dc, array, types, count)
+
+    yield "curves", None, curves
+
+    def state_more(dc):
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 100, 100, None)
+        set_viewport_ext(dc, 100, 100, None)
+        scale_window_ext(dc, 2, 1, 3, 2, None)
+        set_viewport_org(dc, 5, 6, None)
+        offset_window_org(dc, 3, 4, None)
+        set_brush_org(dc, 2, 3, None)
+        set_poly_fill_mode(dc, 2)
+        set_miter_limit(dc, 4.5, None)
+        set_layout(dc, 0)
+        ext_flood_fill(dc, 10, 10, 0, 1)
+        rectangle(dc, 10, 10, 30, 30)
+
+    yield "state-more", None, state_more
+
+    def paths_more(dc):
+        begin_path(dc)
+        move_to(dc, 5, 5, None)
+        line_to(dc, 40, 10)
+        close_figure(dc)
+        end_path(dc)
+        flatten_path(dc)
+        widen_path(dc)
+        select_clip_path(dc, 5)
+        begin_path(dc)
+        line_to(dc, 1, 1)
+        abort_path(dc)
+        rectangle(dc, 0, 0, 60, 60)
+
+    yield "paths-more", None, paths_more
+
+
 def records(data):
     position = 0
     while position < len(data):
@@ -315,7 +587,7 @@ def records(data):
 def main():
     print(f"Windows EMF recording probe: {platform.platform()}")
     print(f"Module versions: {module_versions()}")
-    for name, frame, draw in scenarios():
+    for name, frame, draw in (*scenarios(), *more_scenarios()):
         with reference_surface(128, 128) as (_, reference, _bits):
             rect = wintypes.RECT(*frame) if frame else None
             dc = create_emf(reference, None, ctypes.byref(rect) if rect else None, None)
