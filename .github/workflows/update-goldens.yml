@@ -74,6 +74,7 @@ on:
           - rotated-paths
           - rotated-pens
           - rotated-strokes
+          - emf-layout
   push:
     branches: [master]
     paths:
