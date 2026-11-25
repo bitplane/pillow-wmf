@@ -69,6 +69,7 @@ on:
           - emf-transforms
           - advanced-paths
           - emf-record
+          - pen-widen
   push:
     branches: [master]
     paths:
