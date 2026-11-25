@@ -4,7 +4,9 @@ The ``colours`` source is 32x32 and holds 1024 colours: the 256 greys, the
 216-colour 6x6x6 cube, red, green and blue ramps of 128 levels each, and
 168 pseudo-random colours. The ``greys`` source is 64x64; pixel (x, y) is
 the grey x // 4 + 16 * (y // 4), so each grey appears at all sixteen
-positions of a 4x4 cell. Each case selects a COLORADJUSTMENT, stretches its
+positions of a 4x4 cell. The ``grey-cells`` source is 256x256; pixel
+(x, y) is the grey x // 16 + 16 * (y // 16), at every position of a 16x16
+cell. Each case selects a COLORADJUSTMENT, stretches its
 source four times with StretchDIBits in HALFTONE mode, and prints the
 colour at each block's centre, in source order, as RRGGBB hex, and the
 number of blocks whose 16 pixels are not all equal. No reference images
@@ -68,7 +70,11 @@ def greys():
     return [(v, v, v) for y in range(64) for x in range(64) for v in [x // 4 + 16 * (y // 4)]]
 
 
-SOURCES = {"colours": (32, colours), "greys": (64, greys)}
+def grey_cells():
+    return [(v, v, v) for y in range(256) for x in range(256) for v in [x // 16 + 16 * (y // 16)]]
+
+
+SOURCES = {"colours": (32, colours), "greys": (64, greys), "grey-cells": (256, grey_cells)}
 
 
 def cases():
@@ -80,6 +86,7 @@ def cases():
         ("colorfulness-100", NEUTRAL | dict(colorfulness=-100)),
     ):
         yield "greys", f"greys-{name}", values
+    yield "grey-cells", "grey-cells-colorfulness1", NEUTRAL | dict(colorfulness=1)
 
 
 def colour_cases():
