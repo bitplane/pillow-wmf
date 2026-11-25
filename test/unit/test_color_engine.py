@@ -13,8 +13,8 @@
 ``phase`` holds, per case of ``probe-windows-color-engine-phase.py``, the
 SHA-256 of the native destination (RGB bytes) of a source stretched under
 colourfulness 40 and tint -30: filtered, general and replicated
-enlargements, reductions, offset source rectangles, and placed, clipped
-and mirrored destinations, which fix where the dither starts.
+enlargements, reductions, offset source rectangles, and placed, clipped,
+mirrored and flipped destinations, which fix where the dither starts.
 """
 
 import hashlib
@@ -25,7 +25,6 @@ from pathlib import Path
 import pytest
 
 from pillow_wmf.color_engine import colour_map, cube_root, log10
-from pillow_wmf.gdi import UnsupportedOperation
 from pillow_wmf.objects import BitmapData
 from pillow_wmf.raster import RasterContext
 
@@ -101,13 +100,3 @@ def test_dither_phase_matches_native(load_script, name):
         context.intersect_clip_rect(*case["clip"])
     context.stretch_dib(*case["dest"], *case["rect"], 0xCC0020, 0, BitmapData("dib", info + pixels))
     assert hashlib.sha256(context.image.convert("RGB").tobytes()).hexdigest() == case["sha256"]
-
-
-def test_clipped_mirrored_transfers_under_the_engine_are_refused():
-    info = struct.pack("<IiiHHIIiiII", 40, 4, -4, 1, 32, 0, 64, 0, 0, 0, 0)
-    context = RasterContext(16, 16, trace_calls=False)
-    context.set_stretch_mode(4)
-    context.set_color_adjustment(0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 50, 0)
-    context.intersect_clip_rect(2, 2, 10, 10)
-    with pytest.raises(UnsupportedOperation, match="colour engine"):
-        context.stretch_dib(11, 0, -12, 12, 0, 0, 4, 4, 0xCC0020, 0, BitmapData("dib", info + bytes(64)))

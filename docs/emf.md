@@ -80,7 +80,7 @@ the codec and reference columns against the code and fixtures.
 | `SETROP2` | typed | full | yes |  |
 | `SETSTRETCHBLTMODE` | typed | full | yes |  |
 | `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
-| `SETCOLORADJUSTMENT` | typed | partial | yes | Scaled HALFTONE copies; clipped or vertically mirrored transfers through the colour engine are partly refused. |
+| `SETCOLORADJUSTMENT` | typed | partial | yes | Scaled HALFTONE copies; adjustments under rotating transforms are unverified. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
 | `OFFSETCLIPRGN` | typed | full | yes | Offsets scale through the world transform, ties rounding away from zero. |
@@ -362,24 +362,23 @@ tables above apply to the engine's output:
 
 Enlargements map source pixels as their scans are read, before the stretch
 replicates or filters them; each scan read advances the dither one row.
-Reductions map the reduced destination pixels. Either way the dither
-starts at the first visible destination pixel, at its column modulo 65 and
-its row, for the source pixel it samples (by the stretch's centre-phase
-step):
+Reductions map the reduced destination pixels, dithered at their
+destination positions. Dithering starts at the first visible destination
+column modulo 65 and at the first visible row, or the last one for a
+vertically flipped transfer, whose dither rows count down. Scans start at
+the first source column and row that a visible pixel samples, by the
+stretch's centre-phase step, and:
 
-- replication reads from that source pixel;
+- replication reads from there;
 - the enlargement filter for up to five times the source size first reads
-  two scans above it, re-reading the bitmap's top row where there are
-  none, and pads its columns with mapped pixels;
-- larger enlargements first read up to two real columns and scans before
-  it, and re-read the bitmap's last scan below it;
-- scans repeated beyond the bitmap's edges are each dithered afresh;
-- a vertically flipped filtered enlargement dithers from its bottom
-  destination row upwards.
+  two more scans, re-reading the bitmap's top row where it has none above
+  (when mirrored, two scans whatever is above);
+- larger enlargements, and mirrored ones up to five times, first read up to
+  two real columns before; larger ones also read up to two real scans
+  before and re-read the bitmap's last scan below it;
+- scans repeated beyond the bitmap's edges are each dithered afresh.
 
-The source's storage orientation does not matter. Clipped mirrored
-transfers and vertically mirrored ones other than unclipped filtered
-enlargements are refused until native references cover them.
+The source's storage orientation does not matter.
 
 ## Right-to-left layout
 

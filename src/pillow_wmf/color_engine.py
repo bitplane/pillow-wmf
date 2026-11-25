@@ -440,14 +440,20 @@ class MappedBitmap:
 
 
 class MappedView:
-    """A filtered destination view mapped through the engine at destination positions."""
+    """A filtered destination view mapped through the engine at destination positions.
 
-    def __init__(self, view, table: bytes, column: int, row: int):
-        self.view, self.table, self.column, self.row = view, table, column, row
+    View pixel (x, y) lands on destination column ``column + x_step * x`` and
+    row ``row + y_step * y``; ``phase_x`` shifts the dither column.
+    """
+
+    def __init__(self, view, table: bytes, column: int, row: int, x_step: int, y_step: int, phase_x: int):
+        self.view, self.table = view, table
+        self.column, self.row, self.x_step, self.y_step, self.phase_x = column, row, x_step, y_step, phase_x
         self.width, self.height, self.valid = view.width, view.height, view.valid
 
     def pixel(self, x: int, y: int) -> tuple[int, int, int]:
-        d = _dither_row(y + self.row)[(x + self.column) % DITHER_WIDTH]
+        dither = _dither_row(self.row + self.y_step * y)
+        d = dither[(self.column + self.x_step * x + self.phase_x) % DITHER_WIDTH]
         r, g, b = ((INDEX[c] - d) >> 8 for c in self.view.pixel(x, y))
         entry = (r + 32 * g + 1024 * b) * 3
         return tuple(self.table[entry : entry + 3])

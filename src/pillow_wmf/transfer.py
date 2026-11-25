@@ -10,7 +10,6 @@ from .clip import ClipRegion, RegionMask
 from .color_adjustment import AdjustedBitmap, ColorAdjustment
 from .color_engine import MappedBitmap, MappedView
 from .constants import HALFTONE
-from .gdi import UnsupportedOperation
 from .halftone import (
     HalftoneExpansion,
     HalftoneMode,
@@ -216,22 +215,21 @@ class TransferPreparation:
     def _engine_source(self, bitmap, hx, hy, sw, sh, dw, dh, content):
         """The source, and a wrapper for the filtered view, for the colour engine.
 
-        Native reads source scans through the engine when it enlarges, so each
-        scan read is dithered one row further on. Dithering starts at the first
-        visible destination pixel, at its column modulo 65 (each dither row
-        holds 64 thresholds and a copy of its first) and its row, for the
-        source pixel that pixel samples:
+        Enlargements map source scans as they are read, each read advancing
+        the dither one row; reductions map the reduced destination pixels.
+        Dithering starts at the first visible destination column modulo 65
+        (each dither row holds 64 thresholds and a copy of its first) and at
+        the first visible row, or the last for a vertically flipped transfer,
+        which counts down. Scans start at the first source column and row a
+        visible pixel samples (by the stretch's centre-phase step), and:
 
-        - replication reads from that pixel;
-        - the fast enlargement first reads two scans above it, re-reading the
-          bitmap's top row where it ends, and pads columns with mapped pixels;
-        - the general enlargement first reads up to two real columns and scans
-          before it;
-        - edge rows beyond the bitmap repeat with their own dither;
-        - reductions map the reduced destination pixels from that phase.
-
-        A vertically flipped fast enlargement dithers from its bottom row
-        upwards. Other mirrored combinations are not yet verified.
+        - replication reads from there;
+        - the fast enlargement filter first reads two more scans, re-reading
+          the bitmap's top row where it has none above (when mirrored, two
+          scans whatever is above);
+        - the general filter, and the fast one when mirrored, first read up
+          to two real columns, and the general one up to two real scans;
+        - scans beyond the bitmap's edges are each dithered afresh.
         """
         width, height = abs(dw), abs(dh)
         left, top = hx.destination, hy.destination
@@ -244,34 +242,39 @@ class TransferPreparation:
         visible = list(self.clip.within(bounds).rectangles()) if bounds[0] < bounds[2] and bounds[1] < bounds[3] else []
         if not visible:
             return bitmap, None
-        first_x, first_y = min(r[0] for r in visible) - left, min(r[1] for r in visible) - top
-        clipped = first_x or first_y or max(r[2] for r in visible) < left + width
-        clipped = clipped or max(r[3] for r in visible) < top + height
-        if (hx.mirrored or hy.mirrored) and clipped:
-            raise UnsupportedOperation("HALFTONE colour engine: clipped mirrored transfers")
-        phase_x, phase_y = (first_x + left) % 65, first_y + top
+        x0, y0 = min(r[0] for r in visible), min(r[1] for r in visible)
+        x1, y1 = max(r[2] for r in visible), max(r[3] for r in visible)
         table = self.color_adjustment.colour_map
         mode = halftone_bitmap(bitmap, hx.source, hy.source, abs(sw), abs(sh), width, height, content=content)
-        fast = isinstance(mode, HalftoneExpansion) and mode.fast
+        replicate = mode is HalftoneMode.REPLICATE or mode is HalftoneMode.NOOP
+        if not replicate and not isinstance(mode, HalftoneExpansion):
+            column = left + width - 1 if hx.mirrored else left
+            row = top + height - 1 if hy.mirrored else top
+            x_step, y_step = (-1 if hx.mirrored else 1), (-1 if hy.mirrored else 1)
+            return bitmap, lambda view: MappedView(view, table, column, row, x_step, y_step, x0 % 65 - x0)
+        fast = not replicate and mode.fast
+        general = not replicate and not fast
+        mirrored = hx.mirrored or hy.mirrored
+
+        def first(offset, source, source_length, length):
+            if fast:
+                return source + ((2 * offset + 1) * source_length - 1) // (2 * length)
+            return source + (2 * offset + 1) * source_length // (2 * length)
+
+        source_x = first(left + width - x1 if hx.mirrored else x0 - left, hx.source, abs(sw), width)
+        source_y = first(top + height - y1 if hy.mirrored else y0 - top, hy.source, abs(sh), height)
+        column = x0 % 65 - source_x + (min(2, max(0, source_x)) if general or (fast and mirrored) else 0)
+        if general:
+            lead = min(2, max(0, source_y))
+        elif fast:
+            lead = 2 if mirrored else 2 - min(2, max(0, source_y))
+        else:
+            lead = 0
         if hy.mirrored:
-            if not fast or hy.source:
-                raise UnsupportedOperation("HALFTONE colour engine: vertically mirrored transfers")
-            return MappedBitmap(bitmap, table, phase_x - hx.source, top + height - 3, -1), None
-        if mode is HalftoneMode.REPLICATE or mode is HalftoneMode.NOOP:
-            source_x = hx.source + (2 * first_x + 1) * abs(sw) // (2 * width)
-            source_y = hy.source + (2 * first_y + 1) * abs(sh) // (2 * height)
-            return MappedBitmap(bitmap, table, phase_x - source_x, phase_y - source_y).materialize(), None
-        if fast:
-            source_x = hx.source + ((2 * first_x + 1) * abs(sw) - 1) // (2 * width)
-            source_y = hy.source + ((2 * first_y + 1) * abs(sh) - 1) // (2 * height)
-            row = phase_y - source_y + 2 - min(2, max(0, source_y))
-            return MappedBitmap(bitmap, table, phase_x - source_x, row), None
-        if isinstance(mode, HalftoneExpansion):
-            source_x = hx.source + (2 * first_x + 1) * abs(sw) // (2 * width)
-            source_y = hy.source + (2 * first_y + 1) * abs(sh) // (2 * height)
-            column = phase_x - source_x + min(2, max(0, source_x))
-            return MappedBitmap(bitmap, table, column, phase_y - source_y + min(2, max(0, source_y))), None
-        return bitmap, lambda view: MappedView(view, table, phase_x - first_x, phase_y - first_y)
+            mapped = MappedBitmap(bitmap, table, column, y1 - 1 - lead + source_y, -1)
+        else:
+            mapped = MappedBitmap(bitmap, table, column, y0 + lead - source_y)
+        return (mapped.materialize() if replicate else mapped), None
 
     def _prepare_bitmap_transfer(self, a, bitmap, sy, *, depth, halftone, monochrome_bitblt=False, source_dc=False):
         x, y = self.mapping.device_point(a["x"], a["y"])

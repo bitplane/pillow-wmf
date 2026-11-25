@@ -405,6 +405,213 @@
 100
 ]
 },
+"flip-filter-clip": {
+"clip": [
+11,
+6,
+90,
+95
+],
+"dest": [
+0,
+99,
+100,
+-100
+],
+"rect": [
+0,
+0,
+50,
+50
+],
+"sha256": "d95fabad6a3e3a2f2bae485cccd7e7cb30c9f65a6389d7e567c9fa1944053310",
+"source": [
+50,
+50
+],
+"surface": [
+100,
+100
+]
+},
+"flip-filter-offset": {
+"clip": null,
+"dest": [
+0,
+99,
+100,
+-100
+],
+"rect": [
+5,
+4,
+40,
+40
+],
+"sha256": "b498c2f267633c034cc8d9e5e6bd43b37e22a1e2a615cd7d6ad49868d5ab3b52",
+"source": [
+60,
+60
+],
+"surface": [
+100,
+100
+]
+},
+"flip-filter-placed": {
+"clip": null,
+"dest": [
+30,
+140,
+100,
+-100
+],
+"rect": [
+0,
+0,
+50,
+50
+],
+"sha256": "160ff1a8ad2bfdc46e04ab840a608f54087089223be49abe34ee39f67aac913c",
+"source": [
+50,
+50
+],
+"surface": [
+140,
+150
+]
+},
+"flip-general": {
+"clip": null,
+"dest": [
+0,
+399,
+400,
+-400
+],
+"rect": [
+0,
+0,
+60,
+60
+],
+"sha256": "27a9b89cebf978916da67a1f18cfdcca12d76c0658bb6961183990c57fb1b315",
+"source": [
+60,
+60
+],
+"surface": [
+400,
+400
+]
+},
+"flip-reduce": {
+"clip": null,
+"dest": [
+0,
+69,
+70,
+-70
+],
+"rect": [
+0,
+0,
+100,
+100
+],
+"sha256": "5d2a3820cb46b05dc974ff58b38db479c3469d14c131c8b76fb9a44ea7cbbbbd",
+"source": [
+100,
+100
+],
+"surface": [
+70,
+70
+]
+},
+"flip-reduce-clip": {
+"clip": [
+8,
+9,
+60,
+62
+],
+"dest": [
+0,
+69,
+70,
+-70
+],
+"rect": [
+0,
+0,
+100,
+100
+],
+"sha256": "e5539ea82c3df1de53b68569942b3f36260f4c433036a0828f55952da156a56a",
+"source": [
+100,
+100
+],
+"surface": [
+70,
+70
+]
+},
+"flip-replicate": {
+"clip": null,
+"dest": [
+0,
+47,
+64,
+-48
+],
+"rect": [
+0,
+0,
+16,
+12
+],
+"sha256": "29cae38692013a799116e1b4720b7a4c81e649f2dfb0bc7ce0955b2729411c45",
+"source": [
+16,
+12
+],
+"surface": [
+64,
+48
+]
+},
+"flip-replicate-clip": {
+"clip": [
+5,
+7,
+50,
+40
+],
+"dest": [
+0,
+47,
+64,
+-48
+],
+"rect": [
+0,
+0,
+16,
+12
+],
+"sha256": "59921511a8419451123ef303bb18ef5ad9a2f621259ee5dd289c47bbfd122b2d",
+"source": [
+16,
+12
+],
+"surface": [
+64,
+48
+]
+},
 "general-310x200": {
 "clip": null,
 "dest": [
@@ -530,6 +737,112 @@
 100
 ]
 },
+"mirror-filter-clip": {
+"clip": [
+11,
+6,
+90,
+95
+],
+"dest": [
+99,
+0,
+-100,
+100
+],
+"rect": [
+0,
+0,
+50,
+50
+],
+"sha256": "efca1357a385e3f015971a98473b44749617392c914f7f2c1fd349e84739b108",
+"source": [
+50,
+50
+],
+"surface": [
+100,
+100
+]
+},
+"mirror-general": {
+"clip": null,
+"dest": [
+399,
+0,
+-400,
+400
+],
+"rect": [
+0,
+0,
+60,
+60
+],
+"sha256": "7104239e9d29313d38f390b2286e9ab10e51b71148217f66c594d8ee25a0c3da",
+"source": [
+60,
+60
+],
+"surface": [
+400,
+400
+]
+},
+"mirror-reduce": {
+"clip": null,
+"dest": [
+69,
+0,
+-70,
+70
+],
+"rect": [
+0,
+0,
+100,
+100
+],
+"sha256": "6d80d6a736d49218544f0085b1ab23436945ac3654297a7d575a796bc8e4563c",
+"source": [
+100,
+100
+],
+"surface": [
+70,
+70
+]
+},
+"mirror-reduce-clip": {
+"clip": [
+8,
+9,
+60,
+62
+],
+"dest": [
+69,
+0,
+-70,
+70
+],
+"rect": [
+0,
+0,
+100,
+100
+],
+"sha256": "863b476c0f4365bba62218986ac888d1715a499e971ba5b8bbb52d583bcaa641",
+"source": [
+100,
+100
+],
+"surface": [
+70,
+70
+]
+},
 "mirror-replicate": {
 "clip": null,
 "dest": [
@@ -545,6 +858,35 @@
 12
 ],
 "sha256": "c4b9f2b4f5088bca88507e06090ec74fa9bc7aa3acbfcb304a2e8b9933031a71",
+"source": [
+16,
+12
+],
+"surface": [
+64,
+48
+]
+},
+"mirror-replicate-clip": {
+"clip": [
+5,
+7,
+50,
+40
+],
+"dest": [
+63,
+0,
+-64,
+48
+],
+"rect": [
+0,
+0,
+16,
+12
+],
+"sha256": "669050a33ca245b71a2c6354991012cf4e168c4420e5db46f9eae55c2d129526",
 "source": [
 16,
 12

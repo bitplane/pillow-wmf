@@ -5,7 +5,7 @@ import pytest
 from PIL import Image
 
 from pillow_wmf import GDI, InvalidOperation, RasterContext, UnsupportedOperation, render
-from pillow_wmf.emf import Metafile, bitmaps, fixed, loader
+from pillow_wmf.emf import Metafile, fixed, loader, variable
 from pillow_wmf.objects import RegionGeometry
 from pillow_wmf.plugin import WmfImageFile
 
@@ -48,16 +48,12 @@ def test_pillow_opens_and_sizes_emf():
 
 
 def test_pillow_reports_unrenderable_emf_as_oserror():
-    # A clipped, mirrored HALFTONE stretch through the colour engine is not yet modelled.
-    info = struct.pack("<IiiHHIIiiII", 40, 4, -4, 1, 32, 0, 64, 0, 0, 0, 0)
-    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
-    mirrored = bitmaps.StretchDIBits(
-        0, 0, 0, 0, 11, 0, 0, 0, 4, 4, offset, 40, offset + 40, 64, 0, 0xCC0020, -12, 12, info + bytes(64)
-    )
-    adjustment = fixed.SetColorAdjustment(24, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 50, 0)
-    records = [fixed.SetStretchBltMode(4), adjustment, fixed.IntersectClipRect(2, 2, 10, 10), mirrored]
+    # FrameRgn under a rotating world transform is not yet modelled.
+    region = struct.pack("<4I4i", 32, 1, 1, 16, 2, 2, 10, 10) + struct.pack("<4i", 2, 2, 10, 10)
+    frame = variable.FrameRgn(bounds=(0, 0, 0, 0), brush=0x80000004, width=1, height=1, region=region)
+    records = [fixed.SetWorldTransform(0.8, 0.6, -0.6, 0.8, 0.0, 0.0), frame]
     data = Metafile.build(records, frame=UNIT_FRAME).to_bytes()
-    with Image.open(BytesIO(data)) as image, pytest.raises(OSError, match="colour engine"):
+    with Image.open(BytesIO(data)) as image, pytest.raises(OSError, match="rotating"):
         image.load()
     with Image.open(BytesIO(drawing(frame=(10, 10, 0, 0)))) as image, pytest.raises(OSError, match="reversed"):
         image.load()
