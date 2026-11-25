@@ -7,7 +7,10 @@ the grey x // 4 + 16 * (y // 4), so each grey appears at all sixteen
 positions of a 4x4 cell. Each ``grey-octets`` source is 64x64; pixel (x, y) is the grey
 base + x // 8 + 8 * (y // 8), at every position of an 8x8 cell. Each
 ``grey-sixteens`` source is 128x128; pixel (x, y) is the grey
-base + x // 16 + 8 * (y // 16), at every position of a 16x16 cell. The ``grey-cells`` source is 256x256; pixel
+base + x // 16 + 8 * (y // 16), at every position of a 16x16 cell. Each
+``grey-tiles`` source is 512x512 with 16 greys, base + x // 128 +
+4 * (y // 128), few enough to be replicated; only their red channel is
+printed. The ``grey-cells`` source is 256x256; pixel
 (x, y) is the grey x // 16 + 16 * (y // 16), at every position of a 16x16
 cell. Each case selects a COLORADJUSTMENT, stretches its
 source four times (or the factor after ``-x`` in the case name) with StretchDIBits in HALFTONE mode, and prints the
@@ -85,7 +88,12 @@ def grey_sixteens(base):
     return lambda: [(v, v, v) for y in range(128) for x in range(128) for v in [base + x // 16 + 8 * (y // 16)]]
 
 
+def grey_tiles(base):
+    return lambda: [(v, v, v) for y in range(512) for x in range(512) for v in [base + x // 128 + 4 * (y // 128)]]
+
+
 SOURCES = {"colours": (32, colours), "greys": (64, greys), "grey-cells": (256, grey_cells)}
+SOURCES |= {f"grey-tiles{base}": (512, grey_tiles(base)) for base in range(0, 256, 16)}
 SOURCES |= {f"grey-sixteens{base}": (128, grey_sixteens(base)) for base in (0, 64, 128, 192)}
 SOURCES |= {f"grey-octets{base}": (64, grey_octets(base)) for base in (0, 64, 128, 192)}
 
@@ -100,6 +108,8 @@ def cases():
     ):
         yield "greys", f"greys-{name}", values
     yield "grey-cells", "grey-cells-colorfulness1", NEUTRAL | dict(colorfulness=1)
+    for base in range(0, 256, 16):
+        yield f"grey-tiles{base}", f"grey-tiles{base}-colorfulness1-x2", NEUTRAL | dict(colorfulness=1)
     for base in (0, 64, 128, 192):
         yield f"grey-sixteens{base}", f"grey-sixteens{base}-colorfulness1", NEUTRAL | dict(colorfulness=1)
     for base in (0, 64, 128, 192):
@@ -161,6 +171,10 @@ def main():
             b, g, r = pixel(left + scale // 2, top + scale // 2)
             centres.append(f"{r:02x}{g:02x}{b:02x}")
         print(f"case {name} applied={applied} mixed={mixed} {values}")
+        if source_name.startswith("grey-tiles"):
+            # Greys only: the red channel, two hex digits per pixel.
+            print("  red " + "".join(centre[:2] for centre in centres))
+            continue
         print("  " + " ".join(centres))
         if mixed:
             # 64x64 destination pixels from the middle, row by row.
