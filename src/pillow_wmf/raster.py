@@ -930,6 +930,28 @@ class RasterContext(ExecutionContext[DrawingState]):
                 transfer.bitmap, alpha, transfer.horizontal, transfer.vertical, constant, alpha_channel
             )
 
+    def _prepare_gradient_fill(self, a):
+        size = {0: 2, 1: 2, 2: 3}.get(a["mode"])
+        if size is None:
+            raise InvalidOperation(f"Gradient mode {a['mode']}")
+        for vertex in a["vertices"]:
+            if len(vertex) != 6 or not all(0 <= channel <= 0xFFFF for channel in vertex[2:]):
+                raise InvalidOperation("TRIVERTEX needs a position and four 16-bit channels")
+        for mesh in a["meshes"]:
+            if len(mesh) != size or not all(0 <= index < len(a["vertices"]) for index in mesh):
+                raise InvalidOperation("Gradient mesh index out of range")
+
+    def _apply_gradient_fill(self, call, prepared, result):
+        a = call.kwargs
+        vertices = tuple((*self._point(x, y), red, green, blue) for x, y, red, green, blue, _ in a["vertices"])
+        painter = self._painter()
+        for mesh in a["meshes"]:
+            corners = tuple(vertices[index] for index in mesh)
+            if a["mode"] == 2:
+                painter.gradient_triangle(corners)
+            else:
+                painter.gradient_rectangle(corners, vertical=a["mode"] == 1)
+
     def _prepare_mask_blt(self, a):
         """MAKEROP4 packs the background ROP3's table in the high byte."""
         foreground = a["rop"] & 0x00FFFFFF

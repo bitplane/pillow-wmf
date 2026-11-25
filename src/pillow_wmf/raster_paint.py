@@ -1,7 +1,9 @@
 """Pixel painting against a surface and explicitly supplied drawing state."""
 
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from functools import cached_property
+from math import ceil, floor
 
 from .bitmap import DIBLayout
 from .constants import (
@@ -280,6 +282,70 @@ class RasterPainter:
         # Geometric pens have no style gaps; their footprint is one set.
         for x, y in self._stroke_pixels((path,), miter=miter):
             self.pen_pixel(x, y)
+
+    def gradient_rectangle(self, corners, *, vertical: bool) -> None:
+        """Shade a device rectangle between two corner colours along one axis.
+
+        Each 16-bit channel advances by a floored 16.16 step per pixel from
+        the leading edge, and the top 8 bits are kept.
+        """
+        first, second = corners
+        axis = 1 if vertical else 0
+        if first[axis] > second[axis]:
+            first, second = second, first
+        left, right = sorted((first[0], second[0]))
+        top, bottom = sorted((first[1], second[1]))
+        start, length = first[axis], second[axis] - first[axis]
+        if not length or left == right or top == bottom:
+            return
+        # A 16.16 per-pixel step, floored, accumulated from the leading colour.
+        steps = tuple(((second[2 + c] - first[2 + c]) << 16) // length for c in range(3))
+        for position in range(top, bottom) if vertical else range(left, right):
+            offset = position - start
+            color = tuple(((first[2 + c] << 16) + offset * steps[c]) >> 24 for c in range(3))
+            if vertical:
+                self.span(position, left, right, color, operation=R2_COPYPEN)
+            else:
+                for y in range(top, bottom):
+                    self.pixel(position, y, color, operation=R2_COPYPEN)
+
+    def gradient_triangle(self, corners) -> None:
+        """Shade a device triangle by the plane through its corner colours.
+
+        Rows run from the top vertex to the row before the bottom one; each
+        covers the columns from the ceiling of the left edge to before the
+        ceiling of the right edge. Each 16-bit channel of the exact plane
+        value is rounded to the nearest unit before its top 8 bits are kept.
+        """
+        (ax, ay), (bx, by), (cx, cy) = (corner[:2] for corner in corners)
+        det = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+        if not det:
+            return
+        edges = [(corners[i], corners[(i + 1) % 3]) for i in range(3)]
+        top, bottom = min(ay, by, cy), max(ay, by, cy)
+        for y in range(max(top, 0), min(bottom, self._height)):
+            crossings = [
+                Fraction(p[0]) + Fraction((q[0] - p[0]) * (y - p[1]), q[1] - p[1])
+                for p, q in edges
+                if min(p[1], q[1]) <= y <= max(p[1], q[1]) and p[1] != q[1]
+            ]
+            left, right = ceil(min(crossings)), ceil(max(crossings))
+            for x in range(max(left, 0), min(right, self._width)):
+                # Barycentric weights of the second and third corners, over det.
+                second = (x - ax) * (cy - ay) - (y - ay) * (cx - ax)
+                third = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+                first = det - second - third
+                color = tuple(
+                    floor(
+                        Fraction(
+                            corners[0][2 + i] * first + corners[1][2 + i] * second + corners[2][2 + i] * third, det
+                        )
+                        + Fraction(1, 2)
+                    )
+                    >> 8
+                    for i in range(3)
+                )
+                self.pixel(x, y, color, operation=R2_COPYPEN)
 
     def pen_pixel(self, x: int, y: int) -> None:
         """Paint one pixel of a geometric pen footprint, through its brush if any."""

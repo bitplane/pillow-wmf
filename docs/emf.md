@@ -152,7 +152,7 @@ the codec and reference columns against the code and fixtures.
 | `ALPHABLEND` | typed | partial | yes | Constant and per-pixel alpha with nearest sampling; per-pixel alpha below full constant alpha is unreferenced. |
 | `SETLAYOUT` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
-| `GRADIENTFILL` | typed | no | yes |  |
+| `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; playback refuses them without it. |
 | `SETLINKEDUFIS` | typed | full | yes | No effect on shapes; font-limited. |
 | `SETTEXTJUSTIFICATION` | typed | full | no | Text is font-limited. |
 | `COLORMATCHTOTARGETW` | typed | no | yes | The fixture record stops native playback; its validity rules are unknown. |
@@ -193,10 +193,26 @@ point:
   tiled from the brush origin like any brush; a DIB pattern pen's LOGBRUSH
   colour is its colour usage.
 
+## Gradient fills
+
+`GradientFill` maps each vertex to a whole device pixel and writes inside the
+clip region without applying ROP2 (the ROP2 interaction is unverified):
+
+- Rectangles shade from the corner nearer the leading edge, whichever index
+  holds it. Each 16-bit channel advances by a floored 16.16 step per pixel
+  and keeps its top 8 bits. The far column or row is not drawn.
+- Triangles cover rows from the top vertex to the row before the bottom
+  vertex; each row runs from the ceiling of its left edge crossing to before
+  the ceiling of its right one. A pixel's colour is the exact plane through
+  the corner colours, rounded to a 16-bit unit, then its top 8 bits.
+
 ## Playback behaviours not yet modelled
 
 - Tie rounding of the geometric pen perpendicular: about one direction in
   twenty, at exact half-pixel ties, snaps the other way natively.
+- A triangle gradient's flat top row: native colours along a horizontal top
+  edge fall just below exact 8-bit boundaries, one unit lower than the
+  rounded plane.
 
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.

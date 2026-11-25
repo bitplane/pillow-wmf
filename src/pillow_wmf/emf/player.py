@@ -157,6 +157,12 @@ def _transparent_blt(record):
     }
 
 
+def _gradient_fill(record):
+    if record.padding is not None and len(record.padding) != record.reserved:
+        raise Unsupported("Rectangle gradients without reserved mesh space stop native playback")
+    return "gradient_fill", {"mode": record.mode, "vertices": record.vertices, "meshes": record.shapes}
+
+
 def _alpha_blend(record):
     _identity_source(record)
     return "alpha_blend", {
@@ -400,6 +406,7 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.TransparentBlt: _transparent_blt,
     bitmaps.MaskBlt: _mask_blt,
     bitmaps.AlphaBlend: _alpha_blend,
+    variable.GradientFill: _gradient_fill,
     bitmaps.CreateMonoBrush: _mono_brush,
     bitmaps.CreateDIBPatternBrushPt: lambda r: (
         "create_dib_pattern_brush",

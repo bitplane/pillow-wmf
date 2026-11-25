@@ -186,6 +186,19 @@ class GDI:
         """Combine the clip with the path's interior: RGN_AND, OR, XOR, DIFF or COPY (1-5)."""
         return self.invoke(Call.make("select_clip_path", mode=mode))
 
+    def gradient_fill(self, mode: int, vertices, meshes) -> None:
+        """GradientFill: TRIVERTEX ``(x, y, red, green, blue, alpha)`` tuples with
+        16-bit channels, and index pairs (rectangle modes 0 and 1) or triples
+        (triangle mode 2)."""
+        return self.invoke(
+            Call.make(
+                "gradient_fill",
+                mode=mode,
+                vertices=tuple(tuple(vertex) for vertex in vertices),
+                meshes=tuple(tuple(mesh) for mesh in meshes),
+            )
+        )
+
     def set_miter_limit(self, limit: float) -> None:
         """Limit miter joins of geometric pens to ``limit`` times the pen width."""
         return self.invoke(Call.make("set_miter_limit", limit=limit))
