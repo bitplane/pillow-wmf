@@ -24,6 +24,7 @@ are written.
 
 import ctypes
 import platform
+import time
 from ctypes import wintypes
 
 from windows_wmf_render import bind, check, module_versions, reference_surface
@@ -150,10 +151,19 @@ def colour_cases():
     yield "everything", NEUTRAL | dict(illuminant=2, rg=12000, contrast=20, brightness=-10, colorfulness=40, tint=-60)
 
 
+BUDGET = 12 * 60  # seconds: later cases are skipped so the job can upload
+
+
 def main():
     print(f"Windows colour engine probe: {platform.platform()}")
     print(f"Module versions: {module_versions()}")
+    began = time.monotonic()
     for source_name, name, values in cases():
+        elapsed = time.monotonic() - began
+        if elapsed > BUDGET:
+            print(f"skipped {name} after {elapsed:.0f}s")
+            continue
+        print(f"start {name} at {elapsed:.1f}s", flush=True)
         side, make = SOURCES[source_name]
         scale = int(name.rsplit("-x", 1)[1]) if "-x" in name else SCALE
         size = side * scale
