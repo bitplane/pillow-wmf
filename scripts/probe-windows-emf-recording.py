@@ -739,6 +739,37 @@ def gap_scenarios():
 
     yield "null-selections", None, null_selections
 
+    def clip_path_shapes(dc):
+        # SelectClipPath of paths holding shapes and curves; each clipped
+        # polyline's bounds give the clip region's box.
+        shapes = (
+            lambda: ellipse(dc, 5, 5, 40, 30),
+            lambda: round_rect(dc, 6, 4, 41, 33, 12, 9),
+            lambda: pie(dc, 5, 5, 41, 31, 40, 5, 5, 6),
+            lambda: chord(dc, 3, 7, 44, 30, 2, 30, 44, 8),
+            lambda: (move_to(dc, 2, 2, None), arc_to(dc, 10, 10, 50, 35, 50, 20, 10, 12), line_to(dc, 2, 2)),
+            lambda: (move_to(dc, 30, 30, None), angle_arc(dc, 20, 20, 13, 30.0, 200.0)),
+            lambda: (move_to(dc, 4, 4, None), poly_bezier_to(dc, *points((60, 0), (0, 60), (50, 50)))),
+            lambda: (arc(dc, 5, 5, 45, 35, 45, 10, 5, 30), ellipse(dc, 30, 30, 45, 50)),
+        )
+        for shape in shapes:
+            save_dc(dc)
+            begin_path(dc)
+            shape()
+            end_path(dc)
+            select_clip_path(dc, 5)
+            polyline(dc, *points((0, 0), (90, 0), (90, 90), (0, 90), (0, 0)))
+            restore_dc(dc, -1)
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(0.9, 0.4, -0.4, 0.9, 20, 0)))
+        begin_path(dc)
+        ellipse(dc, 5, 5, 40, 30)
+        end_path(dc)
+        select_clip_path(dc, 5)
+        polyline(dc, *points((-50, -50), (90, -50), (90, 90), (-50, 90), (-50, -50)))
+
+    yield "clip-path-shapes", None, clip_path_shapes
+
 
 def records(data):
     position = 0
