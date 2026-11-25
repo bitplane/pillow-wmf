@@ -106,7 +106,7 @@ the codec and reference columns against the code and fixtures.
 | `WIDENPATH` | typed | partial | yes | Extended geometric pens other than round caps with round joins; other pens are refused. |
 | `SELECTCLIPPATH` | typed | full | yes | The path interior becomes a region by its fill coverage. |
 | `ABORTPATH` | typed | full | yes |  |
-| `COMMENT` | typed | partial | yes | Never draws; EMF+ is not rendered and embedded metafiles are not played. |
+| `COMMENT` | typed | partial | yes | GDIC multi-format comments play their embedded EMF; EMF+ is not rendered. |
 | `FILLRGN` | typed | full | yes | Region corners take the ceiling of their 28.4 position. |
 | `FRAMERGN` | typed | full | yes | As FILLRGN. |
 | `INVERTRGN` | typed | full | yes | As FILLRGN. |
@@ -206,6 +206,16 @@ clip region without applying ROP2 (the ROP2 interaction is unverified):
   the ceiling of its right one. A pixel's colour is the exact plane through
   the corner colours, rounded to a 16-bit unit, then its top 8 bits.
 
+## Embedded metafiles
+
+A GDIC multi-format comment (`GDICOMMENT_MULTIFORMATS`) plays the first of
+its formats with the enhanced-metafile signature, as `PlayEnhMetaFile` does:
+the embedded frame is fitted to the comment's output rectangle in the outer
+metafile's logical units, then mapped by the outer world transform. The
+embedded picture is not clipped to that rectangle. It plays inside a saved
+DC with its own object table, and the outer transform is set again after.
+Nesting stops after eight levels.
+
 ## Rotated and sheared transforms
 
 A world transform that mixes the axes needs an identity page mapping, as EMF
@@ -251,6 +261,6 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
   mask mirrored within the source rectangle; only fully mirrored cases have
   native references.
-- Metafiles embedded in comment records, and EMF+ (GDI+) drawing.
+- EMF+ (GDI+) drawing.
 - Text in `GM_ADVANCED`, Unicode text and stock fonts. Text output is
   font-limited and reported separately from exact comparisons.

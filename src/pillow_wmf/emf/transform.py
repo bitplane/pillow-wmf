@@ -152,8 +152,9 @@ class PlaybackTransform:
         fixed.ModifyWorldTransform,
     )
 
-    def __init__(self, header: Header, rect: tuple[int, int, int, int]):
-        self.fit = frame_fit(header, rect)
+    def __init__(self, header: Header, rect: tuple[int, int, int, int], *, parent: Transform | None = None):
+        # An embedded metafile's rectangle is in its parent's logical units.
+        self.fit = frame_fit(header, rect) if parent is None else multiply(frame_fit(header, rect), parent)
         device = ReferenceDevice(tuple(header.device), tuple(header.millimetres), dpi=None)
         self.page = MetafilePage(mode=MM_TEXT, window_extent=(1, 1), viewport_extent=(1, 1), device=device)
         self.world: Transform = IDENTITY_TRANSFORM

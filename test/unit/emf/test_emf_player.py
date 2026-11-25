@@ -519,3 +519,35 @@ def test_mutated_files_play_or_raise_playback_error():
             continue
         played += 1
     assert played > 100
+
+
+def multiformats(embedded: bytes, output=(0, 0, 100, 100), signature=0x464D4520) -> variable.Comment:
+    header = struct.pack("<II4iI", 0x43494447, 0x40000004, *output, 1)
+    return variable.Comment(header + struct.pack("<4I", signature, 0x00010000, len(embedded), 44) + embedded)
+
+
+def test_embedded_metafiles_play_into_their_output_rectangle():
+    inner = Metafile.build([fixed.Rectangle(0, 0, 100, 100)], frame=(0, 0, 2000, 2000)).to_bytes()
+    trace = TraceContext()
+    play(Metafile.build([multiformats(inner)], frame=UNIT_FRAME), trace, rect=(0, 0, 128, 128))
+    names = [call.name for call in trace.calls]
+    # The nested playback runs inside a saved DC and the parent's transform is
+    # set again afterwards.
+    assert names[names.index("save_dc") :] == [
+        "save_dc",
+        "set_graphics_mode",
+        "set_world_transform",
+        "rectangle",
+        "restore_dc",
+        "set_world_transform",
+    ]
+    nested = [call for call in trace.calls if call.name == "set_world_transform"][1].kwargs
+    # A 20 mm frame fitted to 100 logical units, under the 1:1 parent.
+    assert nested["m11"] == pytest.approx(100 / (2000 / 100 * 1024 / 271), rel=1e-3)
+
+
+def test_comments_without_an_enhanced_metafile_format_do_not_play():
+    inner = Metafile.build([fixed.Rectangle(0, 0, 100, 100)], frame=(0, 0, 2000, 2000)).to_bytes()
+    trace = TraceContext()
+    play(Metafile.build([multiformats(inner, signature=0)], frame=UNIT_FRAME), trace, rect=(0, 0, 128, 128))
+    assert "rectangle" not in [call.name for call in trace.calls]

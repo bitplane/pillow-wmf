@@ -22,7 +22,7 @@ from ..objects import BitmapData, EncodedText, FontRequest, GlyphIndices, Palett
 from ..playback import Omission as Omission
 from ..playback import Omissions, PlaybackError, SaveLevels
 from . import bitmaps, fixed, system, text, variable
-from .constants import CREATION_TYPES, RecordType
+from .constants import CREATION_TYPES, CommentIdentifier, RecordType
 from .file import Metafile
 from .objects import region_rectangles
 from .records import UnknownRecord, record_type
@@ -469,6 +469,31 @@ def emf_plus_dual(record: variable.Comment) -> bool | None:
     return bool(flags & EMFPLUS_DUAL) if kind == EMFPLUS_HEADER else None
 
 
+GDICOMMENT_MULTIFORMATS = 0x40000004
+ENHMETA_SIGNATURE = 0x464D4520
+# Embedded metafiles can embed others; native recursion has no such cap.
+MAX_EMBEDDED_DEPTH = 8
+
+
+def embedded_metafile(record: variable.Comment):
+    """The output rectangle and EMF bytes of a GDIC multi-format comment, or None.
+
+    The first format with the enhanced-metafile signature is used; offsets
+    count from the start of the comment data.
+    """
+    data = record.data
+    if len(data) < 28:
+        return None
+    identifier, kind, *output, count = struct.unpack_from("<II4iI", data)
+    if identifier != CommentIdentifier.PUBLIC or kind != GDICOMMENT_MULTIFORMATS:
+        return None
+    for index in range(min(count, (len(data) - 28) // 16)):
+        signature, _version, size, offset = struct.unpack_from("<4I", data, 28 + 16 * index)
+        if signature == ENHMETA_SIGNATURE and offset + size <= len(data):
+            return tuple(output), data[offset : offset + size]
+    return None
+
+
 def play(
     metafile: Metafile,
     backend: GDI,
@@ -477,6 +502,8 @@ def play(
     limits: Limits | None = None,
     rect: tuple[int, int, int, int] | None = None,
     comment: Callable[[int, variable.Comment], None] | None = None,
+    parent: tuple[float, float, float, float, float, float] | None = None,
+    depth: int = 0,
 ) -> tuple[Omission, ...]:
     """Play into a supplied context; return diagnostics for unsupported work.
 
@@ -485,6 +512,11 @@ def play(
     origin. The caller owns the backend's other initial state. ``comment``
     receives every EMR_COMMENT record with its index, for a front-end that
     interprets EMF+ or other comment payloads.
+
+    A GDIC multi-format comment carrying an enhanced metafile plays it as
+    PlayEnhMetaFile would: its frame is fitted to the comment's output
+    rectangle in this metafile's logical units, under the current world
+    transform (``parent``), inside a saved DC.
     """
     limits = limits if limits is not None else Limits()
     if metafile.header.handle_count > limits.max_objects or len(metafile.records) > limits.max_records:
@@ -495,7 +527,9 @@ def play(
     stock: dict[int, Handle] = {}
     omissions = Omissions(strict=strict)
     levels = SaveLevels()
-    transform = PlaybackTransform(metafile.header, rect if rect is not None else (0, 0, *natural_size(metafile.header)))
+    transform = PlaybackTransform(
+        metafile.header, rect if rect is not None else (0, 0, *natural_size(metafile.header)), parent=parent
+    )
 
     def invoke(index, kind, name, arguments):
         try:
@@ -574,6 +608,36 @@ def play(
             invoke(index, kind, name, {"region": region, **arguments})
             invoke(index, kind, "delete_object", {"handle": region})
 
+    def play_embedded(index, kind, output, data):
+        if depth >= MAX_EMBEDDED_DEPTH:
+            omissions.omit(index, kind, "Embedded metafiles nest too deeply")
+            return
+        try:
+            nested = Metafile.from_bytes(data, limits=limits)
+        except (FormatError, PlaybackError) as error:
+            omissions.omit(index, kind, f"Embedded metafile: {error}")
+            return
+        ok, saved = invoke(index, kind, "save_dc", {})
+        if not ok:
+            return
+        try:
+            inner = play(
+                nested,
+                backend,
+                strict=strict,
+                limits=limits,
+                rect=output,
+                comment=None,
+                parent=transform.matrix(),
+                depth=depth + 1,
+            )
+        except PlaybackError as error:
+            inner = (Omission(index, kind, f"Embedded metafile: {error}"),)
+        for omission in inner:
+            omissions.omit(index, kind, f"Embedded metafile: {omission.reason}")
+        invoke(index, kind, "restore_dc", {"saved_dc": -1})
+        set_transform(index, kind)
+
     # Attributed to the header record, which native playback starts from.
     invoke(-1, RecordType.HEADER, "set_graphics_mode", {"mode": GM_ADVANCED})
     set_transform(-1, RecordType.HEADER)
@@ -591,6 +655,9 @@ def play(
                 comment(index, record)
             if emf_plus_dual(record) is False:
                 omissions.omit(index, kind, "EMF+ drawing without a GDI fallback is not rendered")
+            embedded = embedded_metafile(record)
+            if embedded is not None:
+                play_embedded(index, kind, *embedded)
             continue
         if isinstance(record, fixed.SaveDC):
             if levels.depth >= limits.max_saved_states:
