@@ -83,7 +83,7 @@ the codec and reference columns against the code and fixtures.
 | `SETCOLORADJUSTMENT` | typed | partial | yes | Per-channel adjustments of scaled HALFTONE copies; colourfulness, tint and illuminants are refused. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
-| `OFFSETCLIPRGN` | typed | partial | yes | Offsets scale through the world transform; rounding ties are unverified. |
+| `OFFSETCLIPRGN` | typed | full | yes | Offsets scale through the world transform, ties rounding away from zero. |
 | `MOVETOEX` | typed | full | yes |  |
 | `SETMETARGN` | typed | full | yes |  |
 | `EXCLUDECLIPRECT` | typed | full | yes |  |
