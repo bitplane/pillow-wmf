@@ -381,6 +381,97 @@ def transparent_blt(d):
     d.add(bitmaps.TransparentBlt(**fields | {"x": d.u(64), "y": d.u(60), "width": 16, "height": 12}, data=data))
 
 
+def source_transforms(d):
+    """BitBlt and StretchBlt records whose source DC had a world transform.
+
+    The source rectangle is logical in the recorded source transform: scales
+    and mirrors stretch it; a rotation or shear is expected to fail.
+    """
+    transfer_background(d)
+    d.add(fixed.SetStretchBltMode(3))  # COLORONCOLOR
+    fields, data = source_fields(bitmaps.BitBlt, SOURCE)
+    blits = (
+        # (x, y, width, height, src_x, src_y, (m11, m12, m21, m22, dx, dy))
+        (4, 4, 32, 24, 0, 0, (0.5, 0, 0, 0.5, 0, 0)),
+        (44, 4, 8, 6, 0, 0, (2, 0, 0, 2, 0, 0)),
+        (60, 4, 10, 8, 0, 0, (1, 0, 0, 1, 4, 2)),
+        (76, 4, 10, 8, 3, 1, (1, 0, 0, 1, 2, 1)),
+        (92, 4, 16, 12, 0, 0, (-1, 0, 0, 1, 16, 0)),
+        (4, 36, 16, 12, 0, 0, (1, 0, 0, -1, 0, 12)),
+        (24, 36, 20, 8, 0, 0, (0.75, 0, 0, 1.5, 0, 0)),
+        (48, 36, 13, 9, 1, 1, (1.2, 0, 0, 1.25, 0.5, 0.4)),
+        (68, 36, 16, 12, 0, 0, (0.866, 0.5, -0.5, 0.866, 6, 0)),
+        (88, 36, 16, 12, 0, 0, (1, 0, 0.5, 1, 0, 0)),
+    )
+    for x, y, width, height, src_x, src_y, xform in blits:
+        place = {"x": d.u(x), "y": d.u(y), "width": d.u(width), "height": d.u(height), "src_x": src_x, "src_y": src_y}
+        transform = dict(zip(bitmaps.SOURCE_XFORM, xform, strict=True))
+        d.add(bitmaps.BitBlt(**fields | place | transform | {"rop": SRCCOPY}, data=data))
+    fields, data = source_fields(bitmaps.StretchBlt, SOURCE)
+    stretches = (
+        # (x, y, width, height, src_x, src_y, src_width, src_height, transform)
+        (4, 60, 48, 36, 0, 0, 16, 12, (0.5, 0, 0, 0.5, 0, 0)),
+        (56, 60, 16, 12, 0, 0, 8, 6, (2, 0, 0, 2, 0, 0)),
+        (76, 60, 24, 18, 2, 2, 12, 8, (1, 0, 0, 1, -1, -1)),
+        (104, 60, 20, 16, 0, 0, 16, 12, (-1, 0, 0, -1, 16, 12)),
+        (4, 100, 30, 20, 0, 0, 10, 10, (1.5, 0, 0, 1.2, 0, 0)),
+        (40, 100, 24, 18, 0, 0, 16, 12, (0.866, 0.5, -0.5, 0.866, 6, 0)),
+    )
+    for x, y, width, height, src_x, src_y, src_width, src_height, xform in stretches:
+        place = {"x": d.u(x), "y": d.u(y), "width": d.u(width), "height": d.u(height), "src_x": src_x, "src_y": src_y}
+        place |= {"src_width": src_width, "src_height": src_height}
+        transform = dict(zip(bitmaps.SOURCE_XFORM, xform, strict=True))
+        d.add(bitmaps.StretchBlt(**fields | place | transform | {"rop": SRCCOPY}, data=data))
+    # A transformed source with a ternary operation.
+    place = {"x": d.u(70), "y": d.u(100), "width": d.u(32), "height": d.u(24), "rop": SRCINVERT}
+    d.add(
+        bitmaps.StretchBlt(
+            **fields | place | {"src_m11": 0.5, "src_m22": 0.5, "src_width": 32, "src_height": 24}, data=data
+        )
+    )
+
+
+def palette_dib(depth, width, height, indexes, sample):
+    """A bottom-up DIB whose colour table is WORD logical palette indexes."""
+    stride = ((width * depth + 31) // 32) * 4
+    header = struct.pack("<IiiHHIIiiII", 40, width, height, 1, depth, 0, stride * height, 0, 0, len(indexes), 0)
+    rows = []
+    for y in range(height - 1, -1, -1):
+        value = 0
+        for x in range(width):
+            value |= sample(x, y) << (stride * 8 - depth * (x + 1))
+        rows.append(value.to_bytes(stride, "big"))
+    return header + struct.pack(f"<{len(indexes)}H", *indexes), b"".join(rows)
+
+
+def palette_sources(d):
+    """Transfers whose source colour table indexes the selected logical palette."""
+    transfer_background(d)
+    entries = ((255, 0, 0, 0), (0, 160, 0, 0), (0, 0, 255, 0), (255, 255, 0, 0), (128, 0, 128, 0))
+    d.add(variable.CreatePalette(1, entries), fixed.SelectPalette(1), fixed.RealizePalette())
+    sources = (
+        palette_dib(8, 8, 6, (4, 3, 2, 1, 0, 9), lambda x, y: (x + y) % 6),
+        palette_dib(4, 8, 6, (1, 2, 7, 300), lambda x, y: (x // 2 + y) % 4),
+        palette_dib(1, 8, 6, (2, 3), lambda x, y: (x + y // 2) % 2),
+        palette_dib(8, 8, 6, tuple(range(8)), lambda x, y: (x * 3 + y) % 8),
+    )
+
+    def transfers(top):
+        for column, source in enumerate(sources):
+            fields, data = source_fields(bitmaps.BitBlt, source)
+            place = {"x": d.u(4 + 30 * column), "y": d.u(top), "width": 8, "height": 6, "usage": DIB_PAL_COLORS}
+            d.add(bitmaps.BitBlt(**fields | place | {"rop": SRCCOPY}, data=data))
+            fields, data = source_fields(bitmaps.StretchBlt, source)
+            place |= {"y": d.u(top + 10), "width": d.u(24), "height": d.u(18), "src_width": 8, "src_height": 6}
+            d.add(bitmaps.StretchBlt(**fields | place | {"rop": SRCCOPY}, data=data))
+
+    transfers(4)
+    d.add(fixed.SelectPalette(DEFAULT_PALETTE), fixed.RealizePalette())
+    transfers(40)
+    d.add(fixed.SelectPalette(1), variable.SetPaletteEntries(1, 0, ((0, 0, 0, 0), (255, 255, 255, 0))))
+    transfers(76)
+
+
 def gradients(d):
     vertices = ((d.u(4), d.u(4), 0xFF00, 0, 0, 0), (d.u(60), d.u(40), 0, 0, 0xFF00, 0))
     d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
@@ -552,6 +643,8 @@ FEATURES = (
     ("alphablend", alpha_blend(True), (128, 51)),
     ("alphablend-constant", alpha_blend(False), (128,)),
     ("transparentblt", transparent_blt, (128, 51)),
+    ("source-transforms", source_transforms, (128, 51)),
+    ("palette-sources", palette_sources, (128,)),
     ("gradientfill", gradients, (128, 51)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
