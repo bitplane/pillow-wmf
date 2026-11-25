@@ -73,6 +73,7 @@ on:
           - gradient
           - rotated-paths
           - rotated-pens
+          - rotated-strokes
   push:
     branches: [master]
     paths:

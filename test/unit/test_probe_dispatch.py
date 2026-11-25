@@ -161,6 +161,7 @@ EXPECTED = {
     "gradient": ("scripts/probe-windows-gradient.py", "gradient", True, True),
     "rotated-paths": ("scripts/probe-windows-rotated-paths.py", "rotated-paths", True, True),
     "rotated-pens": ("scripts/probe-windows-rotated-pens.py", "rotated-pens", True, True),
+    "rotated-strokes": ("scripts/probe-windows-rotated-strokes.py", "rotated-strokes", True, True),
 }
 
 

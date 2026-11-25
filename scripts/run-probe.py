@@ -124,6 +124,7 @@ PROBES = {
     "gradient": Probe("probe-windows-gradient.py", output="gradient"),
     "rotated-paths": Probe("probe-windows-rotated-paths.py", output="rotated-paths"),
     "rotated-pens": Probe("probe-windows-rotated-pens.py", output="rotated-pens"),
+    "rotated-strokes": Probe("probe-windows-rotated-strokes.py", output="rotated-strokes"),
 }
 
 
