@@ -172,6 +172,7 @@ EXPECTED = {
     "rotated-wide-pens": ("scripts/probe-windows-rotated-wide-pens.py", "rotated-wide-pens", True, True),
     "rotated-pen-styles": ("scripts/probe-windows-rotated-pen-styles.py", "rotated-pen-styles", True, True),
     "pen-style-ends": ("scripts/probe-windows-pen-style-ends.py", "pen-style-ends", True, True),
+    "angle-arc-turns": ("scripts/probe-windows-angle-arc-turns.py", "angle-arc-turns", True, True),
 }
 
 

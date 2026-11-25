@@ -72,7 +72,7 @@ the codec and reference columns against the code and fixtures.
 | `SCALEWINDOWEXTEX` | typed | partial | no | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
-| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover shapes, lines and SRCCOPY DIB transfers; see below. |
+| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing except text and `FrameRgn`; see below. |
 | `MODIFYWORLDTRANSFORM` | typed | partial | yes | As SETWORLDTRANSFORM. |
 | `SELECTOBJECT` | typed | partial | yes | Stock brushes, pens and palette; stock fonts need the font work. |
 | `CREATEPEN` | typed | full | yes |  |

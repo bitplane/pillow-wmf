@@ -84,6 +84,7 @@ on:
           - rotated-wide-pens
           - rotated-pen-styles
           - pen-style-ends
+          - angle-arc-turns
   push:
     branches: [master]
     paths:
