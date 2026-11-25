@@ -24,6 +24,8 @@ are written.
 
 import ctypes
 import platform
+import subprocess
+import sys
 import time
 from ctypes import wintypes
 
@@ -109,6 +111,8 @@ SOURCES |= {f"grey-octets{base}": (64, grey_octets(base)) for base in (0, 64, 12
 
 
 def cases():
+    for base in range(0, 256, 16):
+        yield f"grey-tiles{base}", f"grey-tiles{base}-colorfulness1-x2", NEUTRAL | dict(colorfulness=1)
     yield from (("colours", name, values) for name, values in colour_cases())
     for name, values in (
         ("colorfulness1", NEUTRAL | dict(colorfulness=1)),
@@ -118,8 +122,6 @@ def cases():
     ):
         yield "greys", f"greys-{name}", values
     yield "grey-cells", "grey-cells-colorfulness1", NEUTRAL | dict(colorfulness=1)
-    for base in range(0, 256, 16):
-        yield f"grey-tiles{base}", f"grey-tiles{base}-colorfulness1-x2", NEUTRAL | dict(colorfulness=1)
     for base in (0, 64, 128, 192):
         yield f"grey-sixteens{base}", f"grey-sixteens{base}-colorfulness1", NEUTRAL | dict(colorfulness=1)
     for base in (0, 64, 128, 192):
@@ -151,67 +153,82 @@ def colour_cases():
     yield "everything", NEUTRAL | dict(illuminant=2, rg=12000, contrast=20, brightness=-10, colorfulness=40, tint=-60)
 
 
-BUDGET = 12 * 60  # seconds: later cases are skipped so the job can upload
+CASE_TIMEOUT = 60  # seconds for each grey-tiles case, run in a child process
 
 
 def main():
+    if sys.argv[1:2] == ["--case"]:
+        # A child process for one case, so a hung native call can be timed out.
+        run_case(*next(case for case in cases() if case[1] == sys.argv[2]))
+        return
     print(f"Windows colour engine probe: {platform.platform()}")
-    print(f"Module versions: {module_versions()}")
-    began = time.monotonic()
+    print(f"Module versions: {module_versions()}", flush=True)
     for source_name, name, values in cases():
-        elapsed = time.monotonic() - began
-        if elapsed > BUDGET:
-            print(f"skipped {name} after {elapsed:.0f}s")
+        if not source_name.startswith("grey-tiles"):
+            run_case(source_name, name, values)
             continue
-        print(f"start {name} at {elapsed:.1f}s", flush=True)
-        side, make = SOURCES[source_name]
-        scale = int(name.rsplit("-x", 1)[1]) if "-x" in name else SCALE
-        size = side * scale
-        tiles = source_name.startswith("grey-tiles")
-        if tiles:
-            pixels = tile_pixels(int(source_name[len("grey-tiles") :]))
-        else:
-            pixels = b"".join(bytes((b, g, r, 0)) for r, g, b in make())
-        header = BitmapInfoHeader(40, side, -side, 1, 32, 0, len(pixels), 0, 0, 0, 0)
-        with reference_surface(size, size) as (gdi, dc, bits):
-            ptr, integer = ctypes.c_void_p, ctypes.c_int
-            bind(gdi, "SetColorAdjustment", wintypes.BOOL, ptr, ctypes.POINTER(ColorAdjustment))
-            bind(gdi, "SetStretchBltMode", integer, ptr, integer)
-            bind(gdi, "StretchDIBits", integer, ptr, *(integer,) * 8, ptr, ptr, wintypes.UINT, wintypes.DWORD)
-            check(gdi.SetStretchBltMode(dc, 4), "SetStretchBltMode")
-            applied = gdi.SetColorAdjustment(dc, ctypes.byref(ColorAdjustment(24, **values)))
-            gdi.StretchDIBits(dc, 0, 0, size, size, 0, 0, side, side, pixels, ctypes.byref(header), 0, 0x00CC0020)
-            data = ctypes.string_at(bits, size * size * 4)
-        if tiles:
-            # Greys only: the red channel at each block centre, two hex digits
-            # per source pixel; blocks are not checked for mixing.
-            centre = scale // 2
-            red = b"".join(
-                data[((y * scale + centre) * size + centre) * 4 + 2 : ((y * scale + centre + 1) * size) * 4 : scale * 4]
-                for y in range(side)
+        began = time.monotonic()
+        try:
+            child = subprocess.run(
+                [sys.executable, __file__, "--case", name], capture_output=True, text=True, timeout=CASE_TIMEOUT
             )
-            print(f"case {name} applied={applied} {values}")
-            print("  red " + red.hex())
-            continue
+            print(child.stdout, end="")
+            if child.returncode:
+                print(f"failed {name}: {child.stderr.strip()[-300:]}")
+        except subprocess.TimeoutExpired:
+            print(f"timeout {name} after {time.monotonic() - began:.0f}s")
+        sys.stdout.flush()
 
-        def pixel(x, y, data=data, size=size):
-            return data[(y * size + x) * 4 : (y * size + x) * 4 + 3]
 
-        centres, mixed = [], 0
-        for index in range(side * side):
-            left, top = (index % side) * scale, (index // side) * scale
-            block = {pixel(left + i, top + j) for i in range(scale) for j in range(scale)}
-            mixed += len(block) > 1
-            b, g, r = pixel(left + scale // 2, top + scale // 2)
-            centres.append(f"{r:02x}{g:02x}{b:02x}")
-        print(f"case {name} applied={applied} mixed={mixed} {values}")
-        print("  " + " ".join(centres))
-        if mixed:
-            # 64x64 destination pixels from the middle, row by row.
-            middle = size // 2
-            for y in range(middle, min(middle + 64, size)):
-                row = (pixel(x, y) for x in range(middle, min(middle + 64, size)))
-                print("  row " + " ".join(f"{r:02x}{g:02x}{b:02x}" for b, g, r in row))
+def run_case(source_name, name, values):
+    side, make = SOURCES[source_name]
+    scale = int(name.rsplit("-x", 1)[1]) if "-x" in name else SCALE
+    size = side * scale
+    tiles = source_name.startswith("grey-tiles")
+    if tiles:
+        pixels = tile_pixels(int(source_name[len("grey-tiles") :]))
+    else:
+        pixels = b"".join(bytes((b, g, r, 0)) for r, g, b in make())
+    header = BitmapInfoHeader(40, side, -side, 1, 32, 0, len(pixels), 0, 0, 0, 0)
+    with reference_surface(size, size) as (gdi, dc, bits):
+        ptr, integer = ctypes.c_void_p, ctypes.c_int
+        bind(gdi, "SetColorAdjustment", wintypes.BOOL, ptr, ctypes.POINTER(ColorAdjustment))
+        bind(gdi, "SetStretchBltMode", integer, ptr, integer)
+        bind(gdi, "StretchDIBits", integer, ptr, *(integer,) * 8, ptr, ptr, wintypes.UINT, wintypes.DWORD)
+        check(gdi.SetStretchBltMode(dc, 4), "SetStretchBltMode")
+        applied = gdi.SetColorAdjustment(dc, ctypes.byref(ColorAdjustment(24, **values)))
+        gdi.StretchDIBits(dc, 0, 0, size, size, 0, 0, side, side, pixels, ctypes.byref(header), 0, 0x00CC0020)
+        data = ctypes.string_at(bits, size * size * 4)
+    if tiles:
+        # Greys only: the red channel at each block centre, two hex digits
+        # per source pixel; blocks are not checked for mixing.
+        centre = scale // 2
+        red = b"".join(
+            data[((y * scale + centre) * size + centre) * 4 + 2 : ((y * scale + centre + 1) * size) * 4 : scale * 4]
+            for y in range(side)
+        )
+        print(f"case {name} applied={applied} {values}")
+        print("  red " + red.hex())
+        return
+
+    def pixel(x, y, data=data, size=size):
+        return data[(y * size + x) * 4 : (y * size + x) * 4 + 3]
+
+    centres, mixed = [], 0
+    for index in range(side * side):
+        left, top = (index % side) * scale, (index // side) * scale
+        block = {pixel(left + i, top + j) for i in range(scale) for j in range(scale)}
+        mixed += len(block) > 1
+        b, g, r = pixel(left + scale // 2, top + scale // 2)
+        centres.append(f"{r:02x}{g:02x}{b:02x}")
+    print(f"case {name} applied={applied} mixed={mixed} {values}")
+    print("  " + " ".join(centres))
+    if mixed:
+        # 64x64 destination pixels from the middle, row by row.
+        middle = size // 2
+        for y in range(middle, min(middle + 64, size)):
+            row = (pixel(x, y) for x in range(middle, min(middle + 64, size)))
+            print("  row " + " ".join(f"{r:02x}{g:02x}{b:02x}" for b, g, r in row))
 
 
 if __name__ == "__main__":
