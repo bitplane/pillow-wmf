@@ -131,3 +131,29 @@ def test_extended_pens_that_cannot_be_created(pen, error):
     with pytest.raises(Exception) as caught:
         RasterContext(4, 4).ext_create_pen(**pen)
     assert type(caught.value).__name__ == error
+
+
+def widened(style, width=5):
+    from pillow_wmf.raster import RasterContext
+
+    context = RasterContext(32, 32, trace_calls=False)
+    context.select_object(context.ext_create_pen(style=style, width=width, color=0))
+    context.begin_path()
+    context.polyline(((6, 6), (18, 28), (30, 6)))
+    context.end_path()
+    context.widen_path()
+    return context
+
+
+def test_widen_path_replaces_the_figure_with_its_outline():
+    context = widened(0x00010000 | 0x0200 | 0x1000)
+    ((commands, closed),) = context._state.path
+    vertices = [command[0] for command in commands]
+    assert closed and vertices == outline(shape(5, CAP_FLAT, JOIN_BEVEL), figure((6, 6), (18, 28), (30, 6)), False)[0]
+
+
+def test_widen_path_refuses_pens_without_outlines():
+    from pillow_wmf.gdi import UnsupportedOperation
+
+    with pytest.raises(UnsupportedOperation):
+        widened(0x00010000)  # Round caps and joins.

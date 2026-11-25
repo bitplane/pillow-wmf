@@ -103,7 +103,7 @@ the codec and reference columns against the code and fixtures.
 | `STROKEANDFILLPATH` | typed | full | yes |  |
 | `STROKEPATH` | typed | full | yes |  |
 | `FLATTENPATH` | typed | full | yes |  |
-| `WIDENPATH` | typed | no | yes | Needs geometric stroke outlines. |
+| `WIDENPATH` | typed | partial | yes | Extended geometric pens other than round caps with round joins; other pens are refused. |
 | `SELECTCLIPPATH` | typed | full | yes | The path interior becomes a region by its fill coverage. |
 | `ABORTPATH` | typed | full | yes |  |
 | `COMMENT` | typed | partial | yes | Never draws; EMF+ is not rendered and embedded metafiles are not played. |
@@ -185,6 +185,10 @@ point:
 - Cosmetic alternate and user styles step through device pixels, user style
   entries in units of three pixels like the predefined styles. Cosmetic pens
   are always one pixel wide and solid.
+- `WidenPath` flattens each figure and replaces it with these outlines as
+  closed polygon figures, one per dash for patterned pens. Round caps with
+  round joins, and pens that are not extended geometric pens, have no outline
+  construction and are refused.
 - Hatched and DIB pattern pens fill the widened footprint with the brush,
   tiled from the brush origin like any brush; a DIB pattern pen's LOGBRUSH
   colour is its colour usage.

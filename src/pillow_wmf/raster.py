@@ -1434,10 +1434,17 @@ class RasterContext(ExecutionContext[DrawingState]):
         self._state.path = tuple(figures)
 
     def _prepare_widen_path(self, a):
-        raise UnsupportedOperation("widen_path: geometric stroke outlines are not yet supported")
+        if self._completed_path() and self._painter().pen_shape is None:
+            raise UnsupportedOperation("widen_path: only extended geometric pens other than round caps and joins")
 
     def _apply_widen_path(self, call, prepared, result):
-        raise AssertionError("widen_path is refused during preparation")
+        if not self._completed_path():
+            return
+        # Each figure, flattened, becomes the closed outlines its pen strokes.
+        outlines = self._painter().widened_outlines(self._path_figures(close=False))
+        self._state.path = tuple(
+            (DevicePath.polyline(outline, closed=True).commands, True) for outline in outlines if outline
+        )
 
     def _prepare_select_clip_path(self, a):
         if a["mode"] not in range(1, 6):

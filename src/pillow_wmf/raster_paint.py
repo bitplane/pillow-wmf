@@ -360,17 +360,32 @@ class RasterPainter:
         if self.state.pen.style == PS_NULL:
             return set()
         pixels: set[tuple[int, int]] = set()
-        pen = self.state.pen
         for path in paths:
-            if pen.geometric and pen.pattern:
-                # Each dash is an open figure with the pen's caps and joins.
-                scale = self.state.mapping.linear_scale
-                shorten = pen.width if pen.cap != CAP_FLAT else 0
-                for dash in dash_figures(path.segments, pen.pattern, scale, shorten=shorten):
-                    pixels.update(self._figure_pixels(dash, False, miter=miter))
-            else:
-                pixels.update(self._figure_pixels(path.segments, path.closed, miter=miter))
+            for segments, closed in self._pen_figures(path):
+                pixels.update(self._figure_pixels(segments, closed, miter=miter))
         return pixels
+
+    def _pen_figures(self, path: DevicePath):
+        """The figures a pen strokes: each dash of a patterned geometric pen, or the path."""
+        pen = self.state.pen
+        if pen.geometric and pen.pattern:
+            # Each dash is an open figure with the pen's caps and joins.
+            scale = self.state.mapping.linear_scale
+            shorten = pen.width if pen.cap != CAP_FLAT else 0
+            for dash in dash_figures(path.segments, pen.pattern, scale, shorten=shorten):
+                yield dash, False
+        else:
+            yield path.segments, path.closed
+
+    def widened_outlines(self, paths: tuple[DevicePath, ...]) -> list[Polygon] | None:
+        """WidenPath's closed outlines, or None for pens without outline construction."""
+        if self.pen_shape is None:
+            return None
+        outlines: list[Polygon] = []
+        for path in paths:
+            for segments, closed in self._pen_figures(path.flattened()):
+                outlines.extend(widen_outline(self.pen_shape, segments, closed))
+        return outlines
 
     def _figure_pixels(self, segments, closed, *, miter=False):
         if self.pen_shape is not None:
