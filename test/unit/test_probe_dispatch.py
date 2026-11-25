@@ -175,6 +175,7 @@ EXPECTED = {
     "angle-arc-turns": ("scripts/probe-windows-angle-arc-turns.py", "angle-arc-turns", True, True),
     "cosmetic-widen": ("scripts/probe-windows-cosmetic-widen.py", "cosmetic-widen", True, True),
     "color-engine": ("scripts/probe-windows-color-engine.py", "color-engine", True, True),
+    "module-ids": ("scripts/probe-windows-module-ids.py", "module-ids", True, True),
 }
 
 

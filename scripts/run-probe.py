@@ -138,6 +138,7 @@ PROBES = {
     "angle-arc-turns": Probe("probe-windows-angle-arc-turns.py", output="angle-arc-turns"),
     "cosmetic-widen": Probe("probe-windows-cosmetic-widen.py", output="cosmetic-widen"),
     "color-engine": Probe("probe-windows-color-engine.py", output="color-engine"),
+    "module-ids": Probe("probe-windows-module-ids.py", output="module-ids"),
 }
 
 

@@ -87,6 +87,7 @@ on:
           - angle-arc-turns
           - cosmetic-widen
           - color-engine
+          - module-ids
   push:
     branches: [master]
     paths:
