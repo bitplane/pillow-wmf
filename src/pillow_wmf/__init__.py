@@ -1,4 +1,4 @@
-"""WMF codec, GDI recording and Pillow loading with an RGB raster backend."""
+"""WMF and EMF codecs, GDI recording and Pillow loading with an RGB raster backend."""
 
 from .binary import ResourceLimitError
 from .gdi import GDI, Call, Handle, InvalidOperation, PreparedCall, UnsupportedOperation
