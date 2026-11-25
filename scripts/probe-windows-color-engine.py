@@ -7,7 +7,7 @@ the grey x // 4 + 16 * (y // 4), so each grey appears at all sixteen
 positions of a 4x4 cell. The ``grey-cells`` source is 256x256; pixel
 (x, y) is the grey x // 16 + 16 * (y // 16), at every position of a 16x16
 cell. Each case selects a COLORADJUSTMENT, stretches its
-source four times with StretchDIBits in HALFTONE mode, and prints the
+source four times (or the factor after ``-x`` in the case name) with StretchDIBits in HALFTONE mode, and prints the
 colour at each block's centre, in source order, as RRGGBB hex, and the
 number of blocks whose 16 pixels are not all equal. No reference images
 are written.
@@ -87,6 +87,9 @@ def cases():
     ):
         yield "greys", f"greys-{name}", values
     yield "grey-cells", "grey-cells-colorfulness1", NEUTRAL | dict(colorfulness=1)
+    # The same sources at other stretch factors: name-xSCALE.
+    for source, scale in (("greys", 2), ("greys", 8), ("greys", 16), ("grey-cells", 2), ("colours", 8)):
+        yield source, f"{source}-colorfulness1-x{scale}", NEUTRAL | dict(colorfulness=1)
 
 
 def colour_cases():
@@ -116,7 +119,8 @@ def main():
     print(f"Module versions: {module_versions()}")
     for source_name, name, values in cases():
         side, make = SOURCES[source_name]
-        size = side * SCALE
+        scale = int(name.rsplit("-x", 1)[1]) if "-x" in name else SCALE
+        size = side * scale
         pixels = b"".join(bytes((b, g, r, 0)) for r, g, b in make())
         header = BitmapInfoHeader(40, side, -side, 1, 32, 0, len(pixels), 0, 0, 0, 0)
         with reference_surface(size, size) as (gdi, dc, bits):
@@ -134,17 +138,18 @@ def main():
 
         centres, mixed = [], 0
         for index in range(side * side):
-            left, top = (index % side) * SCALE, (index // side) * SCALE
-            block = {pixel(left + i, top + j) for i in range(SCALE) for j in range(SCALE)}
+            left, top = (index % side) * scale, (index // side) * scale
+            block = {pixel(left + i, top + j) for i in range(scale) for j in range(scale)}
             mixed += len(block) > 1
-            b, g, r = pixel(left + SCALE // 2, top + SCALE // 2)
+            b, g, r = pixel(left + scale // 2, top + scale // 2)
             centres.append(f"{r:02x}{g:02x}{b:02x}")
         print(f"case {name} applied={applied} mixed={mixed} {values}")
         print("  " + " ".join(centres))
         if mixed:
-            # The top-left 64x64 destination pixels, row by row.
-            for y in range(min(64, size)):
-                row = (pixel(x, y) for x in range(min(64, size)))
+            # 64x64 destination pixels from the middle, row by row.
+            middle = size // 2
+            for y in range(middle, min(middle + 64, size)):
+                row = (pixel(x, y) for x in range(middle, min(middle + 64, size)))
                 print("  row " + " ".join(f"{r:02x}{g:02x}{b:02x}" for b, g, r in row))
 
 
