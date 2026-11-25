@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from fractions import Fraction
 
@@ -362,6 +363,76 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_brush_origin(self, call, prepared, result):
         self._state.brush_origin = (call.kwargs["x"], call.kwargs["y"])
 
+    def _prepare_set_arc_direction(self, a):
+        if a["direction"] not in (1, 2):
+            raise InvalidOperation("Arc direction is AD_COUNTERCLOCKWISE or AD_CLOCKWISE")
+
+    def _apply_set_arc_direction(self, call, prepared, result):
+        self._state.arc_direction = call.kwargs["direction"]
+
+    def _advanced_arc(self, box, start, end, closure="open"):
+        """A GM_ADVANCED arc figure in world orientation.
+
+        A clockwise arc is the y-mirror image of a counterclockwise one,
+        as a mirroring transform gives.
+        """
+        left, right = sorted(box[0::2])
+        top, bottom = sorted(box[1::2])
+        (x0, y0), (x1, y1) = self.mapping.fixed_point(left, top), self.mapping.fixed_point(right, bottom)
+        if self._state.arc_direction == 2:
+            y0, y1 = y1, y0
+            start, end = (start[0], top + bottom - start[1]), (end[0], top + bottom - end[1])
+        ceil = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
+        return arc_figure(
+            *ceil[:2],
+            ceil[2] + 1,
+            ceil[3] + 1,
+            start,
+            end,
+            closure=closure,
+            null_pen=self._state.pen.style == PS_NULL,
+            drawing_bounds=(x0, y0, x1, y1),
+            radial_bounds=(left, top, right, bottom),
+            advanced=True,
+        )
+
+    def _stroke_from_position(self, path):
+        """Stroke a line from the current position into ``path`` and move to its end."""
+        start = self._path_point(*self._state.position)
+        self._stroke_path(DevicePath(((start, path.commands[0][0]), *path.commands)))
+        end = path.commands[-1][-1]
+        self._state.position = self.mapping.logical_point(Fraction(end[0], 16), Fraction(end[1], 16))
+
+    def _prepare_arc_to(self, a):
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            raise UnsupportedOperation("arc_to in GM_COMPATIBLE")
+
+    def _apply_arc_to(self, call, prepared, result):
+        a = call.kwargs
+        box = (a["left"], a["top"], a["right"], a["bottom"])
+        self._stroke_from_position(self._advanced_arc(box, (a["start_x"], a["start_y"]), (a["end_x"], a["end_y"])))
+
+    def _prepare_angle_arc(self, a):
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            raise UnsupportedOperation("angle_arc in GM_COMPATIBLE")
+        if a["radius"] < 0 or abs(a["sweep"]) >= 360:
+            raise UnsupportedOperation("angle_arc: negative radii and full turns")
+
+    def _apply_angle_arc(self, call, prepared, result):
+        a = call.kwargs
+        x, y, radius = a["x"], a["y"], a["radius"]
+        first, last = math.radians(a["start"]), math.radians(a["start"] + a["sweep"])
+        start = (x + radius * math.cos(first), y - radius * math.sin(first))
+        end = (x + radius * math.cos(last), y - radius * math.sin(last))
+        direction = self._state.arc_direction
+        # AngleArc sweeps counterclockwise for positive angles, whatever the arc direction.
+        self._state.arc_direction = 2 if a["sweep"] < 0 else 1
+        try:
+            path = self._advanced_arc((x - radius, y - radius, x + radius, y + radius), start, end)
+        finally:
+            self._state.arc_direction = direction
+        self._stroke_from_position(path)
+
     def _prepare_set_miter_limit(self, a):
         if not a["limit"] >= 1:
             raise InvalidOperation("Miter limits are at least 1")
@@ -652,6 +723,80 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_polyline(self, call, prepared, result):
         a = call.kwargs
         self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
+
+    def _prepare_poly_bezier(self, a):
+        if len(a["points"]) % 3 != 1:
+            raise InvalidOperation("PolyBezier needs a start point and three points per cubic")
+
+    def _apply_poly_bezier(self, call, prepared, result):
+        points = self._mapped_path(call.kwargs["points"])
+        self._stroke_path(DevicePath(tuple(tuple(points[i : i + 4]) for i in range(0, len(points) - 1, 3))))
+
+    def _prepare_poly_bezier_to(self, a):
+        if len(a["points"]) % 3:
+            raise InvalidOperation("PolyBezierTo needs three points per cubic")
+
+    def _apply_poly_bezier_to(self, call, prepared, result):
+        logical = (self._state.position, *call.kwargs["points"])
+        points = self._mapped_path(logical)
+        if len(points) > 1:
+            self._stroke_path(DevicePath(tuple(tuple(points[i : i + 4]) for i in range(0, len(points) - 1, 3))))
+        self._state.position = logical[-1]
+
+    def _apply_polyline_to(self, call, prepared, result):
+        logical = (self._state.position, *call.kwargs["points"])
+        if len(logical) > 1:
+            self._stroke_path(DevicePath.polyline(self._mapped_path(logical)))
+        self._state.position = logical[-1]
+
+    def _apply_poly_polyline(self, call, prepared, result):
+        for polyline in call.kwargs["polylines"]:
+            if len(polyline) > 1:
+                self._stroke_path(DevicePath.polyline(self._mapped_path(polyline)))
+
+    def _prepare_poly_draw(self, a):
+        points, types = a["points"], a["types"]
+        if len(types) != len(points):
+            raise InvalidOperation("PolyDraw needs one type per point")
+        figures, figure, closed = [], [], []
+        position = self._state.position
+        start = position
+        index = 0
+        while index < len(points):
+            kind = types[index] & ~1
+            if kind == 6:  # PT_MOVETO
+                if figure:
+                    figures.append((tuple(figure), False))
+                figure, start, position = [], points[index], points[index]
+                index += 1
+                continue
+            if kind == 2:  # PT_LINETO
+                figure.append((position, points[index]))
+                position = points[index]
+                last = index
+                index += 1
+            elif kind == 4 and index + 2 < len(points) and all(t & ~1 == 4 for t in types[index : index + 3]):
+                figure.append((position, *points[index : index + 3]))
+                position = points[index + 2]
+                last = index + 2
+                index += 3
+            else:
+                raise InvalidOperation("Invalid PolyDraw point type")
+            if types[last] & 1:  # PT_CLOSEFIGURE
+                figure.append((position, start))
+                figures.append((tuple(figure), True))
+                figure, position = [], start
+        if figure:
+            figures.append((tuple(figure), False))
+        del closed
+        return tuple(figures), position
+
+    def _apply_poly_draw(self, call, prepared, result):
+        figures, position = prepared
+        for commands, closed in figures:
+            mapped = tuple(tuple(self._path_point(*point) for point in command) for command in commands)
+            self._stroke_path(DevicePath(mapped, closed=closed))
+        self._state.position = position
 
     def _apply_polygon(self, call, prepared, result):
         name = call.name
@@ -989,6 +1134,13 @@ class RasterContext(ExecutionContext[DrawingState]):
                     clockwise=self.mapping.rtl,
                     advanced=advanced,
                 )
+                if advanced and self._state.arc_direction == 2:
+                    path = self._advanced_arc(
+                        (a["left"], a["top"], a["right"], a["bottom"]),
+                        (a["start_x"], a["start_y"]),
+                        (a["end_x"], a["end_y"]),
+                        closure="open" if name == "arc" else name,
+                    )
             if covered:
                 for x, y in painter.contour_pixels((path.vertices,)):
                     painter.pixel(x, y, self._state.pen.color)

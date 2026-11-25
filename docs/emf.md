@@ -39,12 +39,12 @@ the codec and reference columns against the code and fixtures.
 | Record | Codec | Playback | References | Notes |
 | --- | --- | --- | --- | --- |
 | `HEADER` | typed | full | yes | Frame fit, reference device and handle-table size. |
-| `POLYBEZIER` | typed | no | yes | Needs Bézier drawing. |
+| `POLYBEZIER` | typed | full | yes |  |
 | `POLYGON` | typed | full | yes |  |
 | `POLYLINE` | typed | full | yes |  |
-| `POLYBEZIERTO` | typed | no | yes | Needs Bézier drawing and the current position. |
-| `POLYLINETO` | typed | no | yes | Needs current-position drawing. |
-| `POLYPOLYLINE` | typed | no | yes | Separate figures in one call; not equivalent to repeated Polyline under every ROP. |
+| `POLYBEZIERTO` | typed | full | yes |  |
+| `POLYLINETO` | typed | full | yes |  |
+| `POLYPOLYLINE` | typed | full | yes | Each figure is stroked separately. |
 | `POLYPOLYGON` | typed | full | yes |  |
 | `SETWINDOWEXTEX` | typed | full | yes | Folded into the playback world transform. |
 | `SETWINDOWORGEX` | typed | full | yes | Folded into the playback world transform. |
@@ -78,13 +78,13 @@ the codec and reference columns against the code and fixtures.
 | `CREATEPEN` | typed | full | yes |  |
 | `CREATEBRUSHINDIRECT` | typed | full | yes | Solid, null and hatched brushes. |
 | `DELETEOBJECT` | typed | full | no |  |
-| `ANGLEARC` | typed | no | yes | Needs current-position arcs. |
+| `ANGLEARC` | typed | partial | yes | Sweeps of a full turn or more are not yet drawn. |
 | `ELLIPSE` | typed | full | yes |  |
 | `RECTANGLE` | typed | full | yes |  |
 | `ROUNDRECT` | typed | full | yes |  |
-| `ARC` | typed | full | yes | Counterclockwise only. |
-| `CHORD` | typed | full | yes | Counterclockwise only. |
-| `PIE` | typed | full | yes | Counterclockwise only. |
+| `ARC` | typed | full | yes |  |
+| `CHORD` | typed | full | yes |  |
+| `PIE` | typed | full | yes |  |
 | `SELECTPALETTE` | typed | full | yes | Including the stock default palette. |
 | `CREATEPALETTE` | typed | full | yes |  |
 | `SETPALETTEENTRIES` | typed | full | yes | Edits the named palette; other objects fail natively. |
@@ -92,9 +92,9 @@ the codec and reference columns against the code and fixtures.
 | `REALIZEPALETTE` | typed | full | yes |  |
 | `EXTFLOODFILL` | typed | full | yes |  |
 | `LINETO` | typed | full | yes |  |
-| `ARCTO` | typed | no | yes | Needs current-position arcs. |
-| `POLYDRAW` | typed | no | yes | Needs paths and Béziers. |
-| `SETARCDIRECTION` | typed | no | yes | Needs clockwise arcs. |
+| `ARCTO` | typed | full | yes |  |
+| `POLYDRAW` | typed | full | yes |  |
+| `SETARCDIRECTION` | typed | full | yes | Clockwise figures are the y-mirror of counterclockwise ones. |
 | `SETMITERLIMIT` | typed | partial | yes | Stored; geometric joins that use it are not yet drawn. |
 | `BEGINPATH` | typed | no | yes | Needs path recording. |
 | `ENDPATH` | typed | no | yes | Needs path recording. |
@@ -121,14 +121,14 @@ the codec and reference columns against the code and fixtures.
 | `EXTCREATEFONTINDIRECTW` | typed | full | no | Text is font-limited. |
 | `EXTTEXTOUTA` | typed | partial | no | Not yet drawn in GM_ADVANCED; font-limited. |
 | `EXTTEXTOUTW` | typed | partial | no | Glyph indices only; not yet drawn in GM_ADVANCED; font-limited. |
-| `POLYBEZIER16` | typed | no | yes | Needs Bézier drawing. |
+| `POLYBEZIER16` | typed | full | yes |  |
 | `POLYGON16` | typed | full | yes |  |
 | `POLYLINE16` | typed | full | yes |  |
-| `POLYBEZIERTO16` | typed | no | yes | Needs Bézier drawing and the current position. |
-| `POLYLINETO16` | typed | no | yes | Needs current-position drawing. |
-| `POLYPOLYLINE16` | typed | no | yes | As POLYPOLYLINE. |
+| `POLYBEZIERTO16` | typed | full | yes |  |
+| `POLYLINETO16` | typed | full | yes |  |
+| `POLYPOLYLINE16` | typed | full | yes | As POLYPOLYLINE. |
 | `POLYPOLYGON16` | typed | full | yes |  |
-| `POLYDRAW16` | typed | no | yes | Needs paths and Béziers. |
+| `POLYDRAW16` | typed | full | yes |  |
 | `CREATEMONOBRUSH` | typed | full | yes | Colours come from the text and background colours. |
 | `CREATEDIBPATTERNBRUSHPT` | typed | full | yes |  |
 | `EXTCREATEPEN` | typed | partial | yes | Pens CreatePen can express; caps, joins, styles and pattern pens are missing. |

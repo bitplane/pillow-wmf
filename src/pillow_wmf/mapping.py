@@ -206,6 +206,12 @@ class Mapping:
             result.append(coordinate)
         return tuple(result)
 
+    def logical_point(self, x, y) -> tuple[int, int]:
+        """DPtoLP: the nearest logical point to a device point."""
+        return tuple(
+            rounded((value - origin) / scale) for value, (scale, origin) in zip((x, y), self._transform(), strict=True)
+        )
+
     def clip_displacement(self, x: int, y: int) -> tuple[int, int]:
         """OffsetClipRgn rounds transformed distances symmetrically at ties."""
         if self.world != IDENTITY_TRANSFORM:

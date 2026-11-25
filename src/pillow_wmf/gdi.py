@@ -128,6 +128,32 @@ class GDI:
         """Align pattern and hatch brushes to device point (x, y)."""
         return self.invoke(Call.make("set_brush_origin", x=x, y=y))
 
+    def set_arc_direction(self, direction: int) -> None:
+        """AD_COUNTERCLOCKWISE (1) or AD_CLOCKWISE (2) for arcs, chords and pies."""
+        return self.invoke(Call.make("set_arc_direction", direction=direction))
+
+    def arc_to(
+        self, left: int, top: int, right: int, bottom: int, start_x: int, start_y: int, end_x: int, end_y: int
+    ) -> None:
+        """A line from the current position to the arc's start, then the arc; the position moves to its end."""
+        return self.invoke(
+            Call.make(
+                "arc_to",
+                left=left,
+                top=top,
+                right=right,
+                bottom=bottom,
+                start_x=start_x,
+                start_y=start_y,
+                end_x=end_x,
+                end_y=end_y,
+            )
+        )
+
+    def angle_arc(self, x: int, y: int, radius: int, start: float, sweep: float) -> None:
+        """A line from the current position, then a circular arc by angle in degrees."""
+        return self.invoke(Call.make("angle_arc", x=x, y=y, radius=radius, start=start, sweep=sweep))
+
     def set_miter_limit(self, limit: float) -> None:
         """Limit miter joins of geometric pens to ``limit`` times the pen width."""
         return self.invoke(Call.make("set_miter_limit", limit=limit))
@@ -359,6 +385,24 @@ class GDI:
 
     def polygon(self, points: tuple[tuple[int, int], ...]) -> None:
         return self.invoke(Call.make("polygon", points=points))
+
+    def poly_bezier(self, points: tuple[tuple[int, int], ...]) -> None:
+        """A start point and three points (two controls and an end) per cubic."""
+        return self.invoke(Call.make("poly_bezier", points=points))
+
+    def poly_bezier_to(self, points: tuple[tuple[int, int], ...]) -> None:
+        """Cubics from the current position, which moves to the last point."""
+        return self.invoke(Call.make("poly_bezier_to", points=points))
+
+    def polyline_to(self, points: tuple[tuple[int, int], ...]) -> None:
+        return self.invoke(Call.make("polyline_to", points=points))
+
+    def poly_polyline(self, polylines: tuple[tuple[tuple[int, int], ...], ...]) -> None:
+        return self.invoke(Call.make("poly_polyline", polylines=polylines))
+
+    def poly_draw(self, points: tuple[tuple[int, int], ...], types: bytes) -> None:
+        """Lines and cubics with one PT_* type per point, from the current position."""
+        return self.invoke(Call.make("poly_draw", points=points, types=types))
 
     def poly_polygon(self, polygons: tuple[tuple[tuple[int, int], ...], ...]) -> None:
         return self.invoke(Call.make("poly_polygon", polygons=polygons))

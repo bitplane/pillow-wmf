@@ -61,6 +61,7 @@ class DrawingState:
     stretch_mode: int = BLACKONWHITE
     miter_limit: float = 10.0
     brush_origin: tuple[int, int] = (0, 0)
+    arc_direction: int = 1  # AD_COUNTERCLOCKWISE
     palette: LogicalPalette = field(default_factory=LogicalPalette.default)
     text_state: TextState = field(default_factory=TextState)
 
