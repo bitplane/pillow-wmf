@@ -631,6 +631,29 @@ def gradients(d):
     d.add(variable.GradientFill((0, 0, 0, 0), 2, vertices, ((0, 1, 3), (1, 2, 3))))
 
 
+def gradient_edges(d):
+    """GradientFill edge conditions: flat edges, clamped channels, tiny and huge shapes."""
+
+    def triangle(points, colours):
+        vertices = tuple((x, y, *colour, 0) for (x, y), colour in zip(points, colours, strict=True))
+        d.add(variable.GradientFill((0, 0, 0, 0), 2, vertices, ((0, 1, 2),)))
+
+    odd = ((0x1234, 0xFEDC, 0x0F0F), (0xF0F0, 0x2468, 0x8642), (0x7777, 0x0101, 0xFF00))
+    triangle(((4, 4), (60, 4), (30, 40)), odd)  # flat top
+    triangle(((70, 4), (100, 40), (66, 40)), odd)  # flat bottom
+    triangle(((4, 46), (60, 50), (20, 80)), ((0xFFFF, 0, 0xFF80), (0, 0xFFFF, 0x80), (0xFF01, 0xFFFF, 0)))
+    triangle(((110, 46), (112, 47), (111, 50)), odd)
+    triangle(((115, 46), (125, 46), (120, 46)), odd)  # degenerate
+    vertices = ((66, 46, 0xFFFF, 0x1234, 0x0001, 0), (124, 60, 0x0101, 0xFEFE, 0xFFFF, 0))
+    d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
+    vertices = ((66, 62, 0x1357, 0xFFFF, 0x2468, 0), (124, 86, 0xFFFF, 0x0102, 0x9ABC, 0))
+    d.add(fixed.SaveDC(), fixed.IntersectClipRect(70, 64, 120, 84))
+    d.add(variable.GradientFill((0, 0, 0, 0), 1, vertices, ((0, 1),)), fixed.RestoreDC(-1))
+    triangle(
+        ((-20000, 90), (30000, 100), (64, 30000)), ((0xFF00, 0, 0x1000), (0, 0xFF00, 0x8000), (0x4000, 0x4000, 0xFF00))
+    )
+
+
 def palettes(d):
     entries = ((255, 0, 0, 0), (0, 160, 0, 0), (0, 0, 255, 0), (255, 255, 0, 0))
     d.add(variable.CreatePalette(1, entries), fixed.SelectPalette(1), fixed.RealizePalette())
@@ -808,6 +831,7 @@ FEATURES = (
         for orientation in ("top-down", "bottom-up")
     ),
     ("gradientfill", gradients, (128, 51)),
+    ("gradient-edges", gradient_edges, (128,)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
     ("layout", layout, (128,)),
