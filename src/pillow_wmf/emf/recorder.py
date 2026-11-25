@@ -15,9 +15,9 @@ header summarizes the drawing.
 - Records with a bounds field, and the header, carry inclusive device
   bounds. Regions are written inline as region data, never as objects.
 
-The recording DC starts in MM_TEXT and GM_COMPATIBLE on ``device``. Fonts
-and text come last, after the rest of EMF, and are refused for now, as are
-palette editing, pattern brushes, DIB pattern pens and masked, blended or
+The recording DC starts in MM_TEXT and GM_COMPATIBLE on ``device``. Font
+records are written as plain LOGFONTs, not yet checked against native
+recordings. Text output, palette editing, pattern brushes, DIB pattern pens and masked, blended or
 parallelogram transfers are not yet recorded and are refused.
 """
 
@@ -35,10 +35,11 @@ from ..ellipse import arc_figure
 from ..gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from ..limits import DEFAULT_LIMITS
 from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice
-from ..objects import RegionGeometry
+from ..objects import FontRequest, RegionGeometry
 from ..trace import TraceContext
 from . import bitmaps, fixed, variable
 from .file import Metafile
+from .objects import FACE_NAME_BYTES, LogFont
 
 STOCK_OBJECT = 0x80000000
 DEFAULT_PALETTE = 15
@@ -93,6 +94,15 @@ def _box(points) -> Rect | None:
         return None
     xs, ys = [x for x, _ in points], [y for _, y in points]
     return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _log_font(request: FontRequest) -> LogFont:
+    name = request.face_name
+    if not isinstance(name, str):
+        raise UnsupportedOperation("EMF fonts record face names as text")
+    encoded = name.encode("utf-16-le")[: FACE_NAME_BYTES - 2]
+    values = {key: getattr(request, key) for key in LogFont.__dataclass_fields__ if key != "face_name"}
+    return LogFont(**values, face_name=encoded.ljust(FACE_NAME_BYTES, b"\0"))
 
 
 @dataclass
@@ -338,6 +348,10 @@ class Recorder(TraceContext):
     def _record_create_brush(self, a, state, records):
         style, color, hatch = a["style"], a["color"], a["hatch"]
         self._created(state, _Object("brush", lambda slot: fixed.CreateBrushIndirect(slot, style, color, hatch)))
+
+    def _record_create_font(self, a, state, records):
+        font = _log_font(a["font"])
+        self._created(state, _Object("font", lambda slot: variable.ExtCreateFontIndirectW(slot, font)))
 
     def _record_create_palette(self, a, state, records):
         entries = a["palette"].entries if a["palette"] is not None else ()
