@@ -86,6 +86,7 @@ on:
           - pen-style-ends
           - angle-arc-turns
           - cosmetic-widen
+          - color-engine
   push:
     branches: [master]
     paths:

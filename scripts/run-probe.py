@@ -137,6 +137,7 @@ PROBES = {
     "pen-style-ends": Probe("probe-windows-pen-style-ends.py", output="pen-style-ends"),
     "angle-arc-turns": Probe("probe-windows-angle-arc-turns.py", output="angle-arc-turns"),
     "cosmetic-widen": Probe("probe-windows-cosmetic-widen.py", output="cosmetic-widen"),
+    "color-engine": Probe("probe-windows-color-engine.py", output="color-engine"),
 }
 
 
