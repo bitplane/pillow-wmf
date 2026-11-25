@@ -297,7 +297,9 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
     return outline
 
 
-def support_outlines(segments: tuple[StrokeSegment, ...], pen: PenGeometry, closed: bool) -> list[Polygon]:
+def support_outlines(
+    segments: tuple[StrokeSegment, ...], pen: PenGeometry, closed: bool, *, seam: int = 0
+) -> list[Polygon]:
     """WidenPath's outlines of one figure for a support-vertex pen.
 
     An open figure is one outline: the start cap, the far side forward, the
@@ -305,7 +307,8 @@ def support_outlines(segments: tuple[StrokeSegment, ...], pen: PenGeometry, clos
     side passes the outer side of a joint by sweeping the pen between the two
     body supports, and the inner side through the vertex itself. Every
     support index comes from the forward segment directions; the near side
-    takes the opposite vertex.
+    takes the opposite vertex. An open figure with a ``seam`` joint starts
+    its outline at that joint's near side.
     """
     segments = tuple(segment for segment in segments if segment.direction != (0, 0))
     if not segments:
@@ -376,9 +379,9 @@ def support_outlines(segments: tuple[StrokeSegment, ...], pen: PenGeometry, clos
     for k in range(last):
         outline += joint(k, True)
     outline += cap(segments[-1].end, supports[-1] + half)
-    for k in range(last - 1, -1, -1):
+    for k in range(last - 1, seam - 1, -1):
         outline += joint(k, False)
-    return [outline]
+    return [[point for k in range(seam - 1, -1, -1) for point in joint(k, False)] + outline]
 
 
 def line_outline(start: Point, end: Point, width: int, scale_x, scale_y) -> Polygon:

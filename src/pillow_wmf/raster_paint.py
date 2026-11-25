@@ -16,6 +16,7 @@ from .constants import (
     ETO_OPAQUE,
     HALFTONE,
     PS_NULL,
+    PS_USERSTYLE,
     R2_COPYPEN,
     TRANSPARENT,
     WINDING,
@@ -536,7 +537,7 @@ class RasterPainter:
             return set()
         pixels: set[tuple[int, int]] = set()
         for path in paths:
-            for segments, closed in self._pen_figures(path):
+            for segments, closed, _ in self._pen_figures(path):
                 pixels.update(self._figure_pixels(segments, closed, miter=miter))
         return pixels
 
@@ -546,21 +547,26 @@ class RasterPainter:
         if pen.geometric and pen.pattern:
             # Each dash is an open figure with the pen's caps and joins.
             scale = self.state.mapping.linear_scale
-            shorten = pen.width if pen.cap != CAP_FLAT else 0
-            for dash in dash_figures(path.segments, pen.pattern, scale, shorten=shorten):
-                yield dash, False
+            # Predefined styles pull capped dash ends back; user styles do not.
+            shorten = pen.width if pen.cap != CAP_FLAT and pen.style != PS_USERSTYLE else 0
+            logical = self.state.mapping.rotated_logical_point if self.state.mapping.rotated else None
+            figures = dash_figures(
+                path.segments, pen.pattern, scale, shorten=shorten, closed=path.closed, logical=logical
+            )
+            for dash, seam in figures:
+                yield dash, False, seam
         else:
-            yield path.segments, path.closed
+            yield path.segments, path.closed, 0
 
     def widened_outlines(self, paths: tuple[DevicePath, ...]) -> list[Polygon]:
         """WidenPath's closed outlines: perpendicular bodies or support-vertex sweeps."""
         outlines: list[Polygon] = []
         for path in paths:
-            for segments, closed in self._pen_figures(path.flattened()):
+            for segments, closed, seam in self._pen_figures(path.flattened()):
                 if self.pen_shape is None:
-                    outlines.extend(support_outlines(segments, self.realized_pen, closed))
+                    outlines.extend(support_outlines(segments, self.realized_pen, closed, seam=seam))
                 else:
-                    outlines.extend(widen_outline(self.pen_shape, segments, closed))
+                    outlines.extend(widen_outline(self.pen_shape, segments, closed, seam=seam))
         return outlines
 
     def _figure_pixels(self, segments, closed, *, miter=False):

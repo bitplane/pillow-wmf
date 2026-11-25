@@ -81,13 +81,30 @@ def test_round_caps_walk_half_the_pen_from_the_perpendicular():
 
 def test_dashes_are_logical_lengths_with_round_cap_ends_pulled_back():
     line = figure((6, 6), (46, 14))
-    flat = dash_figures(line, (9, 3), (1, 1))
+    flat = [dash for dash, _ in dash_figures(line, (9, 3), (1, 1))]
     assert [(dash[0].start, dash[-1].end) for dash in flat][:2] == [((96, 96), (237, 124)), ((284, 134), (425, 162))]
-    rounded = dash_figures(line, (9, 3), (1, 1), shorten=3)
+    rounded = [dash for dash, _ in dash_figures(line, (9, 3), (1, 1), shorten=3)]
     assert rounded[0][-1].end == (190, 115)
     # Dots with extending caps become zero-length dashes.
     dots = dash_figures(figure((6, 6), (46, 6)), (3, 3), (1, 1), shorten=3)
-    assert dots[1] == (StrokeSegment((192, 96), (192, 96), (640, 0)),)
+    assert dots[1] == ((StrokeSegment((192, 96), (192, 96), (640, 0)),), 0)
+
+
+def test_closed_dashes_run_on_across_the_closing_vertex():
+    square = figure((0, 0), (10, 0), (10, 10), (0, 10), (0, 0))
+    dashes = dash_figures(square, (7, 2), (1, 1), closed=True)
+    # The dash drawing at the close joins the first; its seam is that joint.
+    merged, seam = dashes[0]
+    assert seam == 1
+    assert (merged[0].start, merged[0].end, merged[1].start) == ((0, 64), (0, 0), (0, 0))
+    assert all(seam == 0 for _, seam in dashes[1:])
+
+
+def test_axis_symmetric_pens_mirror_their_perpendiculars():
+    pen = realize_pen(7, 1, 1, geometric=True)
+    assert perpendicular(pen, (12, 18)) == (40, -32)
+    assert perpendicular(pen, (12, -18)) == (-40, -32)
+    assert perpendicular(pen, (-12, 18)) == (40, 32)
 
 
 def test_scaled_square_caps_round_twice():

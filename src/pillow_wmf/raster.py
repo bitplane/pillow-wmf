@@ -34,9 +34,11 @@ from .constants import (
     HALFTONE,
     MM_ANISOTROPIC,
     MM_TEXT,
+    PS_ALTERNATE,
     PS_INSIDEFRAME,
     PS_NULL,
     PS_SOLID,
+    PS_USERSTYLE,
     R2_BLACK,
     R2_NOP,
     R2_NOT,
@@ -85,7 +87,6 @@ def rgb(colorref: int) -> tuple[int, int, int]:
 
 # Geometric predefined styles, in multiples of the pen width.
 GEOMETRIC_DASHES = {1: (3, 1), 2: (1, 1), 3: (3, 1, 1, 1), 4: (3, 1, 1, 1, 1, 1)}
-PS_USERSTYLE, PS_ALTERNATE = 7, 8
 BS_DIBPATTERN, BS_DIBPATTERNPT = 5, 6
 
 
@@ -324,16 +325,6 @@ class RasterContext(ExecutionContext[DrawingState]):
             )
         ):
             raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
-        pen = self._state.pen
-        if (
-            self.mapping.rotated
-            and call.name in PEN_STROKES | {"widen_path"}
-            and pen.geometric
-            and not self._state.recording_path
-            and pen.style != PS_NULL
-            and pen.style & 15 != PS_SOLID
-        ):
-            raise UnsupportedOperation("Styled geometric pens under a rotating transform")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 

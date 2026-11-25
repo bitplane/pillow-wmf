@@ -260,6 +260,13 @@ class Mapping:
             result.append(coordinate)
         return tuple(result)
 
+    def rotated_logical_point(self, x, y) -> tuple[int, int]:
+        """The nearest logical point to a 28.4 device point under a rotating transform."""
+        m11, m12, m21, m22, dx, dy = self.world
+        x, y = x / 16 - dx, y / 16 - dy
+        det = m11 * m22 - m12 * m21
+        return rounded((x * m22 - y * m21) / det), rounded((y * m11 - x * m12) / det)
+
     def logical_point(self, x, y) -> tuple[int, int]:
         """DPtoLP: the nearest logical point to a device point."""
         return tuple(

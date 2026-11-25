@@ -234,7 +234,10 @@ point:
   realized pen polygon: a line parallel to a pen edge uses the edge midpoint,
   a line parallel to the chord across a vertex uses that vertex, and other
   directions interpolate between them by cross-product weights before snapping
-  to the half-pixel grid. Flat and square caps, bevels and miters share it.
+  to the half-pixel grid. A pen mirrored about both device axes takes the
+  vector of the direction's first-quadrant reflection, mirrored back, so
+  mirrored lines get mirrored bodies. Flat and square caps, bevels and miters
+  share it.
 - Inner joins pass through the vertex; round inner joins also sweep the pen.
   Miter tips round to the nearest 28.4 point; miters longer than the limit
   bevel. A round join's sweep that reaches the head of the pen's second half
@@ -246,8 +249,14 @@ point:
 - Predefined geometric styles are multiples of the width (dash 3:1, dot 1:1,
   and so on); user styles are logical lengths. Dashes are measured in logical
   units, cut by interpolating along the device segment, and drawn as open
-  figures. Round and square caps pull each dash end back by one width, so
-  dots become zero-length dashes.
+  figures; a dash that crosses a vertex keeps its join. Under a rotating
+  transform segment lengths are measured between the logical points nearest
+  their device ends. On predefined styles, round and square caps pull each
+  dash end back by one width, so dots become zero-length dashes; user styles
+  are not pulled back.
+- On a closed figure a dash still drawing at the closing vertex runs on into
+  the first dash as one figure, whose `WidenPath` outline starts at the
+  closing joint's near side.
 - Cosmetic alternate and user styles step through device pixels, user style
   entries in units of three pixels like the predefined styles. Cosmetic pens
   are always one pixel wide and solid.
@@ -345,8 +354,7 @@ products plus the 28.4 translation.
   used by geometric pens, one per box axis, taken from the two edges that
   leave the left-top corner and shared by both parallel edges. Other figures
   keep the support-vertex bodies of wide `CreatePen` strokes.
-- Solid geometric pens use the caps and joins above with the realized pen;
-  styled geometric pens are refused.
+- Geometric pens use the caps, joins and styles above with the realized pen.
 - `PatBlt` and the DIB transfers (`BitBlt`, `StretchBlt`, `StretchDIBits`
   and `MaskBlt` records, any ROP3) cover the polygon fill of their
   destination rectangle's three 28.4 corners and the reflected fourth. Each
@@ -382,8 +390,12 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
-- Tie rounding of the geometric pen perpendicular: about one direction in
-  twenty, at exact half-pixel ties, snaps the other way natively.
+- Tie rounding of the geometric pen perpendicular under a rotating or
+  shearing transform: about one segment direction in fifteen, at exact
+  half-pixel ties, snaps the other way natively.
+- A square cap's extension under a general (non-orthogonal) transform can
+  land one sixteenth further out natively than rounding the mapped
+  half-width gives.
 - A triangle gradient's flat top row: native colours along a horizontal top
   edge fall just below exact 8-bit boundaries, one unit lower than the
   rounded plane.
@@ -391,18 +403,12 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
-- Under rotating or shearing transforms: text, `FrameRgn`, and strokes or
-  `WidenPath` with styled geometric pens are refused. Paths record with any
-  pen selected.
+- Under rotating or shearing transforms: text and `FrameRgn` are refused.
+  Eroding the region by the frame size in logical units, as a box, comes
+  within a few dozen pixels of native `FrameRgn` output but is not exact.
 - Round joins between flat or square caps: some inner joins natively omit
   the pen vertex in the direction of the incoming body, or repeat a seam
   vertex, where the angular sweep includes or drops it.
-- Styled geometric pens: a dash that crosses a vertex keeps its join instead
-  of splitting into separate figures, a closed figure continues its pattern
-  across the closing vertex, and square caps on user styles do not pull each
-  dash end back by one width.
-  Eroding the region by the frame size in logical units, as a box, comes
-  within a few dozen pixels of native `FrameRgn` output but is not exact.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
   mask mirrored within the source rectangle; only fully mirrored cases have
   native references.

@@ -82,7 +82,22 @@ def _round_half_toward_zero(value: Fraction) -> int:
 
 
 def perpendicular(pen: PenGeometry, direction: Point) -> Point:
-    """The half-width vector on the left of ``direction``, on the pen polygon."""
+    """The half-width vector on the left of ``direction``, on the pen polygon.
+
+    A pen mirrored about both axes takes the vector of the direction's
+    first-quadrant reflection, mirrored back, so mirrored lines get mirrored
+    offsets whatever the rounding ties.
+    """
+    vertices = set(_polygon(pen))
+    if vertices == {(x, -y) for x, y in vertices} == {(-x, y) for x, y in vertices}:
+        sx, sy = (1 if value >= 0 else -1 for value in direction)
+        if sx < 0 or sy < 0:
+            x, y = _perpendicular(pen, (direction[0] * sx, direction[1] * sy))
+            return (x * sy, y * sx)
+    return _perpendicular(pen, direction)
+
+
+def _perpendicular(pen: PenGeometry, direction: Point) -> Point:
     keys = _keyframes(pen)
     for index, (start_key, start) in enumerate(keys):
         end_key, end = keys[(index + 1) % len(keys)]
@@ -238,12 +253,18 @@ def _cap_points(shape, point, direction, perp, *, start):
 
 
 def outline(
-    shape: PenShape, segments: tuple[StrokeSegment, ...], closed: bool, *, perps: list[Point] | None = None
+    shape: PenShape,
+    segments: tuple[StrokeSegment, ...],
+    closed: bool,
+    *,
+    perps: list[Point] | None = None,
+    seam: int = 0,
 ) -> list[Polygon]:
     """Native widened outlines of one figure, for winding-rule filling.
 
     ``perps`` overrides each segment's left half-width vector, as a box
-    frame does by sharing one perpendicular between parallel edges.
+    frame does by sharing one perpendicular between parallel edges. An open
+    figure with a ``seam`` joint starts its outline at that joint's left side.
     """
     if perps is None:
         segments = tuple(segment for segment in segments if segment.direction != (0, 0))
@@ -291,12 +312,18 @@ def outline(
     points = _cap_points(shape, first.start, first.direction, perps[0], start=True)
     points += side(-1, range(1, count))
     points += _cap_points(shape, last.end, last.direction, perps[-1], start=False)
-    points += side(1, range(count - 1, 0, -1))
-    return [points]
+    points += side(1, range(count - 1, seam, -1))
+    return [side(1, range(seam, 0, -1)) + points]
 
 
-def dash_figures(segments, pattern, scale, *, shorten=0):
+def dash_figures(segments, pattern, scale, *, shorten=0, closed=False, logical=None):
     """Split a figure into dashes measured in logical units along its segments.
+
+    Lengths divide the device segment by ``scale``, or with ``logical``,
+    measure between the logical points it maps each device point back to.
+    Returns ``(segments, seam)`` pairs. On a ``closed`` figure a dash still
+    drawing at the closing vertex runs on into the first dash; ``seam`` is
+    the index of the closing vertex's joint in that merged dash, else zero.
 
     ``pattern`` alternates dash and gap lengths, starting with a dash at the
     figure's start; an odd pattern swaps roles on each repeat. Each dash end
@@ -308,19 +335,28 @@ def dash_figures(segments, pattern, scale, *, shorten=0):
     sx, sy = (abs(float(value)) * 16 for value in scale)
     lengths = [float(value) for value in pattern]
     if sum(lengths) <= 0:
-        return [tuple(segments)]
+        return [(tuple(segments), 0)]
+
+    def measure(start, end):
+        if logical is not None:
+            (x0, y0), (x1, y1) = logical(*start), logical(*end)
+            return hypot(x1 - x0, y1 - y0)
+        (x0, y0), (x1, y1) = start, end
+        return hypot((x1 - x0) / sx if sx else 0.0, (y1 - y0) / sy if sy else 0.0)
+
     spans, offset = [], 0.0
     for segment in segments:
-        (x0, y0), (x1, y1) = segment.start, segment.end
-        length = hypot((x1 - x0) / sx if sx else 0.0, (y1 - y0) / sy if sy else 0.0)
+        length = measure(segment.start, segment.end)
         spans.append((offset, length, segment))
         offset += length
     total = offset
     intervals, position, index, drawing = [], 0.0, 0, True
+    wraps = False
     while position < total:
         length = lengths[index]
         if drawing:
             intervals.append((position, min(total, max(position, position + length - shorten))))
+            wraps = position + length >= total
         position += length
         # Roles alternate through the pattern, so an odd pattern swaps them on repeat.
         drawing, index = not drawing, (index + 1) % len(lengths)
@@ -349,4 +385,8 @@ def dash_figures(segments, pattern, scale, *, shorten=0):
                 break
         if figure:
             figures.append(tuple(figure))
-    return figures
+    pairs = [(figure, 0) for figure in figures]
+    if closed and wraps and len(figures) > 1:
+        tail = figures.pop()
+        pairs = [(tail + figures[0], len(tail))] + pairs[1:-1]
+    return pairs

@@ -97,16 +97,25 @@ def test_widened_closed_figures_match_native_paths(key):
 
 CAPS = {"round": 0x0000, "square": 0x0100, "flat": 0x0200}
 JOINS = {"round": 0x0000, "bevel": 0x1000, "miter": 0x2000}
+LINE_STYLES = {"solid": 0, "dash": 1, "dot": 2, "user": 7}
+USER_STYLE = (3, 2, 1, 2)
 
 
 @pytest.mark.parametrize("key", sorted(NATIVE["styles"]))
-def test_geometric_caps_and_joins_match_native_paths(key):
-    """``styles``: native WidenPath outlines of solid geometric pens by cap and join."""
-    transform, cap, join, _, width, shape = key.split()
+def test_geometric_caps_joins_and_styles_match_native_paths(key):
+    """``styles``: native WidenPath outlines of geometric pens by cap, join and line style.
+
+    User styles use the entries (3, 2, 1, 2). Dashes crossing a vertex keep
+    their join, a closed figure's last dash runs on into its first from the
+    closing joint, and user-style square caps are not pulled back.
+    """
+    transform, cap, join, style, width, shape = key.split()
     context = RasterContext(16, 16, trace_calls=False)
     context.set_graphics_mode(2)
     context.set_world_transform(*TRANSFORMS[transform])
-    context.select_object(context.ext_create_pen(0x00010000 | CAPS[cap] | JOINS[join], int(width), 0))
+    bits = 0x00010000 | CAPS[cap] | JOINS[join] | LINE_STYLES[style]
+    entries = USER_STYLE if style == "user" else ()
+    context.select_object(context.ext_create_pen(bits, int(width), 0, entries=entries))
     context.begin_path()
     SHAPES[shape](context)
     context.end_path()
