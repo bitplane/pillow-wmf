@@ -170,6 +170,7 @@ EXPECTED = {
     "rotated-transfers": ("scripts/probe-windows-rotated-transfers.py", "rotated-transfers", True, True),
     "rotated-blends": ("scripts/probe-windows-rotated-blends.py", "rotated-blends", True, True),
     "rotated-wide-pens": ("scripts/probe-windows-rotated-wide-pens.py", "rotated-wide-pens", True, True),
+    "rotated-pen-styles": ("scripts/probe-windows-rotated-pen-styles.py", "rotated-pen-styles", True, True),
 }
 
 
