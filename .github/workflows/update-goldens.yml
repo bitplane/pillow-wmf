@@ -68,6 +68,7 @@ on:
           - emf-frame
           - emf-transforms
           - advanced-paths
+          - emf-record
   push:
     branches: [master]
     paths:

@@ -119,6 +119,7 @@ PROBES = {
     "emf-frame": Probe("probe-windows-emf-frame.py", output="emf-frame"),
     "emf-transforms": Probe("probe-windows-emf-transforms.py", output="emf-transforms"),
     "advanced-paths": Probe("probe-windows-advanced-paths.py", output="advanced-paths"),
+    "emf-record": Probe("probe-windows-emf-record.py", output="emf-record"),
 }
 
 
