@@ -113,7 +113,7 @@ the codec and reference columns against the code and fixtures.
 | `SETROP2` | typed | full | yes |  |
 | `SETSTRETCHBLTMODE` | typed | full | yes |  |
 | `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
-| `SETCOLORADJUSTMENT` | typed | partial | yes | Scaled HALFTONE copies; adjustments under rotating transforms are unverified. |
+| `SETCOLORADJUSTMENT` | typed | full | yes | Scaled HALFTONE copies; transfers under rotating transforms sample without it. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
 | `OFFSETCLIPRGN` | typed | full | yes | Offsets scale through the world transform, ties rounding away from zero. |
@@ -487,7 +487,8 @@ products plus the 28.4 translation.
   takes the source sample at the floor, breaking exact ties as if the point
   were nudged right along device x; samples clamp into the source
   rectangle. The ROP then combines source, brush and destination as usual,
-  and a `MaskBlt` mask chooses the ROP per source pixel.
+  and a `MaskBlt` mask chooses the ROP per source pixel. The stretch mode
+  and colour adjustment do not apply.
 - `AlphaBlend` and `TransparentBlt` sample the same way and then blend or
   skip the key colour exactly as unrotated.
 - A legacy `BitBlt` or `StretchBlt` that reads the destination DC draws
