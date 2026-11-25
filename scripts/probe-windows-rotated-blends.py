@@ -84,14 +84,26 @@ def dib_info(width, height, depth=32):
     return struct.pack("<IiiHHIIiiII", 40, width, height, 1, depth, 0, 0, 0, 0, 0, 0)
 
 
-def source_dc(gdi):
+def source_pixels(alpha):
+    """The 8x6 top-down BGRA source; with ``alpha``, premultiplied by a coded alpha."""
+    pixels = b""
+    for y in range(6):
+        for x in range(8):
+            color = ((x * 30) % 256, (y * 40) % 256, (x * 13 + y * 29) % 256)
+            if alpha:
+                a = (x * 37 + y * 41) % 256
+                pixels += bytes((*(c * a // 255 for c in color), a))
+            else:
+                pixels += bytes((*color, 0))
+    return pixels
+
+
+def source_dc(gdi, alpha=False):
     dc = gdi.CreateCompatibleDC(None)
     info = ctypes.create_string_buffer(dib_info(8, -6), 64)
     bits = ctypes.c_void_p()
     bitmap = gdi.CreateDIBSection(dc, info, 0, ctypes.byref(bits), None, 0)
-    pixels = b"".join(
-        bytes(((x * 30) % 256, (y * 40) % 256, (x * 13 + y * 29) % 256, 0)) for y in range(6) for x in range(8)
-    )
+    pixels = source_pixels(alpha)
     ctypes.memmove(bits, pixels, len(pixels))
     gdi.SelectObject(dc, bitmap)
     return dc
