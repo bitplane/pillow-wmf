@@ -5,10 +5,13 @@ and white levels stretch it, the channel's gamma raises it to a power,
 CA_LOG_FILTER replaces it with log8(1 + 7 * value), contrast multiplies it
 by exp(0.0148885 * contrast), brightness adds 0.375 * brightness / 100, and
 CA_NEGATIVE inverts it. The result is clamped and rounded to the nearest
-8-bit level. Colourfulness, red-green tint and illuminants other than the
-default mix the channels in ways not yet modelled, and are refused. The
-order of the gamma, filter and contrast steps relative to each other is
-unverified in combination.
+8-bit level. The order of the gamma, filter and contrast steps relative to
+each other is unverified in combination.
+
+Colourfulness, red-green tint and illuminants other than the default mix
+the channels: the source is first mapped through the colour engine
+(``color_engine.py``), and the per-channel tables then apply to the
+mapped colours.
 """
 
 from __future__ import annotations
@@ -16,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from math import exp, floor, log
+
+from .color_engine import map_bitmap, uses_engine
 
 CA_NEGATIVE, CA_LOG_FILTER = 1, 2
 # Native contrast is exponential: +100 multiplies by about 4.4313.
@@ -36,14 +41,19 @@ class ColorAdjustment:
 
     @property
     def neutral(self) -> bool:
-        return self == NEUTRAL or self.tables == NEUTRAL.tables
+        return not self.engine and self.neutral_tables
 
-    def unsupported(self) -> str | None:
-        if self.colorfulness or self.tint:
-            return "colourfulness and red-green tint"
-        if self.illuminant not in (0, 6):
-            return "illuminants other than the default"
-        return None
+    @property
+    def neutral_tables(self) -> bool:
+        return self.tables == NEUTRAL.tables
+
+    @property
+    def engine(self) -> bool:
+        """Whether colours are mapped through the colour engine before the tables apply."""
+        return uses_engine(self.colorfulness, self.tint, self.illuminant)
+
+    def map(self, bitmap, *, row_offset=0):
+        return map_bitmap(bitmap, self.colorfulness, self.tint, self.illuminant, row_offset=row_offset)
 
     @cached_property
     def tables(self) -> tuple[tuple[int, ...], ...]:

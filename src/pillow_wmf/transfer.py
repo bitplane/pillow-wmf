@@ -9,6 +9,7 @@ from .blit import BlitAxis, StretchAxis
 from .clip import ClipRegion, RegionMask
 from .color_adjustment import AdjustedBitmap, ColorAdjustment
 from .constants import HALFTONE
+from .gdi import UnsupportedOperation
 from .halftone import (
     HalftoneExpansion,
     HalftoneMode,
@@ -211,6 +212,23 @@ class TransferPreparation:
             )
         return layout.decode(preserve_gaps=True, palette=self.palette.colors(), clip_spans=clip.spans)
 
+    def _engine_source(self, bitmap, hx, hy, sw, sh, dw, dh, content):
+        """The source mapped through the colour engine before HALFTONE stretching.
+
+        Native reads source scans through the engine, so each scan read is
+        dithered one row further on: replication reads every row once from
+        row 0; the fast enlargement first reads source row 0 twice more for
+        its filter window, and its edge rows repeat with their own dither.
+        """
+        if hx.source != 0 or hy.source != 0:
+            raise UnsupportedOperation("HALFTONE colour engine: source rectangles away from the bitmap origin")
+        mode = halftone_bitmap(bitmap, 0, 0, abs(sw), abs(sh), abs(dw), abs(dh), content=content)
+        if mode is HalftoneMode.REPLICATE or mode is HalftoneMode.NOOP:
+            return self.color_adjustment.map(bitmap).materialize()
+        if not (isinstance(mode, HalftoneExpansion) and mode.fast):
+            raise UnsupportedOperation("HALFTONE colour engine: reductions and general enlargements")
+        return self.color_adjustment.map(bitmap, row_offset=2)
+
     def _prepare_bitmap_transfer(self, a, bitmap, sy, *, depth, halftone, monochrome_bitblt=False, source_dc=False):
         x, y = self.mapping.device_point(a["x"], a["y"])
         right, bottom = self.mapping.device_point(a["x"] + a["width"], a["y"] + a["height"])
@@ -240,6 +258,8 @@ class TransferPreparation:
             content = classify_content(bitmap, left, top, right - left, bottom - top, depth=depth)
             if content.fixup and fixup_candidate(abs(sw), abs(sh), abs(dw), abs(dh)):
                 bitmap = fixup_bitmap(bitmap, left, top, right, bottom)
+        if scaled and halftone and self.color_adjustment.engine:
+            bitmap = self._engine_source(bitmap, hx, hy, sw, sh, dw, dh, content)
         if scaled and halftone:
             filtered = halftone_bitmap(
                 bitmap, hx.source, hy.source, abs(sw), abs(sh), abs(dw), abs(dh), content=content
@@ -249,7 +269,7 @@ class TransferPreparation:
             if filtered is not HalftoneMode.REPLICATE:
                 if not filtered.valid:
                     return TransferAction.NOOP
-                if not self.color_adjustment.neutral:
+                if not self.color_adjustment.neutral_tables:
                     filtered = AdjustedBitmap(filtered, self.color_adjustment)
                 return SourceTransfer(
                     filtered,
@@ -257,7 +277,7 @@ class TransferPreparation:
                     BlitAxis(hy.destination, abs(dh) - 1 if hy.mirrored else 0, abs(dh), -1 if hy.mirrored else 1),
                     a["rop"],
                 )
-        if scaled and halftone and not self.color_adjustment.neutral:
+        if scaled and halftone and not self.color_adjustment.neutral_tables:
             # Replicated HALFTONE enlargements are colour-adjusted too.
             bitmap = AdjustedBitmap(bitmap, self.color_adjustment)
         if scaled:

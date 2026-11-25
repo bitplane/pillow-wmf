@@ -39,19 +39,21 @@ class ExpansionSamples:
     def stencil(self, x, y, horizontal, vertical):
         if x is None or y is None or x < 0 or (y < 0 and not self.fast):
             return None
-        row = max(self.top, min(self.bottom - 1, y))
         column = max(self.left, min(self.right - 1, x))
-        center = self.bitmap.pixel(column, row)
+        # FastExpAA extends raw rows before sharpening. General expansion
+        # instead repeats sharpened endpoint samples in its fetch window.
+        # Sources read through the colour engine re-read edge rows instead,
+        # each with its own dither.
+        virtual = self.fast and getattr(self.bitmap, "virtual_rows", False)
+        sample = self.bitmap.scan if virtual else self.bitmap.pixel
+        row = y if virtual else max(self.top, min(self.bottom - 1, y))
+        center = sample(column, row)
         neighbours = []
         if horizontal:
-            neighbours.extend(
-                (self.bitmap.pixel(max(self.left, x - 1), row), self.bitmap.pixel(min(self.right - 1, x + 1), row))
-            )
+            neighbours.extend((sample(max(self.left, x - 1), row), sample(min(self.right - 1, x + 1), row)))
         if vertical:
-            # FastExpAA extends raw rows before sharpening. General expansion
-            # instead repeats sharpened endpoint samples in its fetch window.
             neighbours.extend(
-                self.bitmap.pixel(column, max(self.top, min(self.bottom - 1, sy))) for sy in (y - 1, y + 1)
+                sample(column, sy if virtual else max(self.top, min(self.bottom - 1, sy))) for sy in (y - 1, y + 1)
             )
         return center, neighbours
 

@@ -80,7 +80,7 @@ the codec and reference columns against the code and fixtures.
 | `SETROP2` | typed | full | yes |  |
 | `SETSTRETCHBLTMODE` | typed | full | yes |  |
 | `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
-| `SETCOLORADJUSTMENT` | typed | partial | yes | Per-channel adjustments of scaled HALFTONE copies; colourfulness, tint and illuminants are refused. |
+| `SETCOLORADJUSTMENT` | typed | partial | yes | Scaled HALFTONE copies; colourfulness, tint and illuminants are refused for reductions, general enlargements and offset sources. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
 | `OFFSETCLIPRGN` | typed | full | yes | Offsets scale through the world transform, ties rounding away from zero. |
@@ -340,13 +340,33 @@ scale:
 
 then it is clamped and rounded to the nearest 8-bit level. Each step matches
 native output on its own and contrast with brightness or negative together;
-other combinations are unverified. Colourfulness, red-green tint and
-illuminants other than the default mix channels and are refused. Natively
-they switch the copy to a different colour engine: its output is
-ordered-dithered to 32 levels per channel, with greys landing exactly on
-round(k * 255 / 31) and colours within a level or two of it, and the dither
-does not tile over source pixels. It is not modelled; see
-[`probe-windows-color-engine.py`](../scripts/probe-windows-color-engine.py).
+other combinations are unverified.
+
+Colourfulness, red-green tint and illuminants other than the default (D65)
+mix channels. Native GDI then reads the source through a colour engine
+([`color_engine.py`](../src/pillow_wmf/color_engine.py)) before stretching it,
+and the channel tables above apply to the engine's output:
+
+1. Each source pixel is ordered-dithered to 5 bits per channel: a channel
+   byte `v` becomes `(256 + round(v * 7935 / 255) - d) >> 8`, with one
+   threshold `d` per pixel shared by the three channels from a 66 x 65
+   table anchored at source pixel (0, 0). Each scan read advances the table
+   one row.
+2. The three 5-bit indexes select one of 32**3 precomputed colours. Each is
+   its node `(r, g, b) / 31` taken to CIE XYZ with the sRGB primaries and
+   the adjustment's illuminant as white, then to CIE L\*u\*v\*, where
+   colourfulness multiplies the chroma by `1 + colourfulness / 100` and
+   tint rotates its hue 0.6 degrees per step, and back to XYZ and sRGB under
+   the D65 device white. Results outside the gamut are rescaled into it.
+   All arithmetic is fixed point with six decimal places, rounded half
+   up; cube roots go through six-digit base-10 logarithms.
+
+A replicated enlargement reads each source row once, from row 0. The
+enlargement filter for up to five times the source size first reads row 0
+twice more for its window, so source row `y` takes table row `y + 2`, and
+the rows it repeats beyond either edge each take their own table row.
+Reductions, other enlargements and source rectangles away from the bitmap
+origin are refused until native references cover them.
 
 ## Right-to-left layout
 

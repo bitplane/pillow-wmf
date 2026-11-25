@@ -616,9 +616,6 @@ class RasterContext(ExecutionContext[DrawingState]):
             and not adjustment.flags & ~3
         ):
             raise InvalidOperation("COLORADJUSTMENT field out of range")
-        reason = adjustment.unsupported()
-        if reason:
-            raise UnsupportedOperation(f"set_color_adjustment: {reason}")
         return adjustment
 
     def _apply_set_color_adjustment(self, call, prepared, result):
