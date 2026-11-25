@@ -5,7 +5,9 @@ The ``colours`` source is 32x32 and holds 1024 colours: the 256 greys, the
 168 pseudo-random colours. The ``greys`` source is 64x64; pixel (x, y) is
 the grey x // 4 + 16 * (y // 4), so each grey appears at all sixteen
 positions of a 4x4 cell. Each ``grey-octets`` source is 64x64; pixel (x, y) is the grey
-base + x // 8 + 8 * (y // 8), at every position of an 8x8 cell. The ``grey-cells`` source is 256x256; pixel
+base + x // 8 + 8 * (y // 8), at every position of an 8x8 cell. Each
+``grey-sixteens`` source is 128x128; pixel (x, y) is the grey
+base + x // 16 + 8 * (y // 16), at every position of a 16x16 cell. The ``grey-cells`` source is 256x256; pixel
 (x, y) is the grey x // 16 + 16 * (y // 16), at every position of a 16x16
 cell. Each case selects a COLORADJUSTMENT, stretches its
 source four times (or the factor after ``-x`` in the case name) with StretchDIBits in HALFTONE mode, and prints the
@@ -79,7 +81,12 @@ def grey_octets(base):
     return lambda: [(v, v, v) for y in range(64) for x in range(64) for v in [base + x // 8 + 8 * (y // 8)]]
 
 
+def grey_sixteens(base):
+    return lambda: [(v, v, v) for y in range(128) for x in range(128) for v in [base + x // 16 + 8 * (y // 16)]]
+
+
 SOURCES = {"colours": (32, colours), "greys": (64, greys), "grey-cells": (256, grey_cells)}
+SOURCES |= {f"grey-sixteens{base}": (128, grey_sixteens(base)) for base in (0, 64, 128, 192)}
 SOURCES |= {f"grey-octets{base}": (64, grey_octets(base)) for base in (0, 64, 128, 192)}
 
 
@@ -93,6 +100,8 @@ def cases():
     ):
         yield "greys", f"greys-{name}", values
     yield "grey-cells", "grey-cells-colorfulness1", NEUTRAL | dict(colorfulness=1)
+    for base in (0, 64, 128, 192):
+        yield f"grey-sixteens{base}", f"grey-sixteens{base}-colorfulness1", NEUTRAL | dict(colorfulness=1)
     for base in (0, 64, 128, 192):
         yield f"grey-octets{base}", f"grey-octets{base}-colorfulness1", NEUTRAL | dict(colorfulness=1)
     # The same sources at other stretch factors: name-xSCALE.
