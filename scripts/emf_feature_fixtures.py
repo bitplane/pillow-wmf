@@ -568,6 +568,58 @@ def offset_ties(d):
         d.add(fixed.Rectangle(left, top, left + 30, top + 36), fixed.RestoreDC(-1))
 
 
+def top_down_dib(width, height, colour):
+    """A top-down 24-bit DIB split into (BitmapInfo, bits)."""
+    stride = (width * 3 + 3) & ~3
+    header = struct.pack("<IiiHHIIiiII", 40, width, -height, 1, 24, 0, stride * height, 0, 0, 0, 0)
+    rows = (b"".join(bytes(reversed(colour(x, y))) for x in range(width)) for y in range(height))
+    return header, b"".join(row + bytes(stride - len(row)) for row in rows)
+
+
+def hues(x, y):
+    """Many distinct colours, so HALFTONE filters rather than replicates."""
+    return (x * 37 + y * 11) % 256, (x * 13 + y * 41) % 256, (x * 23 + y * 29 + 90) % 256
+
+
+def color_engine(orientation, transfers):
+    """HALFTONE StretchDIBits through the colour engine (colourfulness, tint, illuminant)."""
+    dib = top_down_dib if orientation == "top-down" else rgb_dib
+
+    def draw(d):
+        d.add(fixed.SetStretchBltMode(HALFTONE))
+        for adjustment, clip, (x, y, width, height), (src_x, src_y, src_width, src_height), source in transfers:
+            colorfulness, tint, illuminant = adjustment
+            d.add(
+                fixed.SaveDC(),
+                fixed.SetColorAdjustment(24, 0, illuminant, 10000, 10000, 10000, 0, 10000, 0, 0, colorfulness, tint),
+            )
+            if clip:
+                d.add(fixed.IntersectClipRect(*clip))
+            info, bits = dib(*source)
+            offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+            placement = (x, y, src_x, src_y, src_width, src_height, offset, len(info), offset + len(info), len(bits))
+            d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *placement, 0, SRCCOPY, width, height, info + bits))
+            d.add(fixed.RestoreDC(-1))
+
+    return draw
+
+
+SMALL, WIDE = (16, 12, gradient), (50, 50, hues)
+ENGINE_REPLICATED = (
+    ((60, 0, 0), None, (2, 2, 64, 48), (0, 0, 16, 12), SMALL),
+    ((0, -40, 0), None, (66, 2, 48, 36), (0, 0, 16, 12), SMALL),
+    ((0, 0, 1), None, (2, 52, 64, 48), (3, 2, 10, 8), SMALL),
+    ((30, 20, 8), (70, 60, 110, 110), (66, 52, 60, 72), (0, 0, 10, 12), SMALL),
+)
+ENGINE_FILTERED = (((40, -30, 0), None, (1, 1, 125, 125), (0, 0, 50, 50), WIDE),)
+ENGINE_OFFSET = (((40, -30, 0), (10, 10, 110, 118), (0, 0, 120, 120), (5, 4, 40, 40), WIDE),)
+ENGINE_REDUCED = (
+    ((50, 0, 0), None, (4, 4, 30, 30), (0, 0, 50, 50), WIDE),
+    ((0, 30, 2), None, (40, 4, 41, 36), (0, 0, 50, 50), WIDE),
+)
+ENGINE_LARGE = (((-50, 60, 0), None, (2, 2, 120, 108), (0, 0, 16, 12), (16, 12, hues)),)
+
+
 def gradients(d):
     vertices = ((d.u(4), d.u(4), 0xFF00, 0, 0, 0), (d.u(60), d.u(40), 0, 0, 0xFF00, 0))
     d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
@@ -744,6 +796,17 @@ FEATURES = (
     ("blend-sources", blend_sources, (128,)),
     ("scan-bands", scan_bands, (128, 51)),
     ("offset-ties", offset_ties, (128,)),
+    *(
+        (f"color-engine-{name}-{orientation}", color_engine(orientation, transfers), (128,))
+        for name, transfers in (
+            ("replicated", ENGINE_REPLICATED),
+            ("filtered", ENGINE_FILTERED),
+            ("offset", ENGINE_OFFSET),
+            ("reduced", ENGINE_REDUCED),
+            ("large", ENGINE_LARGE),
+        )
+        for orientation in ("top-down", "bottom-up")
+    ),
     ("gradientfill", gradients, (128, 51)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
