@@ -931,6 +931,108 @@ def transform_limits(d):
     d.add(fixed.ScaleViewportExtEx(65537, 65536, 65537, 65536), fixed.Rectangle(30, 30, 40, 40), fixed.RestoreDC(-1))
 
 
+def gradient_rop2(d):
+    """GradientFill over a coloured ground under several ROP2 modes."""
+    transfer_background(d)
+    for column, mode in enumerate((7, 6, 15, 9)):  # XORPEN, NOT, WHITE, MASKPEN
+        left = 4 + 31 * column
+        d.add(fixed.SetROP2(mode))
+        vertices = ((d.u(left), d.u(4), 0xFF00, 0x2000, 0, 0), (d.u(left + 27), d.u(60), 0, 0x8000, 0xFF00, 0))
+        d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
+        corners = ((left, 68), (left + 27, 80), (left + 8, 124))
+        colours = ((0xFF00, 0, 0), (0, 0xFF00, 0), (0, 0, 0xFF00))
+        vertices = tuple((d.u(x), d.u(y), *colour, 0) for (x, y), colour in zip(corners, colours, strict=True))
+        d.add(variable.GradientFill((0, 0, 0, 0), 2, vertices, ((0, 1, 2),)))
+
+
+def rotated_insideframe(d):
+    """PS_INSIDEFRAME shapes under a rotating and a shearing world transform."""
+    transforms = (
+        (
+            math.cos(math.radians(20)),
+            math.sin(math.radians(20)),
+            -math.sin(math.radians(20)),
+            math.cos(math.radians(20)),
+        ),
+        (1.0, 0.0, 0.45, 1.0),
+    )
+    for row, matrix in enumerate(transforms):
+        d.add(fixed.SetWorldTransform(*matrix, d.u(6), d.u(4 + 62 * row)))
+        for column, width in enumerate((1, 6, 9)):
+            d.pen(6, d.u(width), (0x800000, 0x008000, 0x000080)[column])  # PS_INSIDEFRAME
+            d.brush(BS_HATCHED, 0x0080C0, HS_DIAGCROSS)
+            left = 4 + 38 * column
+            d.add(fixed.Rectangle(*d.rect(left, 2, left + 30, 18)))
+            d.add(fixed.Ellipse(*d.rect(left, 22, left + 30, 38)))
+            d.add(fixed.RoundRect(*d.rect(left, 40, left + 14, 56), d.u(8), d.u(6)))
+            d.add(fixed.Pie(*d.rect(left + 16, 40, left + 32, 56), *d.rect(left + 32, 48, left + 16, 40)))
+    d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+
+
+def rotated_color_adjustment(d):
+    """HALFTONE stretches with colour adjustment under a rotating transform."""
+    transfer_background(d)
+    d.add(fixed.SetStretchBltMode(HALFTONE))
+    angle = math.radians(15)
+    d.add(fixed.SetWorldTransform(math.cos(angle), math.sin(angle), -math.sin(angle), math.cos(angle), d.u(20), 0.0))
+    adjustments = (
+        (24, 0, 0, 10000, 10000, 10000, 0, 10000, 30, 20, 0, 0),
+        (24, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 40, -30),
+    )
+    for row, adjustment in enumerate(adjustments):
+        d.add(fixed.SetColorAdjustment(*adjustment))
+        info, bits = SOURCE
+        offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+        fields = (d.u(8), d.u(8 + 56 * row), 0, 0, 16, 12, offset, len(info), offset + len(info), len(bits), 0, SRCCOPY)
+        d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *fields, d.u(48), d.u(36), info + bits))
+        fields, data = source_fields(bitmaps.StretchBlt, SOURCE)
+        fields |= {"x": d.u(64), "y": d.u(8 + 56 * row), "width": d.u(40), "height": d.u(30)}
+        d.add(bitmaps.StretchBlt(**fields | {"rop": SRCCOPY, "src_width": 16, "src_height": 12}, data=data))
+
+
+def plgblt_mirrored_masks(d):
+    """Masked PlgBlt onto parallelograms mirrored on one axis of the source."""
+    transfer_background(d)
+    fields, data = source_fields(bitmaps.PlgBlt, (*SOURCE, *MASK))
+    fields |= {"src_width": 16, "src_height": 12}
+    corners = (
+        ((60, 8), (8, 8), (60, 44)),  # mirrored horizontally
+        ((68, 44), (120, 44), (68, 8)),  # mirrored vertically
+        ((50, 60), (8, 70), (60, 110)),  # mirrored and sheared
+        ((80, 120), (124, 110), (70, 70)),  # flipped and sheared
+    )
+    for (x0, y0), (x1, y1), (x2, y2) in corners:
+        placed = {"x0": d.u(x0), "y0": d.u(y0), "x1": d.u(x1), "y1": d.u(y1), "x2": d.u(x2), "y2": d.u(y2)}
+        d.add(bitmaps.PlgBlt(**fields | placed, data=data))
+
+
+def _rle8(rows):
+    """RLE8 bits for rows given bottom-up as lists of (count, index) runs."""
+    data = b""
+    for runs in rows:
+        data += b"".join(bytes((count, index)) for count, index in runs) + b"\0\0"
+    data += b"\0\1"
+    return data + bytes(-len(data) % 4)
+
+
+def rle_bands(d):
+    """SetDIBitsToDevice of an RLE8 DIB, whole and in partial bands."""
+    transfer_background(d)
+    palette = b"".join(bytes((b, g, r, 0)) for r, g, b in ((200, 30, 30), (30, 160, 30), (30, 30, 200), (230, 200, 40)))
+    # Bottom-up rows of a 12x8 DIB; the second row leaves its end unwritten.
+    rows = [[(12, y % 4)] if y != 1 else [(5, 1)] for y in range(8)]
+    bits = _rle8(rows)
+    info = struct.pack("<IiiHHIIiiII", 40, 12, 8, 1, 8, 1, len(bits), 0, 0, 4, 0) + palette
+    offset = 8 + struct.calcsize("<" + bitmaps.SetDIBitsToDevice.wire_layout)
+    for column, (start, count) in enumerate(((0, 8), (0, 4), (2, 3), (5, 6))):
+        placement = (d.u(4 + 30 * column), d.u(10), 0, 0, 12, 8)
+        blocks = (offset, len(info), offset + len(info), len(bits), 0, start, count)
+        d.add(bitmaps.SetDIBitsToDevice(0, 0, 0, 0, *placement, *blocks, info + bits))
+    placement = (d.u(4), d.u(60), 2, 1, 8, 5)
+    blocks = (offset, len(info), offset + len(info), len(bits), 0, 1, 6)
+    d.add(bitmaps.SetDIBitsToDevice(0, 0, 0, 0, *placement, *blocks, info + bits))
+
+
 def state_record(*records):
     """Records that should not change a bitmap DC's output, followed by drawing."""
 
@@ -1011,6 +1113,11 @@ FEATURES = (
     ("record-culling-dense", record_culling(True), (128,)),
     ("nested-reset", nested_reset, (128,)),
     ("transform-limits", transform_limits, (51,)),
+    ("gradient-rop2", gradient_rop2, (128,)),
+    ("rotated-insideframe", rotated_insideframe, (128, 51)),
+    ("rotated-color-adjustment", rotated_color_adjustment, (128,)),
+    ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
+    ("rle-bands", rle_bands, (128,)),
     *((f"state-{name}", state_record(*records), (128,)) for name, records in STATE_RECORDS.items()),
 )
 SCALE_NAMES = {128: "unit", 51: "up-2-5"}
