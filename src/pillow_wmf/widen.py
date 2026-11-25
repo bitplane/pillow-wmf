@@ -9,11 +9,13 @@ realized pen polygon, so flat and square caps, bevels and miters share it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from fractions import Fraction
 from math import atan2, floor, hypot, pi
 
 from .geometry import Point, Polygon, StrokeSegment
+from .numeric import float32
 from .stroke import PenGeometry, _body, _cap, _support_index
 
 CAP_ROUND, CAP_SQUARE, CAP_FLAT = 0, 1, 2
@@ -81,20 +83,74 @@ def _round_half_toward_zero(value: Fraction) -> int:
     return rounded if value >= 0 else -rounded
 
 
-def perpendicular(pen: PenGeometry, direction: Point) -> Point:
-    """The half-width vector on the left of ``direction``, on the pen polygon.
+def _pen_record(pen: PenGeometry) -> list[Point]:
+    """The pen as native widening stores it: its first half, from a vertex to
+    the opposite one, after the vertex that precedes the half around the pen."""
+    vertices = list(pen.vertices)
+    for index in range(1, len(vertices)):
+        if vertices[index] == vertices[index - 1]:
+            half = vertices[:index]
+            break
+    else:
+        half = vertices[: len(vertices) // 2 + 1]
+    return [(-half[-2][0], -half[-2][1]), *half]
 
-    A pen mirrored about both axes takes the vector of the direction's
-    first-quadrant reflection, mirrored back, so mirrored lines get mirrored
-    offsets whatever the rounding ties.
+
+def perpendicular(pen: PenGeometry, direction: Point) -> Point:
+    """The half-width vector on the left of ``direction``, as native widening computes it.
+
+    The record's first edge is the reverse of its last, so the signs of the
+    two edges' cross products with the direction differ, and a binary search
+    finds the draw vertex where the sign changes. The vector runs from half
+    the adjacent edge before that vertex along the edge with the smaller
+    cross product, by the share of the other cross product, divided with
+    rounding at the half. A record found from a negative first edge negates
+    the vector. Each component then snaps to a multiple of half a pixel,
+    x ties toward zero and y ties away from it.
     """
-    vertices = set(_polygon(pen))
-    if vertices == {(x, -y) for x, y in vertices} == {(-x, y) for x, y in vertices}:
-        sx, sy = (1 if value >= 0 else -1 for value in direction)
-        if sx < 0 or sy < 0:
-            x, y = _perpendicular(pen, (direction[0] * sx, direction[1] * sy))
-            return (x * sy, y * sx)
-    return _perpendicular(pen, direction)
+    dx, dy = direction
+    record = _pen_record(pen)
+
+    def cross(index):
+        start, end = record[index], record[index + 1]
+        return (end[1] - start[1]) * dx - (end[0] - start[0]) * dy
+
+    low, high = 0, len(record) - 2
+    before, after = cross(low), cross(high)
+    negative = before < 0
+    while True:
+        middle = low + (high - low) // 2
+        value = cross(middle)
+        if (value < 0) == negative:
+            before = value
+            if high == middle + 1:
+                break
+            low = middle
+        else:
+            after = value
+            high = middle
+            if middle == low + 1:
+                break
+    vertex = record[high]
+    before, after = abs(before), abs(after)
+    if after < before:
+        edge = (record[high + 1][0] - vertex[0], record[high + 1][1] - vertex[1])
+    else:
+        edge = (vertex[0] - record[high - 1][0], vertex[1] - record[high - 1][1])
+    total = before + after
+
+    def share(component):
+        if not total:
+            return 0
+        quotient, remainder = divmod(abs(component) * before, total)
+        quotient += remainder >= total >> 1
+        return quotient if component >= 0 else -quotient
+
+    x = share(edge[0]) + vertex[0] - (edge[0] >> 1)
+    y = share(edge[1]) + vertex[1] - (edge[1] >> 1)
+    if not negative:
+        x, y = -x, -y
+    return ((x + 3 + (x < 0)) & ~7, (y + 4 - (y < 0)) & ~7)
 
 
 def _perpendicular_edge(pen: PenGeometry, direction: Point) -> tuple[Point, Point]:
@@ -124,39 +180,38 @@ def _perpendicular(pen: PenGeometry, direction: Point) -> Point:
     raise AssertionError("Pen keys do not surround the direction")
 
 
+def _world_vector(shape: PenShape, vector: Point) -> tuple[int, int]:
+    """A 28.4 device vector taken back through the pen's world transform, in whole world units."""
+    vx, vy = vector[0] / 16, vector[1] / 16
+    if shape.transform is not None:
+        m11, m12, m21, m22 = shape.transform
+    else:
+        (m11, m22), m12, m21 = shape.scale, 0.0, 0.0
+    determinant = m11 * m22 - m12 * m21
+    if not determinant:
+        return (0, 0)
+    return (
+        _round_half_away((vx * m22 - vy * m21) / determinant),
+        _round_half_away((vy * m11 - vx * m12) / determinant),
+    )
+
+
 def square_vector(shape: PenShape, direction: Point) -> Point:
     """Half-width extension along the line, for square caps.
 
-    The unit logical direction is scaled by one device radius, that of the
-    larger axis, and rounded to 28.4. Under a scaling mapping it is first
-    rounded to sixteenths of a 28.4 unit. Under a rotating transform it is
-    half the logical width along the logical direction, mapped and rounded.
+    The 28.4 direction is scaled, in single precision, by half the pen's
+    world width over the direction's length in whole world units, and each
+    component rounded half away from zero.
     """
-    if shape.transform is not None:
-        # Under a rotating transform: half the logical width along the
-        # logical direction, mapped to 28.4.
-        m11, m12, m21, m22 = shape.transform
-        det = m11 * m22 - m12 * m21
-        lx, ly = (direction[0] * m22 - direction[1] * m21) / det, (direction[1] * m11 - direction[0] * m12) / det
-        length = hypot(lx, ly)
-        if not length:
-            return (0, 0)
-        half = shape.width / 2 / length
-        ex, ey = (lx * m11 + ly * m21) * half * 16, (lx * m12 + ly * m22) * half * 16
-        return floor(ex + 0.5), floor(ey + 0.5)
-    (rx, ry), (sx, sy) = shape.radius, shape.scale
-    lx, ly = direction[0] / sx if sx else 0.0, direction[1] / sy if sy else 0.0
-    length = hypot(lx, ly)
-    if not length:
+    wx, wy = _world_vector(shape, direction)
+    if not wx and not wy:
         return (0, 0)
-    radius = max(abs(rx), abs(ry))
-
-    def fixed(value):
-        if abs(sx) == abs(sy) == 1:
-            return round(value)
-        return (floor(value * 16 + 0.5) + 8) // 16
-
-    return (fixed(lx / length * radius * (1 if sx >= 0 else -1)), fixed(ly / length * radius * (1 if sy >= 0 else -1)))
+    length = float32(math.sqrt(float32(float32(float32(wy) * float32(wy)) + float32(float32(wx) * float32(wx)))))
+    ratio = float32(float32(shape.width * 0.5) / length)
+    return (
+        _round_half_away(float32(float32(direction[0]) * ratio)),
+        _round_half_away(float32(float32(direction[1]) * ratio)),
+    )
 
 
 def _dot(a, b):
@@ -207,6 +262,22 @@ def _miter(first: Point, first_direction, second: Point, second_direction) -> Po
         return None
     t = Fraction(_cross((second[0] - first[0], second[1] - first[1]), second_direction), denominator)
     return tuple(floor(first[axis] + first_direction[axis] * t + Fraction(1, 2)) for axis in (0, 1))
+
+
+def _round_half_away(value: float) -> int:
+    return int(floor(abs(value) + 0.5)) * (1 if value >= 0 else -1)
+
+
+def _miter_in_limit(shape: PenShape, vertex: Point, tip: Point) -> bool:
+    """Whether the miter tip lies within the miter limit, measured in world units.
+
+    The vertex-to-tip vector is taken back through the pen's world-to-device
+    transform, rounded to whole world units, and its squared length compared,
+    in single precision, with the square of half the pen width times the limit.
+    """
+    wx, wy = _world_vector(shape, (tip[0] - vertex[0], tip[1] - vertex[1]))
+    threshold = float32(float32(float32(shape.width * 0.5) * float32(shape.miter_limit)) ** 2)
+    return float32(float32(float32(wy) * float32(wy)) + float32(float32(wx) * float32(wx))) <= threshold
 
 
 def _miter_fits(first_direction, second_direction, limit) -> bool:
@@ -268,9 +339,9 @@ def _join(shape, vertex, incoming, outgoing, offset_in, offset_out, outer, arc=N
         return points
     if arc is not None:
         return [start, *_arc(shape, vertex, *arc, incoming, exclusive=True), end]
-    if shape.join == JOIN_MITER and _miter_fits(incoming, outgoing, shape.miter_limit):
+    if shape.join == JOIN_MITER:
         tip = _miter(start, incoming, end, outgoing)
-        if tip is not None:
+        if tip is not None and _miter_in_limit(shape, vertex, tip):
             return [start, tip, end]
     if shape.join == JOIN_ROUND:
         return [start, *_sweep(shape, vertex, offset_in, *edges, incoming), end]

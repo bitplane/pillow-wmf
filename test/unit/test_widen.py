@@ -19,7 +19,7 @@ from pillow_wmf.widen import (
 
 
 def shape(width, cap, join, limit=10.0):
-    return PenShape(realize_pen(width, 1, 1), (8 * width, 8 * width), (1.0, 1.0), cap, join, limit)
+    return PenShape(realize_pen(width, 1, 1), (8 * width, 8 * width), (1.0, 1.0), cap, join, limit, None, width)
 
 
 def figure(*points):
@@ -127,7 +127,9 @@ def test_axis_symmetric_pens_mirror_their_perpendiculars():
 
 def test_scaled_square_caps_round_twice():
     scale = (2.5092592239379883, 2.5098910331726074)
-    scaled = PenShape(realize_pen(2, *scale), (16 * scale[0], 16 * scale[1]), scale, CAP_SQUARE, JOIN_BEVEL)
+    scaled = PenShape(
+        realize_pen(2, *scale), (16 * scale[0], 16 * scale[1]), scale, CAP_SQUARE, JOIN_BEVEL, 10.0, None, 2
+    )
     # Native 28.4 extensions for these device directions of the 2.5x fixture.
     assert square_vector(scaled, (201, 362)) == (20, 35)
     assert square_vector(scaled, (200, 362)) == (19, 35)

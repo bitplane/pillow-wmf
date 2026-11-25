@@ -1,12 +1,10 @@
-import struct
 from io import BytesIO
 
 import pytest
 from PIL import Image
 
 from pillow_wmf import GDI, InvalidOperation, RasterContext, UnsupportedOperation, render
-from pillow_wmf.emf import Metafile, fixed, loader, variable
-from pillow_wmf.objects import RegionGeometry
+from pillow_wmf.emf import Metafile, fixed, loader, text
 from pillow_wmf.plugin import WmfImageFile
 
 UNIT_FRAME = (0, 0, 3388, 3383)  # 128 reference pixels square.
@@ -48,12 +46,10 @@ def test_pillow_opens_and_sizes_emf():
 
 
 def test_pillow_reports_unrenderable_emf_as_oserror():
-    # FrameRgn under a rotating world transform is not yet modelled.
-    region = struct.pack("<4I4i", 32, 1, 1, 16, 2, 2, 10, 10) + struct.pack("<4i", 2, 2, 10, 10)
-    frame = variable.FrameRgn(bounds=(0, 0, 0, 0), brush=0x80000004, width=1, height=1, region=region)
-    records = [fixed.SetWorldTransform(0.8, 0.6, -0.6, 0.8, 0.0, 0.0), frame]
+    # Text is not yet drawn during EMF playback.
+    records = [text.ExtTextOutA((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, b"a\0\0\0")]
     data = Metafile.build(records, frame=UNIT_FRAME).to_bytes()
-    with Image.open(BytesIO(data)) as image, pytest.raises(OSError, match="rotating"):
+    with Image.open(BytesIO(data)) as image, pytest.raises(OSError, match="GM_ADVANCED"):
         image.load()
     with Image.open(BytesIO(drawing(frame=(10, 10, 0, 0)))) as image, pytest.raises(OSError, match="reversed"):
         image.load()
@@ -69,8 +65,8 @@ def test_raster_world_transform_contract():
     context.set_world_transform(0.0, 1.0, -1.0, 0.0, 8.0, 0.0)
     assert context.mapping.rotated and context.mapping.device_point(2, 3) == (5, 2)
     # Unmodelled operations are refused under rotation, not drawn unrotated.
-    with pytest.raises(UnsupportedOperation, match="rotating"):
-        context.frame_region(context.create_region(RegionGeometry(((0, 0, 4, 4),))), context.get_stock_object(4), 1, 1)
+    with pytest.raises(UnsupportedOperation, match="GM_ADVANCED|rotating"):
+        context.text_out(0, 0, b"x")
     context.set_world_transform(2.0, 0.0, 0.0, 3.0, 1.0, 0.5)
     assert context.mapping.world == (2.0, 0.0, 0.0, 3.0, 1.0, 0.5)
     assert context.mapping.device_point(2, 2) == (5, 7)

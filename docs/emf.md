@@ -92,7 +92,7 @@ the codec and reference columns against the code and fixtures.
 | `SCALEWINDOWEXTEX` | typed | partial | no | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
-| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing except text and `FrameRgn`; see below. |
+| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing except text; see below. |
 | `MODIFYWORLDTRANSFORM` | typed | partial | yes | As SETWORLDTRANSFORM. |
 | `SELECTOBJECT` | typed | partial | yes | Stock brushes, pens and palette; stock fonts need the font work. |
 | `CREATEPEN` | typed | full | yes |  |
@@ -255,17 +255,23 @@ point:
 
 - Round caps with round joins use the support-vertex construction shared with
   wide `CreatePen` strokes. Square caps with round joins keep those bodies.
-- Every other combination places the body on a perpendicular chosen from the
-  realized pen polygon: a line parallel to a pen edge uses the edge midpoint,
-  a line parallel to the chord across a vertex uses that vertex, and other
-  directions interpolate between them by cross-product weights before snapping
-  to the half-pixel grid. A pen mirrored about both device axes takes the
-  vector of the direction's first-quadrant reflection, mirrored back, so
-  mirrored lines get mirrored bodies. Flat and square caps, bevels and miters
-  share it.
+- Every other combination places the body on the pen perpendicular as native
+  widening computes it. The pen is held as its first half, from a vertex to
+  the opposite one, after the vertex preceding that half around the pen, so
+  its first edge is the reverse of its last. A binary search over the edges'
+  cross products with the line direction finds the draw vertex where their
+  sign changes; the perpendicular runs from half the adjacent edge before it
+  along the edge with the smaller cross product, by the share of the other,
+  divided with rounding at the half, and is negated when the first edge's
+  cross product is negative. Each component snaps to the half-pixel grid, x
+  ties toward zero and y ties away from it. Flat and square caps, bevels and
+  miters share it.
 - Inner joins pass through the vertex; round inner joins also sweep the pen.
-  Miter tips round to the nearest 28.4 point; miters longer than the limit
-  bevel.
+  Miter tips round to the nearest 28.4 point. A tip is kept when the vector
+  from the vertex to it, taken back through the pen's world transform and
+  rounded to whole world units, is no longer than half the pen width times
+  the miter limit (compared squared, in single precision); otherwise the
+  join bevels.
 - Round caps and round joins walk the pen's vertices between the pen edges
   holding the two offsets: each offset's edge is the one whose keyframe
   interval holds the segment direction (taken unmirrored, even where the
@@ -276,10 +282,10 @@ point:
   caps with round joins sweep between their support vertices instead, and a
   sweep reaching the head of the pen's second half in vertex order also
   emits that vertex.
-- Square caps extend along the logical direction by the device half-width of
-  the larger axis, rounded to 28.4; under a scaling mapping it is first rounded
-  to sixteenths of a 28.4 unit. Under a rotating transform the extension is
-  half the logical width along the logical direction, mapped to 28.4.
+- Square caps extend along the line by the 28.4 direction scaled, in single
+  precision, by half the pen's world width over the direction's length in
+  whole world units (the direction taken back through the pen's world
+  transform and rounded), each component rounded half away from zero.
 - Predefined geometric styles are multiples of the width (dash 3:1, dot 1:1,
   and so on); user styles are logical lengths. Dashes are measured in logical
   units, cut by interpolating along the device segment, and drawn as open
@@ -466,6 +472,11 @@ products plus the 28.4 translation.
   always.
 - `FillRgn`, `PaintRgn` and `InvertRgn` trace the region's outline (corner
   vertices only), map it to 28.4 and fill it as a polygon.
+- `FrameRgn` widens that outline with a geometric pen twice the larger frame
+  size wide, with mitred joins and the DC's miter limit, whose world
+  transform squeezes the smaller axis by the sizes' ratio (an ellipse of
+  twice the frame sizes in logical units), and paints the widened outline's
+  winding fill within the region.
 
 PlgBlt inverts the mapping at each pixel's integer point against the 28.4
 parallelogram. A source column on an exact boundary belongs to the column it
@@ -474,19 +485,10 @@ pixel in device space. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
-- Tie rounding of the geometric pen perpendicular under a rotating or
-  shearing transform: about one segment direction in fifteen, at exact
-  half-pixel ties, snaps the other way natively.
-- A square cap's extension under a general (non-orthogonal) transform can
-  land one sixteenth further out natively than rounding the mapped
-  half-width gives.
-
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
-- Under rotating or shearing transforms: text and `FrameRgn` are refused.
-  Eroding the region by the frame size in logical units, as a box, comes
-  within a few dozen pixels of native `FrameRgn` output but is not exact.
+- Under rotating or shearing transforms: text is refused.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
   mask mirrored within the source rectangle; only fully mirrored cases have
   native references.

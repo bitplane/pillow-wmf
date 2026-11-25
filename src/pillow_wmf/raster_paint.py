@@ -551,6 +551,8 @@ class RasterPainter:
                 CAP_ROUND,
                 JOIN_MITER,
                 self.state.miter_limit,
+                tuple(float(value) for value in self.state.mapping.world[:4]),
+                width,
             )
             perps = None
             if closed and len(segments) == 4:

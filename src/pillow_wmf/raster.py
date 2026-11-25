@@ -174,7 +174,6 @@ class ParallelogramTransfer:
 # shearing world transform refuses them rather than drawing them unrotated.
 AXIS_ALIGNED_ONLY = frozenset(
     {
-        "frame_region",
         "text_out",
         "ext_text_out",
     }
@@ -1359,14 +1358,15 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     _apply_restore_dc = _apply_save_dc
 
-    def _polygon_mask(self, contours) -> RegionMask:
+    def _polygon_mask(self, contours, *, fill_mode=ALTERNATE) -> RegionMask:
         """The pixels a polygon fill of 28.4 ``contours`` covers, as a region."""
-        contours = tuple(contour for contour in contours if contour)
+        contours = tuple(tuple(contour) for contour in contours if contour)
         if not contours:
             return RegionMask()
         xs = [x for contour in contours for x, _ in contour]
         ys = [y for contour in contours for _, y in contour]
-        spans = coverage_spans(contours, min(xs) // 16, min(ys) // 16, max(xs) // 16 + 1, max(ys) // 16 + 1)
+        bounds = (min(xs) // 16, min(ys) // 16, max(xs) // 16 + 1, max(ys) // 16 + 1)
+        spans = coverage_spans(contours, *bounds, fill_mode=fill_mode)
         return RegionMask.from_rectangles((start, y, end, y + 1) for y, start, end in spans)
 
     def _apply_intersect_clip_rect(self, call, prepared, result):
@@ -1420,7 +1420,10 @@ class RasterContext(ExecutionContext[DrawingState]):
         if region is not None and self.mapping.rotated:
             # The region's outline is transformed and filled as a polygon.
             loops = region_outlines(region.rectangles())
-            mask = self._polygon_mask(tuple([self.mapping.fixed_point(*point) for point in loop] for loop in loops))
+            contours = tuple([self.mapping.fixed_point(*point) for point in loop] for loop in loops)
+            mask = self._polygon_mask(contours)
+            if name == "frame_region":
+                mask = self._rotated_frame(contours, mask, abs(a["width"]), abs(a["height"]))
             brush = self._objects[a["brush"]] if "brush" in a else self._state.brush
             for left, top, right, bottom in mask.rectangles():
                 if name == "invert_region":
@@ -1448,6 +1451,31 @@ class RasterContext(ExecutionContext[DrawingState]):
                         painter.span(y, left, right, (0, 0, 0), operation=R2_NOT)
                 else:
                     painter.fill_box(left, top, right, bottom, brush)
+
+    def _rotated_frame(self, contours, mask, width, height) -> RegionMask:
+        """FrameRgn as native GDI draws it: the region's widened outline within the region.
+
+        The outline is widened by a geometric pen with mitred joins and the DC's
+        miter limit, twice the larger frame size wide, whose world transform
+        squeezes the smaller axis by the sizes' ratio: an ellipse of twice
+        the frame sizes in logical units. Its winding fill is intersected with
+        the region.
+        """
+        if width < 1 or height < 1:
+            return RegionMask()
+        m11, m12, m21, m22, dx, dy = self.mapping.world
+        ratio = float32(float32(2 * min(width, height)) / float32(2 * max(width, height)))
+        if 2 * width < 2 * height:
+            m11, m12 = float32(ratio * m11), float32(ratio * m12)
+        else:
+            m21, m22 = float32(ratio * m21), float32(ratio * m22)
+        mapping = replace(self.mapping, world=(m11, m12, m21, m22, dx, dy))
+        pen = Pen((0, 0, 0), 2 * max(width, height), PS_SOLID, geometric=True, cap=0, join=2)
+        painter = RasterPainter(self.surface, replace(self._state, pen=pen, mapping=mapping))
+        figures = tuple(DevicePath.polyline(contour + contour[:1], closed=True) for contour in contours)
+        outlines = tuple(painter.widened_outlines(figures))
+        frame = self._polygon_mask(outlines, fill_mode=WINDING)
+        return frame.intersection(mask)
 
     _apply_paint_region = _apply_fill_region
     _apply_invert_region = _apply_fill_region
