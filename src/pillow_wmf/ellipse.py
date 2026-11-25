@@ -30,6 +30,10 @@ def inside_frame_bounds(logical_bounds, device_bounds, width, scale):
     )
 
 
+# GDI's 0.32 circle-inset constant; see gdi_math.circle_control.
+_CIRCLE_INSET = 0x729D7775
+
+
 def box_corners(bounds):
     """Native box traversal: retain the upper edge, reflect about its centre."""
     left, top, right, bottom = bounds
@@ -47,6 +51,13 @@ def box_axes(bounds):
         a + (b - a + 1) // 2 + (d - a + 1) // 2 for a, b, d in zip(top_right, top_left, bottom_right, strict=False)
     )
     return centre, horizontal, north
+
+
+def advanced_box_axes(bounds):
+    """Centre and half-axis vectors of a GM_ADVANCED box, as its ellipse uses them."""
+    left, top, right, bottom = bounds
+    half_height = (bottom - top) >> 1
+    return (right - ((right - left) >> 1), bottom - half_height), ((right - left + 1) >> 1, 0), (0, -half_height)
 
 
 def _ellipse_bounds(left, top, right, bottom, *, null_pen=False):
@@ -84,10 +95,53 @@ def ellipse_cubics(
     return tuple(tuple((cx + x, cy + y) for x, y in curve) for curve in curves)
 
 
+def advanced_ellipse_cubics(
+    left: int, top: int, right: int, bottom: int
+) -> tuple[tuple[Point, Point, Point, Point], ...]:
+    """GM_ADVANCED ellipse cubics from a transformed, lower-right-inclusive 28.4 box.
+
+    Edges keep their world orientation, so a mirrored transform gives
+    ``right < left``. The upper half starts at the right edge; its control
+    insets come from the half-width (rounded up) and half-height (rounded
+    down) with GDI's circle constant. The lower half reflects it through the
+    box's exact centre, so odd spans place opposite points a sixteenth
+    apart. For even integer boxes this is the compatible-mode construction.
+    """
+    centre_x = (left + right) >> 1
+    half_width = right - centre_x
+    half_height = (bottom - top) >> 1
+    x_inset = (half_width * _CIRCLE_INSET) >> 32
+    y_inset = -((-half_height * _CIRCLE_INSET) >> 32)
+    upper = (
+        (right, bottom - half_height),
+        (right, top + y_inset),
+        (right - x_inset, top),
+        (centre_x, top),
+        (left + x_inset, top),
+        (left, top + y_inset),
+    )
+    points = (*upper, *((left + right - x, top + bottom - y) for x, y in upper), upper[0])
+    return tuple(tuple(points[index : index + 4]) for index in range(0, 12, 3))
+
+
 def round_rect_figure(
-    left, top, right, bottom, ellipse_width, ellipse_height, *, null_pen=False, drawing_bounds=None, clockwise=False
+    left,
+    top,
+    right,
+    bottom,
+    ellipse_width,
+    ellipse_height,
+    *,
+    null_pen=False,
+    drawing_bounds=None,
+    clockwise=False,
+    advanced=False,
 ) -> DevicePath:
-    """Place canonical ellipse quarters at four centres and connect the edges."""
+    """Place canonical ellipse quarters at four centres and connect the edges.
+
+    ``advanced`` reflects the upper half through the exact centre of the
+    inclusive GM_ADVANCED box, as its ellipse does.
+    """
     if not ellipse_width or not ellipse_height:
         bounds = drawing_bounds or (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
         return DevicePath.polyline(box_corners(bounds), closed=True)
@@ -123,7 +177,8 @@ def round_rect_figure(
     ):
         upper.append((start, control(start, corner), control(end, corner), end))
     cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-    curves = (*upper, *(tuple((2 * cx - x, 2 * cy - y) for x, y in curve) for curve in upper))
+    sum_x, sum_y = (x0 + x1, y0 + y1) if advanced else (2 * cx, 2 * cy)
+    curves = (*upper, *(tuple((sum_x - x, sum_y - y) for x, y in curve) for curve in upper))
     if clockwise:
         curves = tuple(tuple((x, 2 * cy - y) for x, y in curve) for curve in curves)
     commands = tuple(
@@ -153,15 +208,17 @@ def arc_cubics(
     drawing_bounds=None,
     radial_bounds=None,
     clockwise=False,
+    advanced=False,
 ) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """Cut an exclusive-bound ellipse at two radial directions.
 
     Normalize radials in the inclusive device box, then construct cubics in
     the exclusive-bound drawing box. WMF stores points on the radials, not
-    points required to lie on the ellipse.
+    points required to lie on the ellipse. ``advanced`` takes the
+    GM_ADVANCED ellipse from the inclusive 28.4 ``drawing_bounds``.
     """
     x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
-    centre, horizontal, north = box_axes((x0, y0, x1, y1))
+    centre, horizontal, north = (advanced_box_axes if advanced else box_axes)((x0, y0, x1, y1))
     radial_left, radial_top, radial_right, radial_bottom = radial_bounds or (left, top, right, bottom)
     radial_cx = (radial_left + radial_right) / 2
     radial_cy = (radial_top + radial_bottom) / 2
@@ -210,9 +267,12 @@ def arc_cubics(
         return tuple(result)
 
     cubics = []
-    quadrants = ellipse_cubics(
-        left, top, right, bottom, null_pen=null_pen, drawing_bounds=drawing_bounds, clockwise=clockwise
-    )
+    if advanced:
+        quadrants = advanced_ellipse_cubics(x0, y0, x1, y1)
+    else:
+        quadrants = ellipse_cubics(
+            left, top, right, bottom, null_pen=null_pen, drawing_bounds=drawing_bounds, clockwise=clockwise
+        )
     for index, (a, b) in enumerate(pairwise(boundaries)):
         if 0 < index < len(boundaries) - 2:
             cubic = quadrants[round(a / 90) % 4]
@@ -247,6 +307,7 @@ def arc_figure(
     drawing_bounds=None,
     radial_bounds=None,
     clockwise=False,
+    advanced=False,
 ) -> DevicePath:
     """Retain one arc figure, optionally closed directly or through its centre."""
     curves = arc_cubics(
@@ -260,6 +321,7 @@ def arc_figure(
         drawing_bounds=drawing_bounds,
         radial_bounds=radial_bounds,
         clockwise=clockwise,
+        advanced=advanced,
     )
     if closure == "open":
         return DevicePath(curves, closed=start == end)
@@ -267,7 +329,7 @@ def arc_figure(
         closing = ((curves[-1][-1], curves[0][0]),)
     elif closure == "pie":
         x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
-        centre, _, _ = box_axes((x0, y0, x1, y1))
+        centre, _, _ = (advanced_box_axes if advanced else box_axes)((x0, y0, x1, y1))
         # Native Pie appends the centre after the cubics and closes there,
         # including full revolutions. Preserve that order for styled pens.
         closing = ((curves[-1][-1], centre), (centre, curves[0][0]))

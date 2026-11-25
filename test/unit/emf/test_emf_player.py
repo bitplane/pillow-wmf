@@ -348,21 +348,33 @@ def test_dib_transfers_join_the_header_and_bits():
             color_usage=0,
             source=source,
         ),
+        # A whole-image SetDIBitsToDevice plays as a SRCCOPY stretch.
         Call.make(
-            "set_dib_to_device",
+            "stretch_dib",
             x=1,
             y=2,
             width=1,
             height=1,
             src_x=0,
             src_y=0,
-            start_scan=0,
-            scan_count=1,
+            src_width=1,
+            src_height=1,
+            rop=0x00CC0020,
             color_usage=0,
             source=source,
         ),
         Call.make("create_dib_pattern_brush", style=5, color_usage=0, bitmap=source),
     ]
+
+
+def test_set_dib_to_device_bands():
+    tall = DIB[:8] + struct.pack("<i", 2) + DIB[12:]  # Two scan lines, one supplied.
+    band = bitmaps.SetDIBitsToDevice(0, 0, 0, 0, 1, 2, 0, 0, 1, 1, 76, 40, 116, 4, 0, 1, 1, tall + PIXEL)
+    calls, omissions = run([band], strict=True)
+    assert [call.name for call in calls] == ["set_dib_to_device"]
+    trace = TraceContext()
+    omissions = play(Metafile.build([band], frame=(0, 0, 1000, 1000)), trace, rect=(0, 0, 128, 128))
+    assert [o.reason for o in omissions] == ["Scaled SetDIBitsToDevice bands are not yet supported"]
 
 
 def test_offsets_outside_the_record_are_reported():

@@ -31,6 +31,7 @@ STOCK_OBJECT = 0x80000000
 BS_NULL = 1
 BS_DIBPATTERN = 5
 DIB_RGB_COLORS = 0
+SRCCOPY = 0x00CC0020
 GM_COMPATIBLE = 1
 ETO_NO_RECT = text.ETO_NO_RECT
 PS_GEOMETRIC = 0x00010000
@@ -146,9 +147,39 @@ def _stretch_dib(record):
     }
 
 
-def _set_dib_to_device(record):
+def _dib_height(info: bytes) -> int | None:
+    """The DIB height from a BITMAPCOREHEADER or BITMAPINFOHEADER, if present."""
+    if len(info) >= 12 and struct.unpack_from("<I", info)[0] == 12:
+        return struct.unpack_from("<h", info, 6)[0]
+    return struct.unpack_from("<i", info, 8)[0] if len(info) >= 12 else None
+
+
+def _set_dib_to_device(record, matrix):
+    """Native playback scales the transfer with the playback transform.
+
+    A record carrying every scan line plays exactly as a SRCCOPY stretch of
+    the whole source rectangle. Partial bands are unverified unless the
+    transform only translates.
+    """
     if not record.bitmap_size:
         raise Unsupported("SetDIBitsToDevice without a bitmap")
+    height = _dib_height(record.bitmap_info)
+    if record.start_scan == 0 and height is not None and record.scan_count >= abs(height):
+        return "stretch_dib", {
+            "x": record.x,
+            "y": record.y,
+            "width": record.src_width,
+            "height": record.src_height,
+            "src_x": record.src_x,
+            "src_y": record.src_y,
+            "src_width": record.src_width,
+            "src_height": record.src_height,
+            "rop": SRCCOPY,
+            "color_usage": record.usage,
+            "source": _dib(record),
+        }
+    if (matrix[0], matrix[3]) != (1.0, 1.0):
+        raise Unsupported("Scaled SetDIBitsToDevice bands are not yet supported")
     return "set_dib_to_device", {
         "x": record.x,
         "y": record.y,
@@ -248,7 +279,6 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.BitBlt: _source_blit,
     bitmaps.StretchBlt: _source_blit,
     bitmaps.StretchDIBits: _stretch_dib,
-    bitmaps.SetDIBitsToDevice: _set_dib_to_device,
     bitmaps.CreateDIBPatternBrushPt: lambda r: (
         "create_dib_pattern_brush",
         {"style": BS_DIBPATTERN, "color_usage": r.usage, "bitmap": _dib(r)},
@@ -432,6 +462,12 @@ def play(
                     invoke(index, kind, "delete_object", {"handle": region})
             continue
         translate = TRANSLATIONS.get(type(record))
+        if isinstance(record, bitmaps.SetDIBitsToDevice):
+            matrix = transform.matrix()
+
+            def translate(record, matrix=matrix):
+                return _set_dib_to_device(record, matrix)
+
         creation = kind in CREATION_TYPES
         if creation and not 0 < record.object_index < len(slots):
             continue  # Native playback cannot store the object.

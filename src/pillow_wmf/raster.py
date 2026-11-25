@@ -43,7 +43,14 @@ from .constants import (
     WHITEONBLACK,
     WINDING,
 )
-from .ellipse import arc_figure, box_corners, ellipse_cubics, inside_frame_bounds, round_rect_figure
+from .ellipse import (
+    advanced_ellipse_cubics,
+    arc_figure,
+    box_corners,
+    ellipse_cubics,
+    inside_frame_bounds,
+    round_rect_figure,
+)
 from .execution import CREATED_KINDS, ExecutionContext
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon
@@ -720,6 +727,12 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if drawing_bounds and not (pen.cosmetic and advanced_bounds):
                     bounds = drawing_bounds
                 path = DevicePath.polyline(box_corners(bounds), closed=True)
+            elif name == "ellipse" and advanced_bounds is not None and drawing_bounds is advanced_bounds:
+                (x0, y0), (x1, y1) = (
+                    self.mapping.fixed_point(a["left"], a["top"]),
+                    self.mapping.fixed_point(a["right"], a["bottom"]),
+                )
+                path = DevicePath(advanced_ellipse_cubics(x0, y0, x1, y1), closed=True)
             elif name == "ellipse":
                 path = DevicePath(
                     ellipse_cubics(
@@ -749,6 +762,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                     null_pen=self._state.pen.style == PS_NULL,
                     drawing_bounds=drawing_bounds,
                     clockwise=self.mapping.rtl,
+                    advanced=advanced_bounds is not None and drawing_bounds is advanced_bounds,
                 )
             else:
                 sx, sy = (1 if value >= 0 else -1 for value in self.mapping.linear_scale)
@@ -768,6 +782,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                     drawing_bounds=drawing_bounds,
                     radial_bounds=(x0, y0, x1, y1),
                     clockwise=self.mapping.rtl,
+                    advanced=advanced_bounds is not None and drawing_bounds is advanced_bounds,
                 )
             if covered:
                 for x, y in painter.contour_pixels((path.vertices,)):
