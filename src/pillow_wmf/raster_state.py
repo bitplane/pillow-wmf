@@ -15,6 +15,14 @@ class Pen:
     color: tuple[int, int, int] | PaletteIndex
     width: int = 1
     style: int = PS_SOLID
+    # ExtCreatePen geometric pens choose their end cap and join (PS_ENDCAP_*
+    # and PS_JOIN_* indices). CreatePen pens are never geometric.
+    geometric: bool = False
+    cap: int = 0
+    join: int = 0
+    # Extended styles as alternating dash and gap lengths: logical units for
+    # geometric pens, device pixels for cosmetic pens. Empty is unstyled.
+    pattern: tuple = ()
 
 
 @dataclass(frozen=True)

@@ -14,7 +14,7 @@ from collections.abc import Callable
 
 from ..binary import FormatError, Limits
 from ..bitmap16 import encode_bitmap16
-from ..constants import ETO_CLIPPED, ETO_GLYPH_INDEX, ETO_OPAQUE, GM_ADVANCED, PS_NULL, PS_SOLID
+from ..constants import ETO_CLIPPED, ETO_GLYPH_INDEX, ETO_OPAQUE, GM_ADVANCED
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
@@ -35,10 +35,6 @@ DIB_RGB_COLORS = 0
 SRCCOPY = 0x00CC0020
 GM_COMPATIBLE = 1
 ETO_NO_RECT = text.ETO_NO_RECT
-PS_GEOMETRIC = 0x00010000
-PS_TYPE_MASK = 0x000F0000
-PS_STYLE_MASK = 0x0000000F
-PS_USERSTYLE = 7
 EMFPLUS_HEADER = 0x4001
 EMFPLUS_DUAL = 0x0001
 RGN_COPY = 5
@@ -286,16 +282,17 @@ def _mono_brush(record):
 
 
 def _ext_create_pen(record):
-    """Pens that CreatePen can also make; patterned, styled and other pens are not."""
-    style = record.style & PS_STYLE_MASK
-    pen_type = record.style & PS_TYPE_MASK
-    if record.brush_style != 0 or record.style_entries or style == PS_USERSTYLE or style > PS_USERSTYLE:
-        raise Unsupported("Extended pen brushes and styles are not yet supported")
-    if pen_type == 0 and record.width <= 1:
-        return "create_pen", {"style": style, "width": record.width, "color": record.color}
-    if pen_type == PS_GEOMETRIC and record.width > 1 and style in (PS_SOLID, PS_NULL, 6):
-        return "create_pen", {"style": record.style & ~PS_TYPE_MASK, "width": record.width, "color": record.color}
-    raise Unsupported("Extended pen type is not yet supported")
+    """Pens with a solid LOGBRUSH; patterned brushes are not yet supported."""
+    if record.brush_style != 0:
+        raise Unsupported("Extended pen brushes are not yet supported")
+    return "ext_create_pen", {
+        "style": record.style,
+        "width": record.width,
+        "color": record.color,
+        "brush_style": record.brush_style,
+        "hatch": record.hatch,
+        "entries": tuple(record.style_entries),
+    }
 
 
 def _ext_text_out(record):

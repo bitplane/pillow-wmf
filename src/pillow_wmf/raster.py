@@ -81,6 +81,11 @@ def rgb(colorref: int) -> tuple[int, int, int]:
     return colorref & 255, (colorref >> 8) & 255, (colorref >> 16) & 255
 
 
+# Geometric predefined styles, in multiples of the pen width.
+GEOMETRIC_DASHES = {1: (3, 1), 2: (1, 1), 3: (3, 1, 1, 1), 4: (3, 1, 1, 1, 1, 1)}
+PS_USERSTYLE, PS_ALTERNATE = 7, 8
+
+
 def logical_color(colorref):
     # PALETTEINDEX is a flag, not an exclusive high-byte value. Other high
     # bits do not cancel it, including sign-extended colours in legacy files.
@@ -569,6 +574,35 @@ class RasterContext(ExecutionContext[DrawingState]):
         return Pen(logical_color(a["color"]), abs(a["width"]), style)
 
     _apply_create_pen = _store_object
+
+    def _prepare_ext_create_pen(self, a):
+        style = a["style"]
+        kind, line_style = style & 0x000F0000, style & 0x0F
+        cap, join = (style >> 8) & 0x0F, (style >> 12) & 0x0F
+        entries = tuple(a["entries"])
+        if style & ~0x000FFF0F or kind not in (0, 0x00010000) or cap > 2 or join > 2 or line_style > PS_ALTERNATE:
+            raise InvalidOperation("Unrecognized extended pen style")
+        if (line_style == PS_USERSTYLE) != bool(entries) or len(entries) > 16 or any(e < 0 for e in entries):
+            raise InvalidOperation("User styles need between one and sixteen entries")
+        if a["brush_style"] != BS_SOLID:
+            raise UnsupportedOperation("Extended pen brushes are not yet supported")
+        color = logical_color(a["color"])
+        if not kind:
+            if line_style == PS_INSIDEFRAME:
+                raise InvalidOperation("Cosmetic pens cannot be inside-frame")
+            # Cosmetic pens are one device pixel wide whatever their width.
+            # User style units are three pixels, like the predefined styles.
+            pattern = {PS_ALTERNATE: (1, 1), PS_USERSTYLE: tuple(3 * e for e in entries)}.get(line_style, ())
+            return Pen(color, 0, PS_SOLID if pattern else line_style, pattern=pattern)
+        if a["width"] <= 0 or line_style == PS_ALTERNATE:
+            raise InvalidOperation("Geometric pens need a positive width and no alternate style")
+        if line_style == PS_USERSTYLE:
+            pattern = entries
+        else:
+            pattern = tuple(a["width"] * factor for factor in GEOMETRIC_DASHES.get(line_style, ()))
+        return Pen(color, a["width"], line_style, geometric=True, cap=cap, join=join, pattern=pattern)
+
+    _apply_ext_create_pen = _store_object
 
     def _prepare_get_stock_object(self, a):
         """Stock brushes and pens are ordinary objects; the default palette is shared."""

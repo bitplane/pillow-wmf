@@ -8,6 +8,7 @@ from .limits import DEFAULT_LIMITS
 
 CREATED_KINDS = {
     "create_pen": "pen",
+    "ext_create_pen": "pen",
     "create_brush": "brush",
     "create_font": "font",
     "create_palette": "palette",

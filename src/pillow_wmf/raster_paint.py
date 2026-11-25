@@ -16,6 +16,7 @@ from .constants import (
     PS_NULL,
     R2_COPYPEN,
     TRANSPARENT,
+    WINDING,
 )
 from .flood import flood_spans
 from .geometry import DevicePath, Polygon, coverage_spans
@@ -23,6 +24,8 @@ from .paint import pattern_rop2, rop2, rop3
 from .raster_state import Brush, DrawingState
 from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outline, realize_pen, widen_segment
 from .surface import Surface
+from .widen import CAP_FLAT, CAP_ROUND, JOIN_ROUND, PenShape, dash_figures
+from .widen import outline as widen_outline
 
 
 @dataclass
@@ -265,7 +268,8 @@ class RasterPainter:
             # when the figure retraces itself. Keep multiplicity in each pass.
             passes = (
                 (False, True)
-                if self.state.pen.style in range(1, 5) and self.state.background_mode != TRANSPARENT
+                if (self.state.pen.style in range(1, 5) or self.state.pen.pattern)
+                and self.state.background_mode != TRANSPARENT
                 else (True,)
             )
             for foreground in passes:
@@ -279,7 +283,25 @@ class RasterPainter:
 
     @cached_property
     def realized_pen(self):
-        return realize_pen(self.state.pen.width, *self.state.mapping.linear_scale)
+        pen = realize_pen(self.state.pen.width, *self.state.mapping.linear_scale)
+        # Geometric pens are widened even below the cosmetic hairline width.
+        return replace(pen, cosmetic=False) if self.state.pen.geometric else pen
+
+    @cached_property
+    def pen_shape(self) -> PenShape | None:
+        """Outline construction for geometric caps and joins other than round."""
+        pen = self.state.pen
+        if not pen.geometric or (pen.cap == CAP_ROUND and pen.join == JOIN_ROUND):
+            return None
+        sx, sy = self.state.mapping.linear_scale
+        return PenShape(
+            self.realized_pen,
+            (8 * pen.width * sx, 8 * pen.width * sy),
+            (float(sx), float(sy)),
+            pen.cap,
+            pen.join,
+            self.state.miter_limit,
+        )
 
     def _cosmetic_fragments(self, paths):
         if self.state.pen.style == PS_NULL:
@@ -297,11 +319,22 @@ class RasterPainter:
                     continue
                 for pixel in cosmetic_line(start, end, self._width, self._height):
                     phase = position + span.step * (pixel[major] - span.start)
-                    if self.state.pen.style in (0, 6) or dash_is_foreground(self.state.pen.style, phase):
+                    if self._cosmetic_mark(phase):
                         yield pixel, True
                     elif self.state.background_mode != TRANSPARENT:
                         yield pixel, False
                 position += len(span)
+
+    def _cosmetic_mark(self, phase: int) -> bool:
+        pen = self.state.pen
+        if pen.pattern:
+            phase %= sum(pen.pattern)
+            for index, length in enumerate(pen.pattern):
+                if phase < length:
+                    return index % 2 == 0
+                phase -= length
+            return False
+        return pen.style in (0, 6) or dash_is_foreground(pen.style, phase)
 
     def stroke_fragments(self, paths: tuple[DevicePath, ...], *, miter=False):
         if self.state.pen.style == PS_NULL:
@@ -316,32 +349,48 @@ class RasterPainter:
     def _stroke_pixels(self, paths: tuple[DevicePath, ...], *, miter=False) -> set[tuple[int, int]]:
         if self.state.pen.style == PS_NULL:
             return set()
+        pixels: set[tuple[int, int]] = set()
+        pen = self.state.pen
+        for path in paths:
+            if pen.geometric and pen.pattern:
+                # Each dash is an open figure with the pen's caps and joins.
+                scale = self.state.mapping.linear_scale
+                shorten = pen.width if pen.cap != CAP_FLAT else 0
+                for dash in dash_figures(path.segments, pen.pattern, scale, shorten=shorten):
+                    pixels.update(self._figure_pixels(dash, False, miter=miter))
+            else:
+                pixels.update(self._figure_pixels(path.segments, path.closed, miter=miter))
+        return pixels
+
+    def _figure_pixels(self, segments, closed, *, miter=False):
+        if self.pen_shape is not None:
+            # Each figure is widened into closed outlines filled by winding.
+            outlines = tuple(widen_outline(self.pen_shape, segments, closed))
+            return set(self.contour_pixels(outlines, fill_mode=WINDING))
         pen = self.realized_pen
         pixels: set[tuple[int, int]] = set()
-        for path in paths:
-            # A wholly collapsed figure still has a pen footprint. There is
-            # no nonzero tangent with which to form a closed-path join.
-            collapsed = len(path.segments) == 1 and path.segments[0].start == path.segments[0].end
-            for index, segment in enumerate(path.segments):
-                start, end = segment.start, segment.end
-                if pen.cosmetic:
-                    pixels.update(cosmetic_line(start, end, self._width, self._height))
-                else:
-                    outline = widen_segment(
-                        segment,
-                        pen,
-                        cap_start=collapsed or not path.closed and index == 0,
-                        cap_end=collapsed or not path.closed and index == len(path.segments) - 1,
-                        miter=miter and not collapsed,
-                    )
-                    pixels.update(self.contour_pixels((outline,)))
-            if not pen.cosmetic:
-                segments = path.segments
-                pairs = zip(segments, segments[1:] + (segments[:1] if path.closed else ()), strict=False)
-                for first, second in pairs:
-                    join = join_outline(first, second, pen, miter=miter)
-                    if join:
-                        pixels.update(self.contour_pixels((join,)))
+        # A wholly collapsed figure still has a pen footprint. There is
+        # no nonzero tangent with which to form a closed-path join.
+        collapsed = len(segments) == 1 and segments[0].start == segments[0].end
+        for index, segment in enumerate(segments):
+            start, end = segment.start, segment.end
+            if pen.cosmetic:
+                pixels.update(cosmetic_line(start, end, self._width, self._height))
+            else:
+                outline = widen_segment(
+                    segment,
+                    pen,
+                    cap_start=collapsed or not closed and index == 0,
+                    cap_end=collapsed or not closed and index == len(segments) - 1,
+                    miter=miter and not collapsed,
+                )
+                pixels.update(self.contour_pixels((outline,)))
+        if not pen.cosmetic:
+            pairs = zip(segments, segments[1:] + (segments[:1] if closed else ()), strict=False)
+            for first, second in pairs:
+                join = join_outline(first, second, pen, miter=miter)
+                if join:
+                    pixels.update(self.contour_pixels((join,)))
         return pixels
 
     def contour_spans(self, contours: tuple[Polygon, ...], *, fill_mode=ALTERNATE):

@@ -210,33 +210,32 @@ def test_palette_edits_name_their_palette():
 def test_unsupported_creations_are_reported_once_selected():
     _, omissions = run(
         [
-            bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x10000, 1, 0, 0, 0),  # Geometric width 1.
+            bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x10000, 5, 2, 0, 1),  # Hatched brush.
             fixed.SelectObject(1),
         ]
     )
     assert [(o.record_index, o.reason) for o in omissions] == [
-        (0, "Extended pen type is not yet supported"),
+        (0, "Extended pen brushes are not yet supported"),
         (1, "Object creation was unsupported"),
     ]
+
+
+def ext_pen_call(style, width, color=0, entries=()):
+    fields = {"brush_style": 0, "hatch": 0, "entries": entries}
+    return Call.make("ext_create_pen", style=style, width=width, color=color, **fields)
 
 
 @pytest.mark.parametrize(
     ("pen", "call"),
     [
-        (
-            bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00000002, 1, 0, 0xFF, 0),
-            Call.make("create_pen", style=2, width=1, color=0xFF),
-        ),
-        (
-            bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00011200, 5, 0, 0xFF, 0),
-            Call.make("create_pen", style=0x1200, width=5, color=0xFF),
-        ),
-        (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00010001, 5, 0, 0, 0), None),  # Geometric dashes.
-        (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00000007, 1, 0, 0, 0, (1, 2)), None),  # User style.
+        (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00000002, 1, 0, 0xFF, 0), ext_pen_call(2, 1, 0xFF)),
+        (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00011200, 5, 0, 0xFF, 0), ext_pen_call(0x11200, 5, 0xFF)),
+        (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00010001, 5, 0, 0, 0), ext_pen_call(0x10001, 5)),
+        (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00000007, 1, 0, 0, 0, (1, 2)), ext_pen_call(7, 1, 0, (1, 2))),
         (bitmaps.ExtCreatePen(1, 0, 0, 0, 0, 0x00010000, 5, 2, 0, 1), None),  # Hatched brush.
     ],
 )
-def test_extended_pens_that_create_pen_can_express(pen, call):
+def test_extended_pens_translate_with_their_style(pen, call):
     calls, omissions = run([pen])
     assert calls == ([call] if call else [])
     assert bool(omissions) == (call is None)

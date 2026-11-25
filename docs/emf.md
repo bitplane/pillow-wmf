@@ -95,7 +95,7 @@ the codec and reference columns against the code and fixtures.
 | `ARCTO` | typed | full | yes |  |
 | `POLYDRAW` | typed | full | yes |  |
 | `SETARCDIRECTION` | typed | full | yes | Clockwise figures are the y-mirror of counterclockwise ones. |
-| `SETMITERLIMIT` | typed | partial | yes | Stored; geometric joins that use it are not yet drawn. |
+| `SETMITERLIMIT` | typed | full | yes | Recorded as an integer; limits geometric miter joins. |
 | `BEGINPATH` | typed | full | yes |  |
 | `ENDPATH` | typed | full | yes |  |
 | `CLOSEFIGURE` | typed | full | yes |  |
@@ -131,7 +131,7 @@ the codec and reference columns against the code and fixtures.
 | `POLYDRAW16` | typed | full | yes |  |
 | `CREATEMONOBRUSH` | typed | full | yes | Colours come from the text and background colours. |
 | `CREATEDIBPATTERNBRUSHPT` | typed | full | yes |  |
-| `EXTCREATEPEN` | typed | partial | yes | Pens CreatePen can express; caps, joins, styles and pattern pens are missing. |
+| `EXTCREATEPEN` | typed | partial | yes | Cosmetic, alternate, user-styled and geometric pens with any cap, join or dash; hatched and pattern brushes are missing. |
 | `POLYTEXTOUTA` | typed | no | no |  |
 | `POLYTEXTOUTW` | typed | no | no |  |
 | `SETICMMODE` | typed | full | yes | No effect on a bitmap DC. |
@@ -158,7 +158,36 @@ the codec and reference columns against the code and fixtures.
 | `COLORMATCHTOTARGETW` | typed | no | yes | The fixture record stops native playback; its validity rules are unknown. |
 | `CREATECOLORSPACEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
 
+## Geometric pens
+
+Extended geometric pens (`widen.py`) widen each figure into closed outlines
+filled with the winding rule, matching native `WidenPath` output point for
+point:
+
+- Round caps with round joins use the support-vertex construction shared with
+  wide `CreatePen` strokes. Square caps with round joins keep those bodies.
+- Every other combination places the body on a perpendicular chosen from the
+  realized pen polygon: a line parallel to a pen edge uses the edge midpoint,
+  a line parallel to the chord across a vertex uses that vertex, and other
+  directions interpolate between them by cross-product weights before snapping
+  to the half-pixel grid. Flat and square caps, bevels and miters share it.
+- Inner joins pass through the vertex; round inner joins also sweep the pen.
+  Miter tips round to the nearest 28.4 point; miters longer than the limit
+  bevel.
+- Square caps extend by half the width along the logical direction, rounded
+  in logical 28.4 and then in the device.
+- Predefined geometric styles are multiples of the width (dash 3:1, dot 1:1,
+  and so on); user styles are logical lengths. Dashes are measured in logical
+  units, cut by interpolating along the device segment, and drawn as open
+  figures. Round and square caps pull each dash end back by one width, so
+  dots become zero-length dashes.
+- Cosmetic alternate and user styles step through device pixels, user style
+  entries in units of three pixels like the predefined styles.
+
 ## Playback behaviours not yet modelled
+
+- Tie rounding of the geometric pen perpendicular: about one direction in
+  twenty, at exact half-pixel ties, snaps the other way natively.
 
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.
