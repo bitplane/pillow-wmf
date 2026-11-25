@@ -52,6 +52,9 @@ BOXES = (
     (5, 7, 6, 9),
     (8, 3, 9, 30),
     (10, 10, 41, 41),
+    # emf-page-lometric's ellipse and rectangle, in 0.1 mm with y up.
+    (150, -150, 330, -330),
+    (50, -50, 250, -200),
 )
 
 
