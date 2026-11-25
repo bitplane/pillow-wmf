@@ -26,6 +26,8 @@ class Pen:
     pattern: tuple = ()
     # A hatched or pattern brush that fills a geometric pen's footprint.
     brush: "Brush | None" = None
+    # An ExtCreatePen PS_COSMETIC pen, which WidenPath cannot widen.
+    cosmetic: bool = False
 
 
 @dataclass(frozen=True)

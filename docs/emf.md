@@ -123,7 +123,7 @@ the codec and reference columns against the code and fixtures.
 | `STROKEANDFILLPATH` | typed | full | yes |  |
 | `STROKEPATH` | typed | full | yes |  |
 | `FLATTENPATH` | typed | full | yes |  |
-| `WIDENPATH` | typed | partial | yes | Solid and geometric pens; styled cosmetic `CreatePen` pens are refused. |
+| `WIDENPATH` | typed | full | yes | `CreatePen` styles widen as solid; cosmetic `ExtCreatePen` pens fail, keeping the path. |
 | `SELECTCLIPPATH` | typed | full | yes | The path interior becomes a region by its fill coverage. |
 | `ABORTPATH` | typed | full | yes |  |
 | `COMMENT` | typed | partial | yes | GDIC multi-format comments play their embedded EMF; EMF+ is not rendered. |
@@ -290,7 +290,9 @@ point:
   entries in units of three pixels like the predefined styles. Cosmetic pens
   are always one pixel wide and solid.
 - `WidenPath` flattens each figure and replaces it with these outlines as
-  closed polygon figures, one per dash for patterned pens.
+  closed polygon figures, one per dash for patterned pens. A `CreatePen`
+  style is ignored: the pen widens as the solid pen of its width. A cosmetic
+  `ExtCreatePen` pen cannot be widened; the call fails and keeps the path.
 - For `CreatePen` pens and geometric pens with round caps and joins,
   `WidenPath` stitches one outline per open figure: the start cap, the far
   side forward, the end cap and the near side back. A closed figure gives

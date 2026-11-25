@@ -185,16 +185,3 @@ def test_widen_path_replaces_the_figure_with_its_outline():
     ((commands, closed),) = context._state.path
     vertices = [command[0] for command in commands]
     assert closed and vertices == outline(shape(5, CAP_FLAT, JOIN_BEVEL), figure((6, 6), (18, 28), (30, 6)), False)[0]
-
-
-def test_widen_path_refuses_styled_create_pens():
-    from pillow_wmf.gdi import UnsupportedOperation
-    from pillow_wmf.raster import RasterContext
-
-    context = RasterContext(32, 32, trace_calls=False)
-    context.select_object(context.create_pen(2, 1, 0))  # PS_DOT
-    context.begin_path()
-    context.polyline(((6, 6), (18, 28)))
-    context.end_path()
-    with pytest.raises(UnsupportedOperation):
-        context.widen_path()

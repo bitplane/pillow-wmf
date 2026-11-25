@@ -737,7 +737,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             # Cosmetic pens are one device pixel wide whatever their width.
             # User style units are three pixels, like the predefined styles.
             pattern = {PS_ALTERNATE: (1, 1), PS_USERSTYLE: tuple(3 * e for e in entries)}.get(line_style, ())
-            return Pen(color, 0, PS_SOLID if pattern else line_style, pattern=pattern)
+            return Pen(color, 0, PS_SOLID if pattern else line_style, pattern=pattern, cosmetic=True)
         if a["width"] <= 0 or line_style == PS_ALTERNATE:
             raise InvalidOperation("Geometric pens need a positive width and no alternate style")
         if line_style == PS_USERSTYLE:
@@ -1818,13 +1818,10 @@ class RasterContext(ExecutionContext[DrawingState]):
             figures.append((flat.commands, closed))
         self._state.path = tuple(figures)
 
-    def _prepare_widen_path(self, a):
-        pen = self._state.pen
-        if self._completed_path() and not pen.geometric and pen.style not in (PS_SOLID, PS_INSIDEFRAME):
-            raise UnsupportedOperation("widen_path: styled CreatePen pens")
-
     def _apply_widen_path(self, call, prepared, result):
-        if not self._completed_path():
+        # A cosmetic ExtCreatePen pen fails, keeping the path. CreatePen
+        # styles are ignored: a styled pen widens as the solid pen does.
+        if not self._completed_path() or self._state.pen.cosmetic:
             return
         # Each figure, flattened, becomes the closed outlines its pen strokes.
         outlines = self._painter().widened_outlines(self._path_figures(close=False))
