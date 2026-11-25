@@ -699,6 +699,38 @@ class GDI:
             )
         )
 
+    def plg_blt(
+        self,
+        points: tuple[tuple[int, int], tuple[int, int], tuple[int, int]],
+        src_x: int,
+        src_y: int,
+        src_width: int,
+        src_height: int,
+        source: BitmapData,
+        mask: BitmapData | None = None,
+        mask_x: int = 0,
+        mask_y: int = 0,
+        mask_usage: int = 0,
+    ) -> None:
+        """PlgBlt: map the source rectangle onto the parallelogram whose upper-left,
+        upper-right and lower-left corners are ``points``. Where a 1-bpp ``mask`` is
+        given, only pixels whose mask bit is 1 are copied."""
+        return self.invoke(
+            Call.make(
+                "plg_blt",
+                points=tuple(tuple(point) for point in points),
+                src_x=src_x,
+                src_y=src_y,
+                src_width=src_width,
+                src_height=src_height,
+                source=source,
+                mask=mask,
+                mask_x=mask_x,
+                mask_y=mask_y,
+                mask_usage=mask_usage,
+            )
+        )
+
     def mask_blt(
         self,
         x: int,

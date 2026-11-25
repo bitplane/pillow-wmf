@@ -110,6 +110,28 @@ class Mapping:
         """Whether the world transform mixes the axes (rotates or shears)."""
         return bool(self.world[1] or self.world[2])
 
+    def rotated_pen_scale(self, width: int) -> tuple[Fraction, Fraction]:
+        """Device scales realizing a pen of ``width`` under a rotating transform.
+
+        Each device axis takes the logical width vector along that axis,
+        rounds both components to 28.4 and truncates its length, so a pen
+        narrows slightly at oblique angles. Only transforms that keep circles
+        round are modelled.
+        """
+        m11, m12, m21, m22 = self.world[:4]
+        lengths = (hypot(m11, m12), hypot(m21, m22))
+        if (
+            abs(m11 * m21 + m12 * m22) > 1e-3 * lengths[0] * lengths[1]
+            or abs(lengths[0] - lengths[1]) > 1e-3 * lengths[0]
+        ):
+            raise ValueError("Wide pens under a non-uniform rotating transform")
+        if not width:
+            return self.linear_scale
+        return tuple(
+            Fraction(floor(hypot(floor(width * a * 16 + 0.5), floor(width * b * 16 + 0.5))), 16 * width)
+            for a, b in ((m11, m21), (m12, m22))
+        )
+
     @property
     def identity_page(self) -> bool:
         return (

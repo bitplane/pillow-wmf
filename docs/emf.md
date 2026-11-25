@@ -72,8 +72,8 @@ the codec and reference columns against the code and fixtures.
 | `SCALEWINDOWEXTEX` | typed | partial | no | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
-| `SETWORLDTRANSFORM` | typed | partial | yes | Axis-aligned transforms only. |
-| `MODIFYWORLDTRANSFORM` | typed | partial | yes | Axis-aligned results only. |
+| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover shapes, lines and SRCCOPY DIB transfers; see below. |
+| `MODIFYWORLDTRANSFORM` | typed | partial | yes | As SETWORLDTRANSFORM. |
 | `SELECTOBJECT` | typed | partial | yes | Stock brushes, pens and palette; stock fonts need the font work. |
 | `CREATEPEN` | typed | full | yes |  |
 | `CREATEBRUSHINDIRECT` | typed | full | yes | Solid, null and hatched brushes. |
@@ -115,7 +115,7 @@ the codec and reference columns against the code and fixtures.
 | `BITBLT` | typed | partial | yes | Source transforms and palette-indexed sources are missing. |
 | `STRETCHBLT` | typed | partial | yes | As BITBLT. |
 | `MASKBLT` | typed | full | yes | Per-pixel ROP3 from the mask; scaled transfers pad as their foreground ROP decides. |
-| `PLGBLT` | typed | no | yes | Needs rotated transfers. |
+| `PLGBLT` | typed | full | yes | Identity source transforms and RGB sources. |
 | `SETDIBITSTODEVICE` | typed | partial | yes | Partial bands are unverified under scaling. |
 | `STRETCHDIBITS` | typed | full | yes |  |
 | `EXTCREATEFONTINDIRECTW` | typed | full | no | Text is font-limited. |
@@ -206,6 +206,29 @@ clip region without applying ROP2 (the ROP2 interaction is unverified):
   the ceiling of its right one. A pixel's colour is the exact plane through
   the corner colours, rounded to a 16-bit unit, then its top 8 bits.
 
+## Rotated and sheared transforms
+
+A world transform that mixes the axes needs an identity page mapping, as EMF
+playback provides. Points map to 28.4 as the float32 sum of the two float32
+products plus the 28.4 translation.
+
+- Box shapes map their left-top, right-top and left-bottom corners and
+  reflect the fourth through them. Ellipses, arcs, chords, pies and rounded
+  rectangles are built on those corners with the axis-aligned GM_ADVANCED
+  constructions as their special case: edge midpoints take floored halves,
+  the circle-constant insets round per device component, and the lower half
+  reflects the upper through the right-top and left-bottom corners.
+- A CreatePen pen keeps its device-aligned small-pen shape. Each device axis
+  rounds the logical width vector along it to 28.4 and truncates its length,
+  so a pen narrows slightly at oblique angles.
+- DIB transfers with SRCCOPY map their destination rectangle to a
+  parallelogram and copy as PlgBlt does.
+
+PlgBlt inverts the mapping at each pixel's integer point against the 28.4
+parallelogram. A source column on an exact boundary belongs to the column it
+starts; a source row on an exact boundary belongs to the row just above the
+pixel in device space. A mask bit of 1 copies the source pixel.
+
 ## Playback behaviours not yet modelled
 
 - Tie rounding of the geometric pen perpendicular: about one direction in
@@ -217,7 +240,15 @@ clip region without applying ROP2 (the ROP2 interaction is unverified):
 - Whether playback resets DC attributes before the first record, and whether it
   clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
-- Rotated and sheared world transforms, in every drawing primitive.
+- Under rotating or shearing transforms: text, regions, clip rectangles,
+  gradients, legacy and non-SRCCOPY transfers, extended geometric pens, pens
+  wider than the small-pen table, and wide pens under non-uniform transforms
+  are refused. Direct drawing with a small wide pen can be a fraction of a
+  pixel thinner natively across some edge directions than `WidenPath`
+  reports; the renderer follows `WidenPath`.
+- A masked PlgBlt onto a parallelogram mirrored against its source reads the
+  mask mirrored within the source rectangle; only fully mirrored cases have
+  native references.
 - Metafiles embedded in comment records, and EMF+ (GDI+) drawing.
 - Text in `GM_ADVANCED`, Unicode text and stock fonts. Text output is
   font-limited and reported separately from exact comparisons.

@@ -199,6 +199,25 @@ def _mask_blt(record):
     }
 
 
+def _plg_blt(record):
+    if not record.bitmap_size:
+        raise Unsupported("PlgBlt without a bitmap")
+    _identity_source(record)
+    mask = BitmapData("dib", record.mask_info + record.mask_bits) if record.mask_size else None
+    return "plg_blt", {
+        "points": ((record.x0, record.y0), (record.x1, record.y1), (record.x2, record.y2)),
+        "src_x": record.src_x,
+        "src_y": record.src_y,
+        "src_width": record.src_width,
+        "src_height": record.src_height,
+        "source": _dib(record),
+        "mask": mask,
+        "mask_x": record.mask_x,
+        "mask_y": record.mask_y,
+        "mask_usage": record.mask_usage,
+    }
+
+
 def _stretch_dib(record):
     if not record.bitmap_size:
         raise Unsupported("StretchDIBits without a bitmap")
@@ -405,6 +424,7 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.StretchDIBits: _stretch_dib,
     bitmaps.TransparentBlt: _transparent_blt,
     bitmaps.MaskBlt: _mask_blt,
+    bitmaps.PlgBlt: _plg_blt,
     bitmaps.AlphaBlend: _alpha_blend,
     variable.GradientFill: _gradient_fill,
     bitmaps.CreateMonoBrush: _mono_brush,

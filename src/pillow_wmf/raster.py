@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from fractions import Fraction
 
 from .binary import FormatError, ResourceLimitError
@@ -148,8 +148,19 @@ BITMAP_NOOP_ESCAPES = frozenset(
 
 SRCCOPY = 0x00CC0020
 
+
 # Operations whose GM_ADVANCED output has no native references yet. They
 # raise rather than reuse GM_COMPATIBLE rules that may not match.
+@dataclass(frozen=True)
+class ParallelogramTransfer:
+    """A source rectangle bound for a 28.4 parallelogram, with an optional mask test."""
+
+    source: object
+    corners: tuple
+    rectangle: tuple[int, int, int, int]
+    sample: object = None
+
+
 # Operations whose geometry assumes axis-aligned mapping. A rotating or
 # shearing world transform refuses them rather than drawing them unrotated.
 AXIS_ALIGNED_ONLY = frozenset(
@@ -158,10 +169,7 @@ AXIS_ALIGNED_ONLY = frozenset(
         "angle_arc",
         "arc_to",
         "bit_blt",
-        "dib_bit_blt",
-        "dib_stretch_blt",
         "stretch_blt",
-        "stretch_dib",
         "set_dib_to_device",
         "mask_blt",
         "transparent_blt",
@@ -327,6 +335,11 @@ class RasterContext(ExecutionContext[DrawingState]):
             )
         ):
             raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
+        if self.mapping.rotated and call.name in PEN_STROKES and self._state.pen.style != PS_NULL:
+            try:
+                self.mapping.rotated_pen_scale(self._state.pen.width)
+            except ValueError as error:
+                raise UnsupportedOperation(str(error)) from error
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
@@ -946,12 +959,18 @@ class RasterContext(ExecutionContext[DrawingState]):
         return self._prepare_legacy_transfer("stretch_blt", a)
 
     def _prepare_dib_bit_blt(self, a):
+        if self.mapping.rotated:
+            return self._prepare_rotated_transfer("dib_bit_blt", a)
         return self._prepare_transfer("dib_bit_blt", a)
 
     def _prepare_dib_stretch_blt(self, a):
+        if self.mapping.rotated:
+            return self._prepare_rotated_transfer("dib_stretch_blt", a)
         return self._prepare_transfer("dib_stretch_blt", a)
 
     def _prepare_stretch_dib(self, a):
+        if self.mapping.rotated:
+            return self._prepare_rotated_transfer("stretch_dib", a)
         return self._prepare_transfer("stretch_dib", a)
 
     def _prepare_set_dib_to_device(self, a):
@@ -1023,6 +1042,66 @@ class RasterContext(ExecutionContext[DrawingState]):
             else:
                 painter.gradient_rectangle(corners, vertical=a["mode"] == 1)
 
+    def _prepare_plg_blt(self, a):
+        source = self._parallelogram_source(a["source"])
+        rectangle = (a["src_x"], a["src_y"], a["src_width"], a["src_height"])
+        corners = tuple(self.mapping.fixed_point(x, y) for x, y in a["points"])
+        sample = None
+        if a["mask"] is not None:
+            mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
+            if mask.depth != 1 or not mask.complete:
+                raise UnsupportedOperation("plg_blt: masks are complete 1-bpp DIBs")
+            (x0, y0), (x1, _), (_, y2) = corners
+            # The mask keeps device orientation: a parallelogram mirrored
+            # against the source reads the mask mirrored within the rectangle.
+            flip_x, flip_y = x1 < x0, y2 < y0
+
+            def sample(u, v):
+                u, v = u - a["src_x"], v - a["src_y"]
+                if flip_x:
+                    u = a["src_width"] - 1 - u
+                if flip_y:
+                    v = a["src_height"] - 1 - v
+                mx, my = u + a["mask_x"], v + a["mask_y"]
+                return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
+
+        return ParallelogramTransfer(source, corners, self._source_rectangle(source, rectangle), sample)
+
+    def _parallelogram_source(self, bitmap):
+        layout = read_dib(bitmap, max_pixels=self.max_bitmap_pixels)
+        if not accepts_dib(layout) or not layout.complete:
+            raise UnsupportedOperation("Parallelogram transfers need a complete, directly decodable DIB")
+        return layout.decode()
+
+    @staticmethod
+    def _source_rectangle(source, rectangle):
+        x, y, width, height = rectangle
+        if width <= 0 or height <= 0:
+            raise UnsupportedOperation("Parallelogram transfers of empty or mirrored source rectangles")
+        if x < 0 or y < 0 or x + width > source.width or y + height > source.height:
+            raise UnsupportedOperation("Parallelogram transfers of rectangles outside the source")
+        return rectangle
+
+    def _prepare_rotated_transfer(self, name, a):
+        """A rotating or shearing transform maps a SRCCOPY destination
+        rectangle to a parallelogram, transferred as PlgBlt transfers."""
+        if a["rop"] != SRCCOPY or a.get("color_usage", 0) != 0 or a["source"] is None:
+            raise UnsupportedOperation(f"{name}: only SRCCOPY RGB transfers under a rotating transform")
+        source = self._parallelogram_source(a["source"])
+        width, height = a.get("src_width", a["width"]), a.get("src_height", a["height"])
+        top = a["src_y"]
+        if name == "stretch_dib" and read_dib(a["source"], max_pixels=self.max_bitmap_pixels).top_down is False:
+            # StretchDIBits measures a bottom-up source from its last row.
+            top = source.height - a["src_y"] - height
+        x, y = a["x"], a["y"]
+        corners = tuple(
+            self.mapping.fixed_point(*point) for point in ((x, y), (x + a["width"], y), (x, y + a["height"]))
+        )
+        return ParallelogramTransfer(source, corners, self._source_rectangle(source, (a["src_x"], top, width, height)))
+
+    def _apply_plg_blt(self, call, prepared, result):
+        self._painter().plg_blt(prepared.source, prepared.corners, prepared.rectangle, prepared.sample)
+
     def _prepare_mask_blt(self, a):
         """MAKEROP4 packs the background ROP3's table in the high byte."""
         foreground = a["rop"] & 0x00FFFFFF
@@ -1079,7 +1158,9 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_bit_blt(self, call, prepared, result):
         a = call.kwargs
-        if isinstance(prepared, SourceTransfer):
+        if isinstance(prepared, ParallelogramTransfer):
+            self._apply_plg_blt(call, prepared, result)
+        elif isinstance(prepared, SourceTransfer):
             self._source_blt(
                 prepared.bitmap,
                 prepared.horizontal,

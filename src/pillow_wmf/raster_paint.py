@@ -283,6 +283,39 @@ class RasterPainter:
         for x, y in self._stroke_pixels((path,), miter=miter):
             self.pen_pixel(x, y)
 
+    def plg_blt(self, source, corners, rectangle, sample=None) -> None:
+        """Copy a source rectangle onto a 28.4 parallelogram.
+
+        ``corners`` are the destination of the source's upper-left,
+        upper-right and lower-left corners. Each pixel inverts the mapping
+        at its integer point. A source column on an exact boundary belongs
+        to the column it starts; a source row on an exact boundary belongs
+        to the row just above the pixel in device space. ``sample`` decides
+        per source pixel whether a mask lets it through.
+        """
+        (x0, y0), (x1, y1), (x2, y2) = corners
+        ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x0, y2 - y0
+        det = ax * by - ay * bx
+        if not det:
+            return
+        left, top, width, height = rectangle
+        xs, ys = (x0, x1, x2, x1 + x2 - x0), (y0, y1, y2, y1 + y2 - y0)
+        upward = (ax > 0) == (det > 0)
+        for y in range(max(0, min(ys) // 16), min(self._height, max(ys) // 16 + 1)):
+            for x in range(max(0, min(xs) // 16), min(self._width, max(xs) // 16 + 1)):
+                dx, dy = 16 * x - x0, 16 * y - y0
+                u_numerator, v_numerator = (dx * by - dy * bx) * width, (ax * dy - ay * dx) * height
+                u = floor(Fraction(u_numerator, det))
+                v_exact = Fraction(v_numerator, det)
+                v = floor(v_exact)
+                if v == v_exact and ax and upward:
+                    v -= 1
+                if not (0 <= u < width and 0 <= v < height):
+                    continue
+                u, v = left + u, top + v
+                if sample is None or sample(u, v):
+                    self.pixel(x, y, source.pixel(u, v), operation=R2_COPYPEN)
+
     def gradient_rectangle(self, corners, *, vertical: bool) -> None:
         """Shade a device rectangle between two corner colours along one axis.
 
@@ -359,7 +392,9 @@ class RasterPainter:
 
     @cached_property
     def realized_pen(self):
-        pen = realize_pen(self.state.pen.width, *self.state.mapping.linear_scale)
+        mapping = self.state.mapping
+        scale = mapping.rotated_pen_scale(self.state.pen.width) if mapping.rotated else mapping.linear_scale
+        pen = realize_pen(self.state.pen.width, *scale)
         # Geometric pens are widened even below the cosmetic hairline width.
         return replace(pen, cosmetic=False) if self.state.pen.geometric else pen
 
