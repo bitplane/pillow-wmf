@@ -142,10 +142,6 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
     {
         "text_out",
         "ext_text_out",
-        "bit_blt",
-        "dib_bit_blt",
-        "stretch_blt",
-        "dib_stretch_blt",
         "set_dib_to_device",
         "fill_region",
         "frame_region",
