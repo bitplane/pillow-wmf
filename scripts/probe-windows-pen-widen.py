@@ -92,7 +92,7 @@ def read_path(gdi, dc):
     return " ".join(f"({types[i]},{points[i].x},{points[i].y})" for i in range(count))
 
 
-def widen(transform, style, width, figure, *, limit=10.0, closed=False, entries=()):
+def widen(transform, style, width, figure, *, limit=10.0, closed=False, entries=(), origin=6):
     m11, m22, dx, dy, unit = transform
     with reference_surface(16, 16) as (gdi, dc, _):
         bind_probe(gdi)
@@ -107,7 +107,7 @@ def widen(transform, style, width, figure, *, limit=10.0, closed=False, entries=
         )
         check(pen, "ExtCreatePen")
         previous = gdi.SelectObject(dc, pen)
-        points = [(round((x + 6) * unit), round((y + 6) * unit)) for x, y in figure]
+        points = [(round((x + origin) * unit), round((y + origin) * unit)) for x, y in figure]
         rest = (wintypes.POINT * (len(points) - 1))(*[wintypes.POINT(*p) for p in points[1:]])
         check(gdi.BeginPath(dc), "BeginPath")
         gdi.MoveToEx(dc, *points[0], None)
@@ -128,15 +128,21 @@ def main():
     print(f"Module versions: {module_versions()}")
     fits = scales()
     print(f"Scales (m11, m22, dx, dy, unit): {fits}")
-    # Single segments sweeping two octants show the cap and body vectors.
-    directions = [(64, k) for k in range(65)] + [(k, 64) for k in range(63, -1, -1)]
-    sweeps = [(width, 1, 1) for width in (1, 2, 4, 6, 7, 8, 50, 200)]
-    sweeps += [(6, sx, sy) for sx, sy in ((-1, 1), (1, -1), (-1, -1))]
+    # The extended pen fixture's vees, and one direction at many positions:
+    # does the perpendicular depend on where a segment starts?
+    for scale, transform in fits.items():
+        for column, cap in enumerate(CAPS):
+            for row, join in enumerate(JOINS):
+                style = PS_GEOMETRIC | CAPS[cap] | JOINS[join]
+                vee = tuple((x + 6 + 40 * column, y + 6 + 28 * row) for x, y in FIGURES["vee"])
+                case = f"fixture-{scale} {cap} {join} 10 solid 5 c{column}r{row}"
+                print(f"case {case} {widen(transform, style, 5, vee, origin=0)}")
     style = PS_GEOMETRIC | CAPS["flat"] | JOINS["bevel"]
-    for width, sx, sy in sweeps:
-        for dx, dy in directions:
-            case = f"sweep flat bevel 10 solid {width} d{sx * dx},{sy * dy}"
-            print(f"case {case} {widen(fits['unit'], style, width, ((0, 0), (sx * dx, sy * dy)))}")
+    for scale, transform in fits.items():
+        for offset in range(16):
+            figure = ((offset, 3 * offset), (offset + 12, 3 * offset - 20))
+            case = f"position-{scale} flat bevel 10 solid 5 o{offset}"
+            print(f"case {case} {widen(transform, style, 5, figure, origin=0)}")
     for scale, transform in fits.items():
         for width in (5, 4, 3, 6, 9):
             for cap, cap_bits in CAPS.items():
