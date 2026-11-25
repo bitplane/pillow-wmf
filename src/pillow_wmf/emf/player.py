@@ -379,7 +379,6 @@ TRANSLATIONS: dict[type, Callable] = {
     fixed.Pie: lambda r: ("pie", _box_points(r)),
     fixed.RealizePalette: _direct("realize_palette"),
     fixed.ExtFloodFill: _direct("ext_flood_fill", "x", "y", "color", "mode"),
-    fixed.SetLayout: _direct("set_layout", "layout"),
     fixed.BeginPath: _direct("begin_path"),
     fixed.EndPath: _direct("end_path"),
     fixed.AbortPath: _direct("abort_path"),

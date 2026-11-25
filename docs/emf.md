@@ -150,7 +150,7 @@ the codec and reference columns against the code and fixtures.
 | `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
 | `ALPHABLEND` | typed | partial | yes | Constant and per-pixel alpha with nearest sampling; per-pixel alpha below full constant alpha is unreferenced. |
-| `SETLAYOUT` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
+| `SETLAYOUT` | typed | full | yes | Mirrors the playback transform about the reference device width; the DC layout is unchanged. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; playback refuses them without it. |
 | `SETLINKEDUFIS` | typed | full | yes | No effect on shapes; font-limited. |
@@ -205,6 +205,15 @@ clip region without applying ROP2 (the ROP2 interaction is unverified):
   vertex; each row runs from the ceiling of its left edge crossing to before
   the ceiling of its right one. A pixel's colour is the exact plane through
   the corner colours, rounded to a 16-bit unit, then its top 8 bits.
+
+## Right-to-left layout
+
+Playback never sets the DC's layout. A `SETLAYOUT` with `LAYOUT_RTL` puts a
+mirror, x' = device width - 1 - x in the header's reference device pixels,
+between the page mapping and the frame fit; `LAYOUT_BITMAPORIENTATIONPRESERVED`
+changes nothing more, and other bits leave the layout unchanged. The mirror is
+saved and restored with the DC. Mirrored pictures usually land entirely
+outside the target, so they draw nothing.
 
 ## Embedded metafiles
 

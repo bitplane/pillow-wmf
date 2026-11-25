@@ -1,10 +1,10 @@
 """The world transform native EMF playback gives the target DC.
 
 PlayEnhMetaFile leaves the DC in MM_TEXT and GM_ADVANCED. It keeps the
-metafile's own page state (mapping mode, window and viewport) and world
-transform itself, and after each change sets the DC's world transform to
+metafile's own page state (mapping mode, window and viewport), layout and
+world transform itself, and after each change sets the DC's world transform to
 
-    world, then page, then frame fit
+    world, then page, then right-to-left mirror, then frame fit
 
 as one float32 matrix. The frame fit maps the header's picture frame, in
 0.01 mm, onto the target rectangle. Physical mapping modes take their
@@ -150,6 +150,7 @@ class PlaybackTransform:
         fixed.ScaleViewportExtEx,
         fixed.SetWorldTransform,
         fixed.ModifyWorldTransform,
+        fixed.SetLayout,
     )
 
     def __init__(self, header: Header, rect: tuple[int, int, int, int], *, parent: Transform | None = None):
@@ -158,23 +159,32 @@ class PlaybackTransform:
         device = ReferenceDevice(tuple(header.device), tuple(header.millimetres), dpi=None)
         self.page = MetafilePage(mode=MM_TEXT, window_extent=(1, 1), viewport_extent=(1, 1), device=device)
         self.world: Transform = IDENTITY_TRANSFORM
-        self._saved: list[tuple[MetafilePage, Transform]] = []
+        # Playback realizes a right-to-left layout as a mirror about the
+        # metafile's reference device width; the DC's own layout is unchanged.
+        self.mirror: Transform = IDENTITY_TRANSFORM
+        self._width = header.device[0]
+        self._saved: list[tuple[MetafilePage, Transform, Transform]] = []
 
     def matrix(self) -> Transform:
-        return multiply(multiply(self.world, self.page.matrix()), self.fit)
+        return multiply(multiply(multiply(self.world, self.page.matrix()), self.mirror), self.fit)
 
     def save(self) -> None:
-        self._saved.append((copy(self.page), self.world))
+        self._saved.append((copy(self.page), self.world, self.mirror))
 
     def restore(self, level: int) -> None:
         """Restore a relative level the file reached; others leave the state unchanged."""
         if level >= 0 or -level > len(self._saved):
             return
-        self.page, self.world = self._saved[level]
+        self.page, self.world, self.mirror = self._saved[level]
         del self._saved[level:]
 
     def apply(self, record) -> None:
         page = self.page
+        if isinstance(record, fixed.SetLayout):
+            if not record.layout & ~9:  # Other layout bits fail natively.
+                rtl = record.layout & 1
+                self.mirror = (-1.0, 0.0, 0.0, 1.0, float32(self._width - 1), 0.0) if rtl else IDENTITY_TRANSFORM
+            return
         if isinstance(record, fixed.SetMapMode):
             page.set_mode(record.mode)
         elif isinstance(record, fixed.SetWindowOrgEx):

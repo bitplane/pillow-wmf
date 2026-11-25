@@ -87,7 +87,6 @@ def test_state_and_drawing_records_translate_to_gdi_calls():
         Call.make("set_rop2", mode=7),
         Call.make("set_stretch_mode", mode=3),
         Call.make("set_mapper_flags", flags=1),
-        Call.make("set_layout", layout=0),
         Call.make("set_text_justification", break_count=2, break_extra=10),
         Call.make("intersect_clip_rect", left=0, top=0, right=50, bottom=60),
         Call.make("exclude_clip_rect", **rect),
@@ -551,3 +550,14 @@ def test_comments_without_an_enhanced_metafile_format_do_not_play():
     trace = TraceContext()
     play(Metafile.build([multiformats(inner, signature=0)], frame=UNIT_FRAME), trace, rect=(0, 0, 128, 128))
     assert "rectangle" not in [call.name for call in trace.calls]
+
+
+def test_right_to_left_layout_mirrors_the_playback_transform():
+    trace = TraceContext()
+    records = [fixed.SetLayout(1), fixed.Rectangle(0, 0, 9, 9), fixed.SetLayout(0)]
+    play(Metafile.build(records, frame=UNIT_FRAME), trace, rect=(0, 0, 128, 128))
+    transforms = [call.kwargs for call in trace.calls if call.name == "set_world_transform"]
+    # Native playback mirrors about the reference device width, not the DC;
+    # the DC's own layout is never set.
+    assert [(t["m11"], t["dx"]) for t in transforms] == [(1.0, 0.0), (-1.0, 1023.0), (1.0, 0.0)]
+    assert "set_layout" not in [call.name for call in trace.calls]
