@@ -5,11 +5,11 @@ colourfulness 40 and tint -30, onto a white top-down 32-bit DIB, and writes
 the destination as raw RGB bytes to ``color-engine-phase/NAME.rgb``. Cases
 cover filtered and replicated enlargements at integer and fractional
 ratios, enlargements beyond five times, reductions, and source rectangles
-away from the bitmap origin, so the dither phase of each path can be fitted
+away from the bitmap origin, placed, clipped and mirrored destinations, so the dither phase of each path can be fitted
 offline. Sources: ``hues`` (many colours, filtered) and ``gradient`` (16x12,
 replicated). No reference images are written.
 
-    case NAME source=WxH rect=(x,y,w,h) dest=WxH result=...
+    case NAME source=WxH rect=(x,y,w,h) dest=(x,y,w,h) surface=WxH clip=... result=...
 """
 
 import ctypes
@@ -61,13 +61,26 @@ CASES = [
     ("offset-replicate", "gradient", (3, 2, 10, 8), (64, 64)),
     ("offset-replicate-int", "gradient", (3, 2, 10, 8), (40, 32)),
 ]
+# (name, source, rect, destination (x, y, w, h), surface (w, h), clip rectangle or None)
+PLACED = [
+    ("reduce-clip", "hues100", (0, 0, 100, 100), (3, 5, 70, 70), (80, 80), (10, 12, 60, 64)),
+    ("general-clip", "hues60", (0, 0, 60, 60), (0, 0, 400, 400), (400, 400), (17, 9, 380, 390)),
+    ("general-offset", "hues60", (5, 4, 40, 40), (0, 0, 300, 300), (300, 300), None),
+    ("mirror-replicate", "gradient", (0, 0, 16, 12), (63, 0, -64, 48), (64, 48), None),
+    ("mirror-filter", "hues50", (0, 0, 50, 50), (99, 0, -100, 100), (100, 100), None),
+    ("flip-filter", "hues50", (0, 0, 50, 50), (0, 99, 100, -100), (100, 100), None),
+    ("placed-filter", "hues50", (0, 0, 50, 50), (70, 80, 100, 100), (200, 200), None),
+    ("placed-replicate", "gradient", (0, 0, 16, 12), (130, 66, 64, 48), (200, 200), None),
+    ("placed-reduce", "hues100", (0, 0, 100, 100), (131, 67, 50, 50), (200, 200), (140, 70, 200, 200)),
+]
 
 
 def main():
     print(f"Windows colour engine phase probe: {platform.platform()}")
     print(f"Module versions: {module_versions()}")
     OUTPUT.mkdir(exist_ok=True)
-    for name, source, (src_x, src_y, src_w, src_h), (width, height) in CASES:
+    cases = [(n, s, r, (0, 0, w, h), (w, h), None) for n, s, r, (w, h) in CASES] + PLACED
+    for name, source, (src_x, src_y, src_w, src_h), (x, y, dest_w, dest_h), (width, height), clip in cases:
         sw, sh, colour = SOURCES[source]
         pixels = b"".join(bytes((b, g, r, 0)) for y in range(sh) for x in range(sw) for r, g, b in [colour(x, y)])
         header = (wintypes.DWORD * 10)(40, sw, (-sh) & 0xFFFFFFFF, 1 | 32 << 16, 0, len(pixels), 0, 0, 0, 0)
@@ -76,16 +89,22 @@ def main():
             bind(gdi, "SetColorAdjustment", wintypes.BOOL, ptr, ctypes.POINTER(ColorAdjustment))
             bind(gdi, "SetStretchBltMode", integer, ptr, integer)
             bind(gdi, "StretchDIBits", integer, ptr, *(integer,) * 8, ptr, ptr, wintypes.UINT, wintypes.DWORD)
+            bind(gdi, "IntersectClipRect", integer, ptr, integer, integer, integer, integer)
+            if clip:
+                gdi.IntersectClipRect(dc, *clip)
             gdi.SetStretchBltMode(dc, 4)
             values = dict(flags=0, illuminant=0, rg=10000, gg=10000, bg=10000, black=0, white=10000)
             gdi.SetColorAdjustment(dc, ctypes.byref(ColorAdjustment(24, **values, colorfulness=40, tint=-30)))
             result = gdi.StretchDIBits(
-                dc, 0, 0, width, height, src_x, src_y, src_w, src_h, pixels, ctypes.byref(header), 0, 0x00CC0020
+                dc, x, y, dest_w, dest_h, src_x, src_y, src_w, src_h, pixels, ctypes.byref(header), 0, 0x00CC0020
             )
             data = ctypes.string_at(bits, width * height * 4)
         rgb = bytes(v for i in range(0, len(data), 4) for v in (data[i + 2], data[i + 1], data[i]))
         (OUTPUT / f"{name}.rgb").write_bytes(rgb)
-        print(f"case {name} source={sw}x{sh} rect={(src_x, src_y, src_w, src_h)} dest={width}x{height} result={result}")
+        print(
+            f"case {name} source={sw}x{sh} rect={(src_x, src_y, src_w, src_h)} dest={(x, y, dest_w, dest_h)} "
+            f"surface={width}x{height} clip={clip} result={result}"
+        )
 
 
 if __name__ == "__main__":
