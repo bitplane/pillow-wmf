@@ -95,16 +95,23 @@ def perpendicular(pen: PenGeometry, direction: Point) -> Point:
 def square_vector(shape: PenShape, direction: Point) -> Point:
     """Half-width extension along the line, for square caps.
 
-    It is rounded to 28.4 in logical space along the logical direction, then
-    mapped to the device and rounded again.
+    The unit logical direction is scaled by one device radius, that of the
+    larger axis, and rounded to 28.4. Under a scaling mapping it is first
+    rounded to sixteenths of a 28.4 unit.
     """
     (rx, ry), (sx, sy) = shape.radius, shape.scale
     lx, ly = direction[0] / sx if sx else 0.0, direction[1] / sy if sy else 0.0
     length = hypot(lx, ly)
     if not length:
         return (0, 0)
-    half = rx / sx if sx else ry / sy
-    return (round(round(lx / length * half) * sx), round(round(ly / length * half) * sy))
+    radius = max(abs(rx), abs(ry))
+
+    def fixed(value):
+        if abs(sx) == abs(sy) == 1:
+            return round(value)
+        return (floor(value * 16 + 0.5) + 8) // 16
+
+    return (fixed(lx / length * radius * (1 if sx >= 0 else -1)), fixed(ly / length * radius * (1 if sy >= 0 else -1)))
 
 
 def _dot(a, b):

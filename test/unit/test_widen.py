@@ -14,6 +14,7 @@ from pillow_wmf.widen import (
     dash_figures,
     outline,
     perpendicular,
+    square_vector,
 )
 
 
@@ -87,3 +88,12 @@ def test_dashes_are_logical_lengths_with_round_cap_ends_pulled_back():
     # Dots with extending caps become zero-length dashes.
     dots = dash_figures(figure((6, 6), (46, 6)), (3, 3), (1, 1), shorten=3)
     assert dots[1] == (StrokeSegment((192, 96), (192, 96), (640, 0)),)
+
+
+def test_scaled_square_caps_round_twice():
+    scale = (2.5092592239379883, 2.5098910331726074)
+    scaled = PenShape(realize_pen(2, *scale), (16 * scale[0], 16 * scale[1]), scale, CAP_SQUARE, JOIN_BEVEL)
+    # Native 28.4 extensions for these device directions of the 2.5x fixture.
+    assert square_vector(scaled, (201, 362)) == (20, 35)
+    assert square_vector(scaled, (200, 362)) == (19, 35)
+    assert square_vector(scaled, (200, 321)) == (21, 34)

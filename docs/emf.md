@@ -174,8 +174,9 @@ point:
 - Inner joins pass through the vertex; round inner joins also sweep the pen.
   Miter tips round to the nearest 28.4 point; miters longer than the limit
   bevel.
-- Square caps extend by half the width along the logical direction, rounded
-  in logical 28.4 and then in the device.
+- Square caps extend along the logical direction by the device half-width of
+  the larger axis, rounded to 28.4; under a scaling mapping it is first rounded
+  to sixteenths of a 28.4 unit.
 - Predefined geometric styles are multiples of the width (dash 3:1, dot 1:1,
   and so on); user styles are logical lengths. Dashes are measured in logical
   units, cut by interpolating along the device segment, and drawn as open
