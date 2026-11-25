@@ -11,6 +11,7 @@ from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, read_dib
 from .bitmap16 import read_bitmap16
 from .blit import StretchAxis
 from .clip import RegionMask
+from .color_adjustment import ColorAdjustment
 from .constants import (
     ALTERNATE,
     BLACKONWHITE,
@@ -578,6 +579,39 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_rop2(self, call, prepared, result):
         a = call.kwargs
         self._state.rop2 = a["mode"]
+
+    def _prepare_set_color_adjustment(self, a):
+        adjustment = ColorAdjustment(
+            a["flags"],
+            a["illuminant"],
+            (a["red_gamma"], a["green_gamma"], a["blue_gamma"]),
+            a["black"],
+            a["white"],
+            a["contrast"],
+            a["brightness"],
+            a["colorfulness"],
+            a["tint"],
+        )
+        if not (
+            min(adjustment.gamma) >= 2500
+            and max(adjustment.gamma) <= 65000
+            and 0 <= adjustment.black <= 4000
+            and 6000 <= adjustment.white <= 10000
+            and all(
+                -100 <= value <= 100
+                for value in (adjustment.contrast, adjustment.brightness, adjustment.colorfulness, adjustment.tint)
+            )
+            and adjustment.illuminant <= 8
+            and not adjustment.flags & ~3
+        ):
+            raise InvalidOperation("COLORADJUSTMENT field out of range")
+        reason = adjustment.unsupported()
+        if reason:
+            raise UnsupportedOperation(f"set_color_adjustment: {reason}")
+        return adjustment
+
+    def _apply_set_color_adjustment(self, call, prepared, result):
+        self._state.color_adjustment = prepared
 
     def _prepare_set_stretch_mode(self, a):
         if a["mode"] not in (BLACKONWHITE, WHITEONBLACK, COLORONCOLOR, HALFTONE):
@@ -1411,6 +1445,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             palette=self._state.palette,
             clip=self._state.clip,
             stretch_mode=self._state.stretch_mode,
+            color_adjustment=self._state.color_adjustment,
             text_color=self._state.text_color,
             background_color=self._state.background_color,
             max_bitmap_pixels=self.max_bitmap_pixels,

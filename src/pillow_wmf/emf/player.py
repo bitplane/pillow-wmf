@@ -199,6 +199,24 @@ def _mask_blt(record):
     }
 
 
+def _color_adjustment(record):
+    if record.size != 24:
+        raise Unsupported("COLORADJUSTMENT with an unexpected size")
+    return "set_color_adjustment", {
+        "flags": record.values,
+        "illuminant": record.illuminant_index,
+        "red_gamma": record.red_gamma,
+        "green_gamma": record.green_gamma,
+        "blue_gamma": record.blue_gamma,
+        "black": record.reference_black,
+        "white": record.reference_white,
+        "contrast": record.contrast,
+        "brightness": record.brightness,
+        "colorfulness": record.colorfulness,
+        "tint": record.red_green_tint,
+    }
+
+
 def _plg_blt(record):
     if not record.bitmap_size:
         raise Unsupported("PlgBlt without a bitmap")
@@ -424,6 +442,7 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.TransparentBlt: _transparent_blt,
     bitmaps.MaskBlt: _mask_blt,
     bitmaps.PlgBlt: _plg_blt,
+    fixed.SetColorAdjustment: _color_adjustment,
     bitmaps.AlphaBlend: _alpha_blend,
     variable.GradientFill: _gradient_fill,
     bitmaps.CreateMonoBrush: _mono_brush,

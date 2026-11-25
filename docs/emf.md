@@ -60,7 +60,7 @@ the codec and reference columns against the code and fixtures.
 | `SETROP2` | typed | full | yes |  |
 | `SETSTRETCHBLTMODE` | typed | full | yes |  |
 | `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
-| `SETCOLORADJUSTMENT` | typed | no | yes | Changes HALFTONE stretching. |
+| `SETCOLORADJUSTMENT` | typed | partial | yes | Per-channel adjustments of scaled HALFTONE copies; colourfulness, tint and illuminants are refused. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
 | `OFFSETCLIPRGN` | typed | partial | yes | Offsets scale through the world transform; rounding ties are unverified. |
@@ -205,6 +205,25 @@ clip region without applying ROP2 (the ROP2 interaction is unverified):
   vertex; each row runs from the ceiling of its left edge crossing to before
   the ceiling of its right one. A pixel's colour is the exact plane through
   the corner colours, rounded to a 16-bit unit, then its top 8 bits.
+
+## Colour adjustment
+
+`SetColorAdjustment` changes only scaled `HALFTONE` copies, whether filtered
+or replicated. Each channel maps through its own table
+([`color_adjustment.py`](../src/pillow_wmf/color_adjustment.py)), on the 0..1
+scale:
+
+1. reference black and white stretch the value;
+2. the channel's gamma (hundredths of a percent) raises it to a power;
+3. `CA_LOG_FILTER` replaces it with log8(1 + 7v);
+4. contrast multiplies it by exp(0.0148885 * contrast);
+5. brightness adds 0.375 * brightness / 100;
+6. `CA_NEGATIVE` inverts it;
+
+then it is clamped and rounded to the nearest 8-bit level. Each step matches
+native output on its own and contrast with brightness or negative together;
+other combinations are unverified. Colourfulness, red-green tint and
+illuminants other than the default mix channels and are refused.
 
 ## Right-to-left layout
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 
 from .bitmap import DIBLayout, RGBBitmap
 from .clip import ClipRegion
+from .color_adjustment import NEUTRAL, ColorAdjustment
 from .constants import ALTERNATE, BLACKONWHITE, BS_SOLID, OPAQUE, PS_SOLID, R2_COPYPEN
 from .mapping import Mapping
 from .objects import FontRequest
@@ -69,6 +70,7 @@ class DrawingState:
     background_color: tuple[int, int, int] | PaletteIndex = (255, 255, 255)
     text_color: tuple[int, int, int] | PaletteIndex = (0, 0, 0)
     stretch_mode: int = BLACKONWHITE
+    color_adjustment: ColorAdjustment = NEUTRAL
     miter_limit: float = 10.0
     brush_origin: tuple[int, int] = (0, 0)
     arc_direction: int = 1  # AD_COUNTERCLOCKWISE

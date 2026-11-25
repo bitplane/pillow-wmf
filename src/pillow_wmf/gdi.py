@@ -199,6 +199,38 @@ class GDI:
             )
         )
 
+    def set_color_adjustment(
+        self,
+        flags: int = 0,
+        illuminant: int = 0,
+        red_gamma: int = 10000,
+        green_gamma: int = 10000,
+        blue_gamma: int = 10000,
+        black: int = 0,
+        white: int = 10000,
+        contrast: int = 0,
+        brightness: int = 0,
+        colorfulness: int = 0,
+        tint: int = 0,
+    ) -> None:
+        """SetColorAdjustment: the COLORADJUSTMENT fields HALFTONE stretching applies."""
+        return self.invoke(
+            Call.make(
+                "set_color_adjustment",
+                flags=flags,
+                illuminant=illuminant,
+                red_gamma=red_gamma,
+                green_gamma=green_gamma,
+                blue_gamma=blue_gamma,
+                black=black,
+                white=white,
+                contrast=contrast,
+                brightness=brightness,
+                colorfulness=colorfulness,
+                tint=tint,
+            )
+        )
+
     def set_miter_limit(self, limit: float) -> None:
         """Limit miter joins of geometric pens to ``limit`` times the pen width."""
         return self.invoke(Call.make("set_miter_limit", limit=limit))

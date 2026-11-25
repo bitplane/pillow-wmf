@@ -47,9 +47,9 @@ def test_pillow_opens_and_sizes_emf():
 
 def test_pillow_reports_unrenderable_emf_as_oserror():
     data = Metafile.build(
-        [fixed.SetColorAdjustment(24, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 0, 0)], frame=UNIT_FRAME
+        [fixed.SetColorAdjustment(24, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 50, 0)], frame=UNIT_FRAME
     ).to_bytes()
-    with Image.open(BytesIO(data)) as image, pytest.raises(OSError, match="SETCOLORADJUSTMENT"):
+    with Image.open(BytesIO(data)) as image, pytest.raises(OSError, match="colourfulness"):
         image.load()
     with Image.open(BytesIO(drawing(frame=(10, 10, 0, 0)))) as image, pytest.raises(OSError, match="reversed"):
         image.load()

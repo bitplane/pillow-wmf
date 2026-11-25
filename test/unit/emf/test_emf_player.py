@@ -480,16 +480,16 @@ def test_comments_reach_the_hook_and_never_draw():
 
 
 def test_unsupported_records_are_reported_or_raise_when_strict():
-    adjustment = fixed.SetColorAdjustment(24, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 0, 0)
+    adjustment = fixed.SetColorAdjustment(20, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 0, 0)
     records = [adjustment, UnknownRecord(0x7777, b""), UnknownRecord(103, b""), fixed.Rectangle(0, 0, 1, 1)]
     calls, omissions = run(records)
     assert calls == [Call.make("rectangle", left=0, top=0, right=1, bottom=1)]
     assert [(o.record_index, o.function, o.reason) for o in omissions] == [
-        (0, 23, "SETCOLORADJUSTMENT is not yet supported"),
+        (0, 23, "COLORADJUSTMENT with an unexpected size"),
         (1, 0x7777, "Record type 0x7777 is not yet supported"),
         (2, 103, "GLSBOUNDEDRECORD is not yet supported"),
     ]
-    with pytest.raises(UnsupportedOperation, match="Record 0: SETCOLORADJUSTMENT"):
+    with pytest.raises(UnsupportedOperation, match="Record 0: COLORADJUSTMENT"):
         run(records, strict=True)
 
 
