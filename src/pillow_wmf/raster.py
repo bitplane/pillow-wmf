@@ -163,16 +163,15 @@ class ParallelogramTransfer:
     # Set for transfers made under a rotating transform, rather than PlgBlt.
     rop: int | None = None
     background_rop: int | None = None
+    # ``blend(sample, destination, x, y)`` replaces the ROP for AlphaBlend and
+    # TransparentBlt; ``x, y`` locate the sample and None leaves the pixel.
+    blend: object = None
 
 
 # Operations whose geometry assumes axis-aligned mapping. A rotating or
 # shearing world transform refuses them rather than drawing them unrotated.
 AXIS_ALIGNED_ONLY = frozenset(
     {
-        "alpha_blend",
-        "bit_blt",
-        "stretch_blt",
-        "transparent_blt",
         "frame_region",
         "text_out",
         "ext_text_out",
@@ -230,8 +229,9 @@ def div255(value: int) -> int:
 def alpha_channel(source, destination, source_alpha, constant):
     """One channel of AlphaBlend's source-over with premultiplied alpha.
 
-    Constant-alpha blending is referenced; per-pixel alpha is referenced only
-    at full constant alpha, where the rounding of the scaling is moot.
+    The constant scales the source alpha, then both premultiplied terms are
+    rounded separately; this matches native output with and without
+    per-pixel alpha, at full and partial constant alpha.
     """
     if source_alpha is None:
         return div255(source * constant + destination * (255 - constant))
@@ -319,14 +319,19 @@ class RasterContext(ExecutionContext[DrawingState]):
             raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
         if self.mapping.rotated and (
             call.name in AXIS_ALIGNED_ONLY
-            or (call.name in PEN_STROKES and self._state.pen.geometric)
+            or (call.name in PEN_STROKES and self._state.pen.geometric and not self._state.recording_path)
             or (
                 call.name in {"rectangle", "ellipse", "round_rect", "arc", "chord", "pie"}
                 and self._state.pen.style == PS_INSIDEFRAME
             )
         ):
             raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
-        if self.mapping.rotated and call.name in PEN_STROKES and self._state.pen.style != PS_NULL:
+        if (
+            self.mapping.rotated
+            and call.name in PEN_STROKES
+            and self._state.pen.style != PS_NULL
+            and not self._state.recording_path
+        ):
             try:
                 scale = self.mapping.rotated_pen_scale(self._state.pen.width)
             except ValueError as error:
@@ -992,6 +997,15 @@ class RasterContext(ExecutionContext[DrawingState]):
             return
         self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
 
+    def _rotated_legacy(self, transfer, a):
+        """Under rotation, a destination-DC source fails as native GDI rejects
+        a rotated source DC; pattern operations fill the parallelogram."""
+        if not self.mapping.rotated:
+            return transfer
+        if transfer is TransferAction.PATTERN:
+            return self._prepare_pat_blt(a)
+        return TransferAction.NOOP
+
     def _prepare_pat_blt(self, a):
         if self.mapping.rotated:
             x, y = a["x"], a["y"]
@@ -1000,10 +1014,10 @@ class RasterContext(ExecutionContext[DrawingState]):
         return None
 
     def _prepare_bit_blt(self, a):
-        return self._prepare_legacy_transfer("bit_blt", a)
+        return self._rotated_legacy(self._prepare_legacy_transfer("bit_blt", a), a)
 
     def _prepare_stretch_blt(self, a):
-        return self._prepare_legacy_transfer("stretch_blt", a)
+        return self._rotated_legacy(self._prepare_legacy_transfer("stretch_blt", a), a)
 
     def _prepare_dib_bit_blt(self, a):
         if self.mapping.rotated:
@@ -1025,13 +1039,20 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_transparent_blt(self, a):
         # TransparentBlt stretches without combining samples, then skips the key.
+        if self.mapping.rotated:
+            transfer = self._prepare_rotated_transfer("dib_stretch_blt", {**a, "rop": SRCCOPY})
+            key = self._state.palette.colorref(logical_color(a["transparent"]))
+            blend = lambda sample, destination, x, y: None if sample == key else sample  # noqa: E731
+            return replace(transfer, blend=blend), key
         preparation = replace(self._transfer_preparation(), stretch_mode=COLORONCOLOR)
         transfer = preparation.prepare_dib("dib_stretch_blt", {**a, "rop": SRCCOPY})
         return transfer, self._state.palette.colorref(logical_color(a["transparent"]))
 
     def _apply_transparent_blt(self, call, prepared, result):
         transfer, transparent = prepared
-        if isinstance(transfer, SourceTransfer):
+        if isinstance(transfer, ParallelogramTransfer):
+            self._apply_plg_blt(call, transfer, result)
+        elif isinstance(transfer, SourceTransfer):
             self._painter().source_blt(
                 transfer.bitmap,
                 transfer.horizontal,
@@ -1056,13 +1077,26 @@ class RasterContext(ExecutionContext[DrawingState]):
                 for row in range(layout.height)
             ]
             alpha = b"".join(rows if layout.top_down else reversed(rows))
+        if self.mapping.rotated:
+            transfer = self._prepare_rotated_transfer("dib_stretch_blt", {**a, "rop": SRCCOPY})
+            width = transfer.source.width
+
+            def blend(sample, destination, x, y):
+                source_alpha = alpha[y * width + x] if alpha is not None else None
+                return tuple(
+                    alpha_channel(s, d, source_alpha, constant) for s, d in zip(sample, destination, strict=True)
+                )
+
+            return replace(transfer, blend=blend), None, None
         preparation = replace(self._transfer_preparation(), stretch_mode=COLORONCOLOR)
         transfer = preparation.prepare_dib("dib_stretch_blt", {**a, "rop": SRCCOPY})
         return transfer, alpha, constant
 
     def _apply_alpha_blend(self, call, prepared, result):
         transfer, alpha, constant = prepared
-        if isinstance(transfer, SourceTransfer):
+        if isinstance(transfer, ParallelogramTransfer):
+            self._apply_plg_blt(call, transfer, result)
+        elif isinstance(transfer, SourceTransfer):
             self._painter().alpha_blt(
                 transfer.bitmap, alpha, transfer.horizontal, transfer.vertical, constant, alpha_channel
             )
@@ -1173,6 +1207,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                 prepared.rop,
                 mask=prepared.sample,
                 background_rop=prepared.background_rop,
+                blend=prepared.blend,
             )
             return
         self._painter().plg_blt(prepared.source, prepared.corners, prepared.rectangle, prepared.sample)
@@ -1256,7 +1291,9 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_bit_blt(self, call, prepared, result):
         a = call.kwargs
-        if isinstance(prepared, ParallelogramTransfer):
+        if isinstance(prepared, tuple):  # A rotated pattern parallelogram.
+            self._painter().transform_pat_blt(prepared, a["rop"])
+        elif isinstance(prepared, ParallelogramTransfer):
             self._apply_plg_blt(call, prepared, result)
         elif isinstance(prepared, SourceTransfer):
             self._source_blt(

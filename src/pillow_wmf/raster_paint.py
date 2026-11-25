@@ -321,7 +321,7 @@ class RasterPainter:
         polygon = ((x0, y0), (x1, y1), (x1 + x2 - x0, y1 + y2 - y0), (x2, y2))
         return self.contour_spans((polygon,))
 
-    def transform_blt(self, source, corners, rectangle, rop, *, mask=None, background_rop=None) -> None:
+    def transform_blt(self, source, corners, rectangle, rop, *, mask=None, background_rop=None, blend=None) -> None:
         """A transfer under a rotating or shearing transform.
 
         It covers the polygon fill of its 28.4 destination parallelogram,
@@ -352,8 +352,13 @@ class RasterPainter:
                 u = index((dx * by - dy * bx) * width, by)
                 v = index((ax * dy - ay * dx) * height, -ay)
                 u, v = min(width - 1, max(0, u)), min(height - 1, max(0, v))
-                operation = rop if mask is None or mask(left + u, top + v) else background_rop
                 sample = source.pixel(left + u, top + v)
+                if blend is not None:
+                    paint = blend(sample, self._pixels[x, y], left + u, top + v)
+                    if paint is not None:
+                        self._pixels[x, y] = paint
+                    continue
+                operation = rop if mask is None or mask(left + u, top + v) else background_rop
                 if (operation >> 16) & 255 == 0xCC:
                     self._pixels[x, y] = sample
                     continue

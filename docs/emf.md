@@ -149,7 +149,7 @@ the codec and reference columns against the code and fixtures.
 | `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
-| `ALPHABLEND` | typed | partial | yes | Constant and per-pixel alpha with nearest sampling; per-pixel alpha below full constant alpha is unreferenced. |
+| `ALPHABLEND` | typed | full | yes | Constant and per-pixel alpha with nearest sampling. |
 | `SETLAYOUT` | typed | full | yes | Mirrors the playback transform about the reference device width; the DC layout is unchanged. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; playback refuses them without it. |
@@ -335,6 +335,11 @@ products plus the 28.4 translation.
   were nudged right along device x; samples clamp into the source
   rectangle. The ROP then combines source, brush and destination as usual,
   and a `MaskBlt` mask chooses the ROP per source pixel.
+- `AlphaBlend` and `TransparentBlt` sample the same way and then blend or
+  skip the key colour exactly as unrotated.
+- A legacy `BitBlt` or `StretchBlt` that reads the destination DC draws
+  nothing: native GDI rejects a source DC under a rotating transform.
+  Source-less pattern operations fill the parallelogram as `PatBlt` does.
 - A direct `SetDIBitsToDevice` maps only its origin, rounded to a device
   pixel, and copies the scan lines unscaled and unrotated.
 - `GradientFill` maps its vertices to whole device pixels. A rectangle is
@@ -367,10 +372,9 @@ pixel in device space. A mask bit of 1 copies the source pixel.
   clips to the target rectangle.
 - Absolute `RestoreDC` levels and the native limit on transform offsets.
 - Under rotating or shearing transforms: text, `FrameRgn`, `WidenPath`,
-  `AlphaBlend`, `TransparentBlt`, legacy device-bitmap transfers, extended
-  geometric pens, pens wider than the small-pen table, and wide pens under
-  non-uniform transforms are refused. Hairline pens are realized under any
-  transform.
+  strokes with extended geometric pens, pens wider than the small-pen table,
+  and wide pens under non-uniform transforms are refused. Hairline pens are
+  realized under any transform, and paths record with any pen selected.
   Eroding the region by the frame size in logical units, as a box, comes
   within a few dozen pixels of native `FrameRgn` output but is not exact.
 - A masked PlgBlt onto a parallelogram mirrored against its source reads the
