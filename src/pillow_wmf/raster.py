@@ -8,7 +8,7 @@ from fractions import Fraction
 from .binary import FormatError, ResourceLimitError
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, read_dib
 from .bitmap16 import read_bitmap16
-from .clip import ClipRegion, RegionMask
+from .clip import RegionMask
 from .constants import (
     ALTERNATE,
     BLACKONWHITE,
@@ -149,7 +149,6 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
         "invert_region",
         "flood_fill",
         "ext_flood_fill",
-        "offset_clip_region",
         "set_map_mode",
         "set_window_origin",
         "set_window_extent",
@@ -557,9 +556,27 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_select_clip_region(self, call, prepared, result):
         a = call.kwargs
-        self._state.clip = ClipRegion(
-            mask=self._clip_mask(self._objects[a["region"]]) if a["region"] is not None else None
-        )
+        region = self._objects[a["region"]] if a["region"] is not None else None
+        self._state.clip = self._state.clip.select(self._clip_mask(region) if region is not None else None)
+
+    def _prepare_ext_select_clip_region(self, a):
+        if a["mode"] not in range(1, 6):
+            raise InvalidOperation(f"Region mode {a['mode']}")
+        if a["region"] is None and a["mode"] != 5:
+            raise InvalidOperation("Only RGN_COPY accepts a null region")
+
+    def _apply_ext_select_clip_region(self, call, prepared, result):
+        a = call.kwargs
+        region = self._objects[a["region"]] if a["region"] is not None else None
+        mask = self._clip_mask(region) if region is not None else None
+        if a["mode"] == 5:
+            self._state.clip = self._state.clip.select(mask)
+        else:
+            bounds = (0, 0, self.surface.width, self.surface.height)
+            self._state.clip = self._state.clip.combine(mask or RegionMask(), a["mode"], bounds)
+
+    def _apply_set_meta_region(self, call, prepared, result):
+        self._state.clip = self._state.clip.with_meta((0, 0, self.surface.width, self.surface.height))
 
     def _apply_select_object(self, call, prepared, result):
         a = call.kwargs
@@ -569,7 +586,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         elif isinstance(obj, FontRequest):
             self._state.text_state = replace(self._state.text_state, font=obj)
         elif isinstance(obj, RegionMask):
-            self._state.clip = ClipRegion(mask=self._clip_mask(obj))
+            self._state.clip = self._state.clip.select(self._clip_mask(obj))
         elif obj is None:
             pass  # Selecting a null object fails without changing state.
         else:

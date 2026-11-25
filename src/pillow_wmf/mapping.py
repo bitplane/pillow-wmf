@@ -208,6 +208,13 @@ class Mapping:
 
     def clip_displacement(self, x: int, y: int) -> tuple[int, int]:
         """OffsetClipRgn rounds transformed distances symmetrically at ties."""
+        if self.world != IDENTITY_TRANSFORM:
+            result = []
+            for value, scale in zip((x, y), self.linear_scale, strict=True):
+                distance = value * scale
+                magnitude = floor(abs(distance) + Fraction(1, 2))
+                result.append(-magnitude if distance < 0 else magnitude)
+            return tuple(result)
         result = []
         for value, viewport, window in zip((x, y), self.viewport_extent, self.window_extent, strict=True):
             numerator = value * viewport

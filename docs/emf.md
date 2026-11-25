@@ -63,15 +63,15 @@ the codec and reference columns against the code and fixtures.
 | `SETCOLORADJUSTMENT` | typed | no | yes | Changes HALFTONE stretching. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
-| `OFFSETCLIPRGN` | typed | no | yes | Refused in GM_ADVANCED until referenced. |
+| `OFFSETCLIPRGN` | typed | partial | yes | Offsets scale through the world transform; rounding ties are unverified. |
 | `MOVETOEX` | typed | full | yes |  |
-| `SETMETARGN` | typed | no | yes | Needs a meta region in the clip state. |
+| `SETMETARGN` | typed | full | yes |  |
 | `EXCLUDECLIPRECT` | typed | full | yes |  |
 | `INTERSECTCLIPRECT` | typed | full | yes |  |
 | `SCALEVIEWPORTEXTEX` | typed | partial | no | Transforms whose offsets overflow are not rejected as natively. |
 | `SCALEWINDOWEXTEX` | typed | partial | no | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
-| `RESTOREDC` | typed | partial | yes | Relative levels only. |
+| `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
 | `SETWORLDTRANSFORM` | typed | partial | yes | Axis-aligned transforms only. |
 | `MODIFYWORLDTRANSFORM` | typed | partial | yes | Axis-aligned results only. |
 | `SELECTOBJECT` | typed | partial | yes | Stock brushes and pens, and the DC brush and pen; stock fonts are missing. |
@@ -111,7 +111,7 @@ the codec and reference columns against the code and fixtures.
 | `FRAMERGN` | typed | no | yes | Region records are not decoded. |
 | `INVERTRGN` | typed | no | yes | Region records are not decoded. |
 | `PAINTRGN` | typed | no | yes | Region records are not decoded. |
-| `EXTSELECTCLIPRGN` | typed | partial | yes | RGN_COPY only. |
+| `EXTSELECTCLIPRGN` | typed | full | yes | Device-space regions fitted like points; a missing clip combines with the whole surface. |
 | `BITBLT` | typed | partial | yes | Source transforms and palette-indexed sources are missing. |
 | `STRETCHBLT` | typed | partial | yes | As BITBLT. |
 | `MASKBLT` | typed | no | yes |  |

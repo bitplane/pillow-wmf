@@ -169,6 +169,14 @@ class GDI:
     def select_clip_region(self, region: Handle | None) -> None:
         return self.invoke(Call.make("select_clip_region", region=region))
 
+    def ext_select_clip_region(self, region: Handle | None, mode: int) -> None:
+        """Combine the clip with a device-space region: RGN_AND, OR, XOR, DIFF or COPY (1-5)."""
+        return self.invoke(Call.make("ext_select_clip_region", region=region, mode=mode))
+
+    def set_meta_region(self) -> None:
+        """Make the current clip the meta region and reset the clip."""
+        return self.invoke(Call.make("set_meta_region"))
+
     def paint_region(self, region: Handle) -> None:
         return self.invoke(Call.make("paint_region", region=region))
 

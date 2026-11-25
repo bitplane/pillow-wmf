@@ -315,6 +315,7 @@ TRANSLATIONS: dict[type, Callable] = {
     fixed.RealizePalette: _direct("realize_palette"),
     fixed.ExtFloodFill: _direct("ext_flood_fill", "x", "y", "color", "mode"),
     fixed.SetLayout: _direct("set_layout", "layout"),
+    fixed.SetMetaRgn: _direct("set_meta_region"),
     fixed.SetBrushOrgEx: _direct("set_brush_origin", "x", "y"),
     # Native recording truncates the limit to an integer; playback reads it back.
     fixed.SetMiterLimit: lambda r: ("set_miter_limit", {"limit": float(r.limit)}),
@@ -461,8 +462,7 @@ def play(
         if isinstance(record, fixed.RestoreDC):
             level = record.saved_dc
             if level >= 0:
-                omissions.omit(index, kind, "Absolute RestoreDC levels are not yet supported")
-                continue
+                continue  # Native playback ignores absolute levels.
             native_saved = levels.restore(level)
             if native_saved is not SaveLevels.MISSING:
                 transform.restore(level)
@@ -499,21 +499,20 @@ def play(
                 set_transform(index, kind)
             continue
         if isinstance(record, variable.ExtSelectClipRgn):
-            if record.mode != RGN_COPY:
-                omissions.omit(index, kind, "Combining clip regions is not yet supported")
-            elif not record.region:
-                invoke(index, kind, "select_clip_region", {"region": None})
-            else:
-                try:
-                    geometry = RegionGeometry(fitted_rectangles(region_rectangles(record.region), transform.fit))
-                except FormatError as error:
-                    omissions.omit(index, kind, str(error))
-                    continue
-                # ExtSelectClipRgn copies the region, so a temporary one suffices.
-                ok, region = invoke(index, kind, "create_region", {"region": geometry})
-                if ok:
-                    invoke(index, kind, "select_clip_region", {"region": region})
-                    invoke(index, kind, "delete_object", {"handle": region})
+            if not record.region:
+                if record.mode == RGN_COPY:
+                    invoke(index, kind, "ext_select_clip_region", {"region": None, "mode": RGN_COPY})
+                continue  # Native playback rejects other modes without a region.
+            try:
+                geometry = RegionGeometry(fitted_rectangles(region_rectangles(record.region), transform.fit))
+            except FormatError as error:
+                omissions.omit(index, kind, str(error))
+                continue
+            # ExtSelectClipRgn copies the region, so a temporary one suffices.
+            ok, region = invoke(index, kind, "create_region", {"region": geometry})
+            if ok:
+                invoke(index, kind, "ext_select_clip_region", {"region": region, "mode": record.mode})
+                invoke(index, kind, "delete_object", {"handle": region})
             continue
         translate = TRANSLATIONS.get(type(record))
         if isinstance(record, bitmaps.SetDIBitsToDevice):
