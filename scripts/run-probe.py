@@ -132,6 +132,7 @@ PROBES = {
     "rotated-regions": Probe("probe-windows-rotated-regions.py", output="rotated-regions"),
     "rotated-transfers": Probe("probe-windows-rotated-transfers.py", output="rotated-transfers"),
     "rotated-blends": Probe("probe-windows-rotated-blends.py", output="rotated-blends"),
+    "rotated-wide-pens": Probe("probe-windows-rotated-wide-pens.py", output="rotated-wide-pens"),
 }
 
 

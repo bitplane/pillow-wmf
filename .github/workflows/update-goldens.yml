@@ -81,6 +81,7 @@ on:
           - rotated-regions
           - rotated-transfers
           - rotated-blends
+          - rotated-wide-pens
   push:
     branches: [master]
     paths:
