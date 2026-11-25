@@ -729,6 +729,16 @@ def gap_scenarios():
 
     yield "angle-arc-turns", None, angle_arc_turns
 
+    def null_selections(dc):
+        # Null object and palette selections, between drawing calls.
+        rectangle(dc, 0, 0, 10, 10)
+        select(dc, None)
+        rectangle(dc, 20, 0, 30, 10)
+        select_palette(dc, None, False)
+        rectangle(dc, 40, 0, 50, 10)
+
+    yield "null-selections", None, null_selections
+
 
 def records(data):
     position = 0
