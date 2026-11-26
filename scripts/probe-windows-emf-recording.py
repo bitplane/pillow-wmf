@@ -871,6 +871,15 @@ def gap_scenarios():
         widen_path(dc)
         comment_path()
         abort_path(dc)
+        set_arc_direction(dc, 2)
+        for box, radials in (((10, 10, 41, 31), (40, 10, 10, 30)), ((10, 10, 41, 31), (10, 30, 40, 10))):
+            begin_path(dc)
+            move_to(dc, 0, 0, None)
+            arc_to(dc, *(16 * value for value in (*box, *radials)))
+            end_path(dc)
+            comment_path()
+            abort_path(dc)
+        set_arc_direction(dc, 1)
         set_map_mode(dc, 1)
         set_arc_direction(dc, 2)
         for box, radials in (((10, 10, 41, 31), (40, 10, 10, 30)), ((10, 10, 41, 31), (10, 30, 40, 10))):
