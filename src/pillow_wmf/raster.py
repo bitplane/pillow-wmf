@@ -1964,6 +1964,10 @@ class RasterContext(ExecutionContext[DrawingState]):
             number for number, index in enumerate(indices) if index and index == face.cmap.get(face.break_character)
         )
         rotating = bool(matrix[1] or matrix[2] or request.escapement % 3600)
+        # Logical extents take the em width as realized in 28.4 device units
+        # along the world x axis.
+        x_scale = Fraction(math.hypot(float(m11), float(m12)))
+        extent_em = Fraction(_round_half_away(em_width * x_scale * 16), 16) / x_scale if x_scale else em_width
         if not advances and rotating and advance_matrix is None:
             # Rotated or sheared glyphs take their logical extents: the design
             # widths at the logical em, accumulated and rounded half up.
@@ -1971,7 +1975,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             for index in indices:
                 design += face.design_advances.get(index, 0)
                 bold += 1 if font.embolden and face.design_advances.get(index, 0) else 0
-                position = _round_half_away(Fraction(design) * em_width / upem + 16 * bold / Fraction(scale))
+                position = _round_half_away(Fraction(design) * extent_em / upem + 16 * bold / Fraction(scale))
                 logical.append(position - previous)
                 previous = position
             advances = tuple(logical)
@@ -2022,7 +2026,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         total, extents = 0, []
         for index in indices:
             total += face.design_advances.get(index, 0)
-            extents.append(math.floor(Fraction(total) * em_width / upem + Fraction(1, 2)))
+            extents.append(math.floor(Fraction(total) * extent_em / upem + Fraction(1, 2)))
         return TextLayout(run.glyphs, background, position, decorations, fixed_position, tuple(extents))
 
     def measure_text(self, args):
