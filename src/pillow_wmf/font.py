@@ -255,12 +255,14 @@ class FontFace:
             self.design_advances = {i: font["hmtx"][name][0] for i, name in enumerate(font.getGlyphOrder())}
             glyf = font["glyf"]
             # Black boxes along the baseline: the left side bearing to it plus the box width.
-            self.ink_spans = {}
+            # Black boxes across it: the box bottom and top.
+            self.ink_spans, self.ink_heights = {}, {}
             for i, name in enumerate(font.getGlyphOrder()):
                 glyph = glyf[name]
                 if getattr(glyph, "numberOfContours", 0):
                     bearing = font["hmtx"][name][1]
                     self.ink_spans[i] = (bearing, bearing + glyph.xMax - glyph.xMin)
+                    self.ink_heights[i] = (glyph.yMin, glyph.yMax)
             self.hinted = "fpgm" in font or any(
                 getattr(glyph, "program", None) and glyph.program.getBytecode()
                 for glyph in (font["glyf"][name] for name in font.getGlyphOrder())

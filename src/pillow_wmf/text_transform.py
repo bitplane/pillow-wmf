@@ -55,6 +55,8 @@ class TransformedFont:
     quality: int = 3
     # Notional black-box start and end along the baseline, by glyph.
     ink_spans: dict = field(default_factory=dict)
+    # Notional black-box bottom and top, by glyph.
+    ink_heights: dict = field(default_factory=dict)
     # The matrix advances follow when the baseline (escapement) differs from
     # the glyph orientation; None when they agree.
     advance_matrix: tuple | None = None
@@ -210,17 +212,24 @@ class TransformedFont:
         Runs place glyphs by logical extents instead; see ``RasterContext``.
         """
         a, b, c, d = self._device_matrix() if self.advance_matrix is None else self.advance_matrix
+        pixels = self.advance_pixels(index)
+        if not b and not c:
+            return ((pixels if a >= 0 else -pixels) * 16 << 32, 0)
+        # Whole pixels laid along the transformed x axis.
+        length = sqrt(float(a) ** 2 + float(c) ** 2)
+        return tuple(_round_half_away(Fraction(pixels * float(value) / length) * 16 * (1 << 32)) for value in (a, c))
+
+    def advance_pixels(self, index: int) -> int:
+        """The glyph's whole-pixel advance length; see ``advance``."""
+        a, b, c, d = self._device_matrix() if self.advance_matrix is None else self.advance_matrix
         units = self.design_advances.get(index, 0)
+        bold = 1 if self.embolden and units else 0
         if not b and not c:
             scale = Fraction(_round_half_away(abs(Fraction(a)) * 65536), 65536)
-            pixels = _round_half_away(units * scale) + (1 if self.embolden and units else 0)
-            return ((pixels if a >= 0 else -pixels) * 16 << 32, 0)
-        # Whole pixels at the transformed x axis's whole pixels per em,
-        # rounded half up, laid along that axis.
-        length = sqrt(float(a) ** 2 + float(c) ** 2)
-        em = int(length * self.units_per_em + 0.5)
-        pixels = int(Fraction(units * em, self.units_per_em) + Fraction(1, 2)) + (1 if self.embolden and units else 0)
-        return tuple(_round_half_away(Fraction(pixels * float(value) / length) * 16 * (1 << 32)) for value in (a, c))
+            return _round_half_away(units * scale) + bold
+        # Rounded half up at the transformed x axis's whole pixels per em.
+        em = int(sqrt(float(a) ** 2 + float(c) ** 2) * self.units_per_em + 0.5)
+        return int(Fraction(units * em, self.units_per_em) + Fraction(1, 2)) + bold
 
     def vertical(self, units: int) -> tuple[int, int]:
         """A notional vertical offset as a 28.4 device vector.
@@ -233,6 +242,16 @@ class TransformedFont:
             pixels = _round_half_away(abs(units) * scale)
             return (0, pixels * 16 if (d < 0) == (units < 0) else -pixels * 16)
         return tuple(_round_half_away(Fraction(value) * units * 16) for value in (b, d))
+
+    def ink_extent(self, index: int) -> tuple[int, int]:
+        """The glyph's 28.4 ink top and bottom along the ascender."""
+        span = self.ink_heights.get(index)
+        if span is None:
+            return 0, 0
+        _, b, _, d = self._device_matrix()
+        length = sqrt(float(b) ** 2 + float(d) ** 2) * 16
+        low, high = span
+        return _round_half_away(float32(high * length)), _round_half_away(float32(low * length))
 
     def frame(self) -> "Frame":
         """The realized font's unit vectors, cell extents and alignment vectors."""
@@ -376,7 +395,9 @@ def place_run(
         down = frame.descent_vector
         origin_x, origin_y = origin_x - down[0], origin_y - down[1]
     positions = [(0, 0)]
-    if advances:
+    if font.advance_matrix is not None:
+        positions = _escapement_positions(font, indices, advances, baseline, extra, break_extra, breaks)
+    elif advances:
         ux, uy, scale = baseline
         total = rise = 0
         for number, value in enumerate(advances):
@@ -417,6 +438,81 @@ def place_run(
         y = (origin_y + py - shift[1] + 8) >> 4
         glyphs.append((x + glyph.bearing[0], y + glyph.bearing[1], glyph))
     return TransformedRun(tuple(glyphs), total, (origin_x - shift[0], origin_y - shift[1]), tuple(positions))
+
+
+def _gen_widths(alpha, beta, width, top, bottom, height):
+    """A glyph's 28.4 extents back and forward along the escapement from its centre.
+
+    The escapement leaves the centre at ``alpha`` along the baseline and
+    ``beta`` along the ascender; it meets an ellipse through the half advance
+    and the ink top or bottom widened by a sixteenth of the font's ascent.
+    """
+    if not width:
+        return 0, 0
+    if not beta:
+        back = int(width / 2)
+        return back, width - back
+    if top == bottom:
+        bottom = int(height / -4)
+        top = int(height / 2) + bottom
+    low, high = min(bottom, 0), max(top, 0)
+    if beta < 0:
+        low, high = -high, -low
+    high += int(height / 16) or 0
+    high = high or 1
+    low -= int(height / 16)
+    low = low or -1
+    if not alpha:
+        return -low, high
+    across = float32(float32(alpha) / float32(float32(width) * float32(0.5)))
+    across = float32(across * across)
+
+    def extent(limit):
+        ratio = float32(float32(beta) / float32(limit))
+        return _round_half_away(float32(1 / float32(sqrt(float32(float32(ratio * ratio) + across)))))
+
+    return extent(low), extent(high)
+
+
+def _escapement_positions(font, indices, advances, baseline, extra, break_extra, breaks):
+    """28.4 glyph origins along an escapement that differs from the glyph orientation.
+
+    Each glyph's centre (origin plus half its device advance) lies on the
+    escapement at the running sum of extents from ``_gen_widths``, or, with
+    explicit advances, at the scaled logical sum plus its back extent.
+    """
+    ux, uy, scale = baseline
+    frame = font.frame()
+    (bx, by), (sx, sy) = _unit(*_column(font, 0))[1], frame.side
+    cross = bx * sy - by * sx
+    alpha = float32((ux * sy - uy * sx) / cross)
+    beta = float32((bx * uy - by * ux) / cross)
+    positions, carry, logical = [], 0, 0
+    for number, index in enumerate(indices):
+        dx, dy = font.advance(index)
+        dx, dy = dx >> 32, dy >> 32
+        width = 16 * font.advance_pixels(index)
+        top, bottom = font.ink_extent(index)
+        back, forward = _gen_widths(alpha, beta, width, top, bottom, frame.ascent)
+        centre = carry + back
+        positions.append(
+            (
+                _round_half_away(float32(float32(centre) * ux)) - int(dx / 2),
+                _round_half_away(float32(float32(centre) * uy)) - int(dy / 2),
+            )
+        )
+        if advances:
+            logical += advances[number]
+            carry = _round_half_away(float32(float32(logical) * float32(scale)))
+        else:
+            carry = centre + forward + extra + (break_extra if number in breaks else 0)
+    positions.append((_round_half_away(float32(carry * ux)), _round_half_away(float32(carry * uy))))
+    return positions
+
+
+def _column(font, column):
+    a, b, c, d = font._device_matrix()
+    return (float32(a) * 16, float32(c) * 16) if column == 0 else (float32(b) * 16, float32(d) * 16)
 
 
 def _round_product(value, factor) -> int:

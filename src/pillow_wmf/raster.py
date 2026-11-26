@@ -1914,6 +1914,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             face.design_advances,
             quality=request.quality,
             ink_spans=face.ink_spans,
+            ink_heights=face.ink_heights,
             advance_matrix=advance_matrix,
             oblique=bool(request.italic) and not face.italic,
             embolden=request.weight >= 700 > face.weight,

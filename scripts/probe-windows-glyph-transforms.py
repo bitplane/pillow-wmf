@@ -6,7 +6,7 @@ GetGlyphOutlineW's metrics and monochrome bitmap, then the pixels ExtTextOutW
 paints for that character alone and for the run "AB A", at a fixed origin
 with baseline alignment:
 
-    case NAME height=H transform=(m11, m12, m21, m22) escapement=E
+    case NAME height=H transform=(m11, m12, m21, m22) escapement=E [orientation=O]
     glyph CH box=W,H origin=X,Y cell=CX,CY
     bits ROW MASK              (# marks a set bit)
     text LABEL [align=A]       (baseline alignment unless given)
@@ -90,15 +90,19 @@ def print_native(data):
 
 
 def cases():
+    """(name, height, transform, escapement, orientation) cases."""
     for height in (-10, -25):
         for name, matrix in TRANSFORMS.items():
-            yield name, height, matrix, 0
-    yield "escapement", -10, TRANSFORMS["identity"], 300
-    yield "escapement-scale", -10, TRANSFORMS["scale"], 300
+            yield name, height, matrix, 0, 0
+    yield "escapement", -10, TRANSFORMS["identity"], 300, 300
+    yield "escapement-scale", -10, TRANSFORMS["scale"], 300, 300
     # A 4-unit em under the EMF fixtures' 128/51 playback scale: fractional
     # device em sizes.
     for name, matrix in TRANSFORMS.items():
-        yield f"{name}-fractional", -4, tuple(value * 128 / 51 for value in matrix), 0
+        yield f"{name}-fractional", -4, tuple(value * 128 / 51 for value in matrix), 0, 0
+    # Upright glyphs along a different escapement (per-glyph projection).
+    for name, escapement in (("identity", 300), ("identity", 900), ("rotate", 300), ("mirror-x", 300)):
+        yield f"upright-{name}-{escapement}", -25, TRANSFORMS[name], escapement, 0
 
 
 def main():
@@ -134,10 +138,11 @@ def main():
         check(set_mode(dc, 2), "SetGraphicsMode")
         set_bk(dc, 1)
         set_align(dc, 24)  # TA_BASELINE
-        for name, height, matrix, escapement in cases():
-            print(f"case {name} height={height} transform={matrix} escapement={escapement}")
+        for name, height, matrix, escapement, orientation in cases():
+            extra = f" orientation={orientation}" if orientation != escapement else ""
+            print(f"case {name} height={height} transform={matrix} escapement={escapement}{extra}")
             check(set_world(dc, ctypes.byref(XForm(*matrix, 0.0, 0.0))), "SetWorldTransform")
-            logfont = LogFont(height, 0, escapement, escapement, 400, 0, 0, 0, 0, 0, 0, 3, 0, FAMILY)
+            logfont = LogFont(height, 0, escapement, orientation, 400, 0, 0, 0, 0, 0, 0, 3, 0, FAMILY)
             font = check(create_font(ctypes.byref(logfont)), "CreateFontIndirectW")
             previous = select(dc, font)
             for character in "AB ":
