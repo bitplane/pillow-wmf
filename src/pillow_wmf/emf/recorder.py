@@ -29,7 +29,8 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import cos, floor, radians, sin
 
-from ..bitmap import read_dib
+from ..bitmap import encode_dib24, read_dib
+from ..bitmap16 import read_bitmap16
 from ..constants import (
     ETO_CLIPPED,
     ETO_GLYPH_INDEX,
@@ -133,7 +134,8 @@ def device_bitmap(bitmap) -> tuple[bytes, bytes]:
     """
     layout = read_dib(bitmap)
     if layout.compression not in (0, 3) or not layout.complete or layout.depth not in (1, 4, 8, 16, 24, 32):
-        raise UnsupportedOperation("EMF transfer sources are uncompressed or bit-field DIBs")
+        # The source DC holds the decoded bitmap: unwritten pixels are black.
+        return device_bitmap(encode_dib24(layout.decode(gap_color=(0, 0, 0))))
     rows = _rows(layout)
     if layout.depth <= 8:
         count = 1 << layout.depth
@@ -179,7 +181,7 @@ def mask_bitmap(bitmap) -> tuple[bytes, bytes]:
     """A 1-bpp mask as written: no colour table, bottom-up, DIB_PAL_INDICES."""
     layout = read_dib(bitmap, color_usage=2)
     if layout.depth != 1 or layout.compression != 0 or not layout.complete:
-        raise UnsupportedOperation("EMF masks are 1-bpp DIBs")
+        return False
     bits = b"".join(reversed(_rows(layout)))
     return _dib_header(layout.width, layout.height, 1, 0, len(bits)), bits
 
@@ -187,8 +189,10 @@ def mask_bitmap(bitmap) -> tuple[bytes, bytes]:
 def packed_bitmap(bitmap) -> tuple[bytes, bytes]:
     """A packed DIB re-encoded as CreateDIBPatternBrushPt records it."""
     layout = read_dib(bitmap)
-    if layout.compression != 0 or not layout.complete:
-        raise UnsupportedOperation("EMF recording of compressed DIB pattern brushes is not yet supported")
+    if not layout.complete:
+        # Missing samples are recorded as zeros.
+        bitmap = replace(bitmap, data=bitmap.data.ljust(layout.offset + layout.stride * abs(layout.height), b"\0"))
+        layout = read_dib(bitmap)
     bits = b"".join(reversed(_rows(layout)))
     info = bytearray(bitmap.data[: layout.offset])
     struct.pack_into("<i", info, 8, abs(layout.height))
@@ -244,7 +248,9 @@ def _box(points) -> Rect | None:
 def _log_font(request: FontRequest) -> LogFont:
     name = request.face_name
     if not isinstance(name, str):
-        raise UnsupportedOperation("EMF fonts record face names as text")
+        # CreateFontIndirectA converts the face name through the ANSI code page.
+        data = name.data if hasattr(name, "data") else bytes(name)
+        name = data.split(b"\0", 1)[0].decode("cp1252", "replace")
     encoded = name.encode("utf-16-le")[: FACE_NAME_BYTES - 2]
     values = {key: getattr(request, key) for key in LogFont.__dataclass_fields__ if key != "face_name"}
     return LogFont(**values, face_name=encoded.ljust(FACE_NAME_BYTES, b"\0"))
@@ -571,6 +577,10 @@ class Recorder(TraceContext):
         padding = b"" if entries else bytes(4)
         info = bits = b""
         if a["bitmap"] is not None:
+            if read_dib(a["bitmap"]).compression in (1, 2):
+                # As for DIB pattern brushes, creation from an RLE DIB fails.
+                self._created(state, _Object("pen", null=True))
+                return
             info, bits = packed_bitmap(a["bitmap"])
             info = BRUSH_MARKER + info[4:]  # The marker takes the header size's place.
 
@@ -640,8 +650,10 @@ class Recorder(TraceContext):
             self._created(state, _Object("brush", create_colour))
             return
         if layout.depth != 1:
-            # Native CreateBitmap only makes 1-bpp and display-depth bitmaps.
-            raise UnsupportedOperation("Pattern brushes are 1-bpp or 32-bpp device bitmaps")
+            # Native CreateBitmap only makes 1-bpp and display-depth bitmaps:
+            # creation fails.
+            self._created(state, _Object("brush", null=True))
+            return
         used = (layout.width + 7) // 8
         stride = ((layout.width + 31) // 32) * 4
         rows = [
@@ -1481,6 +1493,23 @@ class Recorder(TraceContext):
     def _record_pat_blt(self, a, state, records):
         self._blit(bitmaps.BitBlt, a, state, records, source=False, extra={"rop": a["rop"]})
 
+    def _record_bit_blt(self, a, state, records):
+        """A legacy-bitmap BitBlt records as a DIB transfer; without a source, as PatBlt."""
+        if a["source"] is None:
+            self._record_pat_blt(a, state, records)
+            return
+        layout = read_bitmap16(a["source"])
+        source = encode_dib24(layout.decode())
+        self._record_dib_bit_blt({**a, "source": source}, state, records)
+
+    def _record_escape(self, a, state, records):
+        # An EMF DC keeps only metafile comments; other escapes leave no record.
+        if a["escape_function"] == MFCOMMENT:
+            records.append(variable.Comment(a["data"]))
+
+    def _record_set_font_xform(self, a, state, records):
+        pass  # Playback's per-record font scales; a recording DC derives its own.
+
     def _record_dib_bit_blt(self, a, state, records):
         self._blit(bitmaps.BitBlt, a, state, records, extra={"rop": a["rop"]})
 
@@ -1499,10 +1528,13 @@ class Recorder(TraceContext):
     def _record_mask_blt(self, a, state, records):
         if a["source"] is None:
             return  # Native recording writes nothing for a source-less MaskBlt.
-        if a.get("src_size") is not None:
-            raise UnsupportedOperation("EMF recording of MaskBlt with a stretched source is not yet supported")
         mask = mask_bitmap(a["mask"]) if a["mask"] is not None else None
+        if mask is False:
+            return  # GDI fails a MaskBlt whose mask is not a 1-bpp bitmap.
         extra = {"rop": a["rop"], "mask_x": a["mask_x"], "mask_y": a["mask_y"], "mask_usage": 2}
+        if a.get("src_size") is not None:
+            # A stretched source is a scaling source transform.
+            extra |= {"src_m11": a["src_size"][0] / a["width"], "src_m22": a["src_size"][1] / a["height"]}
         self._blit(bitmaps.MaskBlt, a, state, records, extra=extra, mask=mask)
 
     def _record_plg_blt(self, a, state, records):
@@ -1519,6 +1551,8 @@ class Recorder(TraceContext):
         values |= {"src_m11": 1.0, "src_m22": 1.0, "mask_usage": 2}
         values["background"] = _source_background(a["source"], state)
         mask = mask_bitmap(a["mask"]) if a["mask"] is not None else None
+        if mask is False:
+            return  # GDI fails a PlgBlt whose mask is not a 1-bpp bitmap.
         records.append(_offset_record(bitmaps.PlgBlt, values, device_bitmap(a["source"]), mask))
         self._draw(state, bounds)
 
@@ -1636,6 +1670,8 @@ _PATH_CALLS = frozenset(
         "flatten_path",
     )
 )
+
+MFCOMMENT = 15
 
 _SAVED = (
     "mapping",

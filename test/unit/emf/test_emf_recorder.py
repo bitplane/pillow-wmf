@@ -765,8 +765,9 @@ def test_recordings_play_back():
     ]
 
 
-def test_unrecorded_calls_are_refused_before_anything_is_written():
-    recorder = Recorder()
+def test_font_limited_text_is_refused_before_anything_is_written():
+    # Without the face, the recording DC cannot measure the text it records.
+    recorder = Recorder(fonts=FontCollection([]))
     with pytest.raises(UnsupportedOperation):
         recorder.text_out(0, 0, b"x")
     assert recorder.records == []
