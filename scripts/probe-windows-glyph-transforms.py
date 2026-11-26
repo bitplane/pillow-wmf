@@ -103,6 +103,9 @@ def cases():
     # Upright glyphs along a different escapement (per-glyph projection).
     for name, escapement in (("identity", 300), ("identity", 900), ("rotate", 300), ("mirror-x", 300)):
         yield f"upright-{name}-{escapement}", -25, TRANSFORMS[name], escapement, 0
+    # The default height (zero) at the EMF fixtures' fractional playback scale.
+    for name in ("identity", "mirror-x", "scale"):
+        yield f"default-{name}-fractional", 0, tuple(value * 128 / 51 for value in TRANSFORMS[name]), 0, 0
     # The EMF escapement fixture's own size.
     for name in ("rotate", "shear", "mirror-x"):
         yield f"upright-{name}-300-small", -8, TRANSFORMS[name], 300, 0
