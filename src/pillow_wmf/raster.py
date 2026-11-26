@@ -65,7 +65,7 @@ from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon, coverage_spans
 from .gradient import mesh_triangles
 from .limits import DEFAULT_LIMITS
-from .mapping import IDENTITY_TRANSFORM, Mapping
+from .mapping import IDENTITY_TRANSFORM, Mapping, _int32
 from .numeric import float32
 from .objects import EncodedText, FontRequest, GlyphIndices, UnicodeText
 from .paint import pattern_rop2
@@ -211,6 +211,15 @@ def _oriented(corners, rectangle):
     return (p0, p1, p2), (x, y, width, height)
 
 
+def _overflows(paths) -> bool:
+    """Whether the paths' 28.4 extent overflows 32 bits; native drawing then fails."""
+    points = [point for path in paths for command in path.commands for point in command]
+    if not points:
+        return False
+    xs, ys = [x for x, _ in points], [y for _, y in points]
+    return max(xs) - min(xs) > 0x7FFFFFFF or max(ys) - min(ys) > 0x7FFFFFFF
+
+
 # Device space as a mapping, for figures built after the page transform.
 DEVICE_MAPPING = Mapping()
 ARC_FIELDS = ("left", "top", "right", "bottom", "start_x", "start_y", "end_x", "end_y")
@@ -283,11 +292,14 @@ class RasterContext(ExecutionContext[DrawingState]):
         return self._point(x, y)
 
     def _path_point(self, x: int, y: int) -> tuple[int, int]:
-        """A 28.4 path vertex: whole pixels in GM_COMPATIBLE, sixteenths in GM_ADVANCED."""
+        """A 28.4 path vertex: whole pixels in GM_COMPATIBLE, sixteenths in GM_ADVANCED.
+
+        The 28.4 values are 32-bit and wrap.
+        """
         if self.mapping.graphics_mode == GM_ADVANCED:
-            return self.mapping.fixed_point(x, y)
+            return tuple(_int32(value) for value in self.mapping.fixed_point(x, y))
         x, y = self._point(x, y)
-        return x * 16, y * 16
+        return _int32(x * 16), _int32(y * 16)
 
     def _mapped_path(self, points) -> Polygon:
         return [self._path_point(x, y) for x, y in points]
@@ -923,7 +935,18 @@ class RasterContext(ExecutionContext[DrawingState]):
         self._state.position = a["x"], a["y"]
         self._state.fixed_position = None
 
+    def _prepare_line_to(self, a):
+        # LineTo fails once its device end point's next 28.4 pixel overflows.
+        exact = self.mapping.fixed_point(a["x"], a["y"])
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            exact = tuple(value * 16 for value in self._point(a["x"], a["y"]))
+        if any(not -(2**31) <= value + 16 <= 0x7FFFFFFF for value in exact):
+            return NATIVE_FAILURE
+        return None
+
     def _apply_line_to(self, call, prepared, result):
+        if prepared is NATIVE_FAILURE:
+            return
         a = call.kwargs
         start = self._start_point()
         self._stroke_path(DevicePath.polyline((start, self._path_point(a["x"], a["y"]))), extend=True)
@@ -1627,6 +1650,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         else:
             left, top = self._point(a["left"] - shift, a["top"])
             right, bottom = self._point(a["right"] - shift, a["bottom"])
+            if name != "rectangle":
+                # Curves are built from the 28.4 box, inclusive at the far
+                # edges, whose 32-bit values wrap.
+                left, top = (_int32(value * 16) >> 4 for value in (left, top))
+                right, bottom = ((_int32((value - 1) * 16) >> 4) + 1 for value in (right, bottom))
         left, right = sorted((left, right))
         top, bottom = sorted((top, bottom))
         if self.mapping.graphics_mode == GM_ADVANCED:
@@ -1647,6 +1675,39 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if covered and name in {"arc", "chord", "pie"}:
                     return
             rectangle = name == "rectangle"
+            if rectangle and advanced_bounds is None and not self._state.recording_path:
+                # The outline runs through the 32-bit 28.4 box, which wraps;
+                # when that overflows or turns the box over, only the
+                # interior inside the outline is filled.
+                edges = [_int32(value * 16) for value in (left, top, right - 1, bottom - 1)]
+                if (
+                    edges[2] - edges[0] > 0x7FFFFFFF
+                    or edges[3] - edges[1] > 0x7FFFFFFF
+                    or edges[0] > edges[2]
+                    or edges[1] > edges[3]
+                ):
+                    if self._state.brush.style != BS_NULL and right - left > 2 and bottom - top > 2:
+                        interior = DevicePath.polyline(
+                            box_corners(((left + 1) * 16, (top + 1) * 16, (right - 1) * 16, (bottom - 1) * 16)),
+                            closed=True,
+                        )
+                        no_pen = replace(self._state, pen=replace(self._state.pen, style=PS_NULL))
+                        RasterPainter(self.surface, no_pen).paint_polygons((interior,), brush=self._state.brush)
+                    return
+                if (edges[0] >> 4, edges[1] >> 4) != (left, top) or (edges[2] >> 4, edges[3] >> 4) != (
+                    right - 1,
+                    bottom - 1,
+                ):
+                    # A wrapped outline is drawn where it wrapped to, over the true fill.
+                    if self._state.brush.style != BS_NULL:
+                        interior = DevicePath.polyline(
+                            box_corners(((left + 1) * 16, (top + 1) * 16, (right - 1) * 16, (bottom - 1) * 16)),
+                            closed=True,
+                        )
+                        no_pen = replace(self._state, pen=replace(self._state.pen, style=PS_NULL))
+                        RasterPainter(self.surface, no_pen).paint_polygons((interior,), brush=self._state.brush)
+                    painter.stroke_path(DevicePath.polyline(box_corners(tuple(edges)), closed=True))
+                    return
             if name == "rectangle":
                 bounds = (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
                 # Hairline rectangles use the integer box, except in paths.
@@ -2200,6 +2261,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self._state.recording_path:
             self._record_figure(path, extend=extend)
             return
+        if _overflows((path,)):
+            return
         self._painter().stroke_path(path, miter=miter)
 
     def _record_figure(self, path, *, extend=False):
@@ -2219,6 +2282,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self._state.recording_path:
             for path in paths:
                 self._record_figure(replace(path, closed=True))
+            return
+        if _overflows(paths):
             return
         self._painter().paint_polygons(paths, miter=miter, reserve_outline=reserve_outline, brush=brush)
 
