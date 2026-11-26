@@ -901,6 +901,32 @@ def completion_scenarios():
 
     yield "compatible-after-world", None, compatible_after_world
 
+    def flood_and_comment(r):
+        r.flood_fill(10, 10, 0x00FF00)
+        r.gdi_comment(b"note\0")
+
+    yield "flood-and-comment", None, flood_and_comment
+
+    shapes = {
+        "rectangle": lambda r: r.rectangle(10, 10, 31, 23),
+        "ellipse": lambda r: r.ellipse(10, 10, 31, 23),
+        "round-rect": lambda r: r.round_rect(10, 10, 31, 23, 6, 4),
+        "arc": lambda r: r.arc(10, 10, 31, 23, 31, 16, 10, 10),
+        "chord": lambda r: r.chord(10, 10, 31, 23, 31, 23, 10, 10),
+        "pie": lambda r: r.pie(10, 10, 31, 23, 31, 23, 10, 10),
+    }
+    for shape, draw_shape in shapes.items():
+        for world in (False, True):
+
+            def draw(r, draw_shape=draw_shape, world=world):
+                if world:
+                    r.set_graphics_mode(2)
+                    r.set_world_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+                    r.set_graphics_mode(1)
+                draw_shape(r)
+
+            yield f"compatible-{shape}{'-after-world' if world else ''}", None, draw
+
 
 SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios(), *completion_scenarios()]
 

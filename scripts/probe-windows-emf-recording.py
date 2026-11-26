@@ -1314,6 +1314,32 @@ def completion_scenarios():
 
     yield "compatible-after-world", None, compatible_after_world
 
+    def flood_and_comment(dc):
+        api("FloodFill", boolean, ptr, integer, integer, dword)(dc, 10, 10, 0x00FF00)
+        gdi.GdiComment(dc, 5, b"note\0")
+
+    yield "flood-and-comment", None, flood_and_comment
+
+    shapes = {
+        "rectangle": lambda dc: rectangle(dc, 10, 10, 31, 23),
+        "ellipse": lambda dc: ellipse(dc, 10, 10, 31, 23),
+        "round-rect": lambda dc: round_rect(dc, 10, 10, 31, 23, 6, 4),
+        "arc": lambda dc: arc(dc, 10, 10, 31, 23, 31, 16, 10, 10),
+        "chord": lambda dc: chord(dc, 10, 10, 31, 23, 31, 23, 10, 10),
+        "pie": lambda dc: pie(dc, 10, 10, 31, 23, 31, 23, 10, 10),
+    }
+    for shape, draw_shape in shapes.items():
+        for world in (False, True):
+
+            def draw(dc, draw_shape=draw_shape, world=world):
+                if world:
+                    set_graphics_mode(dc, 2)
+                    set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
+                    set_graphics_mode(dc, 1)
+                draw_shape(dc)
+
+            yield f"compatible-{shape}{'-after-world' if world else ''}", None, draw
+
 
 def records(data):
     position = 0
