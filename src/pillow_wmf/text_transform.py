@@ -169,6 +169,8 @@ class TransformedFont:
             sx = _q16(max(abs(Fraction(a)), abs(Fraction(c))))
             sy = _q16(max(abs(Fraction(b)), abs(Fraction(d))))
             wa, wb, wc, wd = self._device_matrix()
+            if exact_x and not wb and not wc:
+                sx = abs(Fraction(wa))  # as for the plain outline
             # The driver asks for 20 per mille on both axes: the horizontal
             # strength keeps a minimum pixel, the vertical one does not.
             # The strength follows the unsheared y column's length in pixels.
