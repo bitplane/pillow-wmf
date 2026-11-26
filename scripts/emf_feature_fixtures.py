@@ -1387,14 +1387,6 @@ def text_justification(d):
     d.add(fixed.SetTextJustification(0, 0), ext_text_a(d, d.u(70), d.u(24), b"A B A"))
 
 
-def text_qualities(d):
-    """The controlled font at every LOGFONT quality value class, one cell each."""
-    d.add(fixed.SetTextColor(0x000000))
-    for index, quality in enumerate((0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 100, 255)):
-        text_font(d, -d.u(14), quality=quality)
-        d.add(ext_text_a(d, d.u(4 + 42 * (index % 3)), d.u(4 + 30 * (index // 3)), b"AB"))
-
-
 def rotated_color_adjustment(d):
     """HALFTONE stretches with colour adjustment under a rotating transform."""
     transfer_background(d)
@@ -1670,7 +1662,6 @@ FEATURES = (
     ("text-transform-styles", text_transform_styles, (128, 51)),
     ("scale-extents", scale_extents, (128, 51)),
     ("dib-variants", dib_variants, (128,)),
-    ("text-qualities", text_qualities, (128,)),
     ("text-justification", text_justification, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),

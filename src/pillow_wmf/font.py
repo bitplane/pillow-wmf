@@ -446,8 +446,10 @@ class FontFace:
         # Draft/proof affect legacy bitmap strike selection. For the static
         # TrueType outlines supported here, they share default smoothing.
         # Keep the requested value in the realized font and its cache key.
-        if quality not in range(7):
-            raise UnsupportedOperation("Unsupported font quality")
+        if quality not in range(256):
+            raise ValueError("Font quality is a byte")
+        if quality > 6:
+            quality = 0  # Undefined qualities render as DEFAULT_QUALITY.
         if missing_glyph not in ("error", "notdef"):
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
         if size <= 0:

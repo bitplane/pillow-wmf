@@ -85,7 +85,7 @@ def test_current_position_is_logical_and_saved_independently_of_glyph_cache(dc):
     assert dc._state.position == (8, 25)
 
 
-@pytest.mark.parametrize("changes", [{"quality": 255}, {"charset": 2}])
+@pytest.mark.parametrize("changes", [{"charset": 2}])
 def test_unimplemented_realization_fails_before_painting_or_committing(dc, changes):
     dc.select_object(dc.create_font(replace(REQUEST, **changes)))
     image, calls = dc.image.tobytes(), list(dc.calls)
@@ -211,3 +211,10 @@ def test_rgb_text_keeps_dc_clip_and_ignores_rop2(face):
     changed = [(x, y) for y in range(40) for x in range(40) if dc.image.getpixel((x, y)) != (255, 255, 255)]
     assert changed
     assert all(10 <= x < 15 and 10 <= y < 20 for x, y in changed)
+
+
+@pytest.mark.parametrize("quality", [7, 8, 100, 255])
+def test_undefined_qualities_render_as_default(face, quality):
+    default = face.realize(replace(REQUEST, quality=0), (1, 1)).glyph("A", 10000)
+    undefined = face.realize(replace(REQUEST, quality=quality), (1, 1)).glyph("A", 10000)
+    assert (undefined.size, undefined.channels, undefined.pixels) == (default.size, default.channels, default.pixels)
