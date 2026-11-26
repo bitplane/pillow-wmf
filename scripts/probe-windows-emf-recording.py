@@ -849,6 +849,11 @@ def gap_scenarios():
             lambda: round_rect(dc, 6, 4, 41, 33, 12, 9),
             lambda: pie(dc, 5, 5, 41, 31, 40, 5, 5, 6),
             lambda: rectangle(dc, 8, 8, 13, 30),
+            lambda: ellipse(dc, 8, 8, 13, 30),
+            lambda: pie(dc, 8, 8, 13, 30, 13, 8, 8, 20),
+            lambda: chord(dc, 3, 7, 44, 30, 2, 30, 44, 8),
+            lambda: (move_to(dc, 2, 2, None), arc_to(dc, 10, 10, 50, 35, 50, 20, 10, 12), line_to(dc, 2, 2)),
+            lambda: (arc(dc, 5, 5, 45, 35, 45, 10, 5, 30), close_figure(dc)),
         )
 
         def clipped(shape, widen=True):
@@ -948,6 +953,48 @@ def gap_scenarios():
             gdi.GdiComment(dc, len(data), data)
 
     yield "path-readback", None, path_readback
+
+    def inside_frame_readback(dc):
+        # GetPath of curves built, then widened, with inside-frame and mitred
+        # pens, in sixteenths of a pixel, written into GDI comments.
+        api("GdiComment", boolean, ptr, wintypes.UINT, ctypes.c_char_p)
+        api("GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+
+        def comment_path():
+            count = gdi.GetPath(dc, None, None, 0)
+            pts, kinds = (wintypes.POINT * max(count, 1))(), (ctypes.c_ubyte * max(count, 1))()
+            gdi.GetPath(dc, pts, kinds, count)
+            data = b"PATH" + b"".join(
+                struct.pack("<iiB", p.x, p.y, k) for p, k in zip(pts[:count], kinds[:count], strict=True)
+            )
+            gdi.GdiComment(dc, len(data), data)
+
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 16, 16, None)
+        set_viewport_ext(dc, 1, 1, None)
+        brush = LogBrush(0, 0, 0)
+        pens = (
+            lambda: ext_create_pen(0x00010000 | 0x2000 | 6, 112, ctypes.byref(brush), 0, None),
+            lambda: ext_create_pen(0x00010000 | 0x2000, 112, ctypes.byref(brush), 0, None),
+            lambda: create_pen(6, 112, 0),
+        )
+        shapes = (
+            lambda: ellipse(dc, 80, 80, 640, 480),
+            lambda: pie(dc, 80, 80, 656, 496, 640, 80, 80, 96),
+        )
+        for pen in pens:
+            select(dc, pen())
+            for shape in shapes:
+                begin_path(dc)
+                shape()
+                end_path(dc)
+                comment_path()
+                widen_path(dc)
+                comment_path()
+                abort_path(dc)
+            select(dc, stock(7))
+
+    yield "inside-frame-readback", None, inside_frame_readback
 
 
 def records(data):
