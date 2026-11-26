@@ -8,7 +8,9 @@ non-integer frame scale.
 import math
 import struct
 
-from pillow_wmf.emf import Metafile, bitmaps, fixed, system, variable
+from pillow_wmf.emf import Metafile, bitmaps, fixed, system, text, variable
+from pillow_wmf.emf.objects import LogFont
+from pillow_wmf.emf.text import ETO_NO_RECT
 from pillow_wmf.mapping import ReferenceDevice
 
 PS_SOLID, PS_DASH, PS_DOT, PS_USERSTYLE, PS_ALTERNATE, PS_NULL = 0, 1, 2, 7, 8, 5
@@ -1076,6 +1078,76 @@ def dashed_curves(d):
     d.add(fixed.Ellipse(*d.rect(72, 100, 76, 124)), fixed.EndPath(), fixed.StrokeAndFillPath(0, 0, 0, 0))
 
 
+TEXT_FACE = "Pillow WMF Test"
+# Page units to 0.01 mm on the reference device in MM_TEXT, as GM_COMPATIBLE
+# text records carry them.
+TEXT_SCALES = (100 * 271 / 1024, 100 * 203 / 768)
+
+
+def text_font(d, height, **fields):
+    """Select the controlled layout font."""
+    face = TEXT_FACE.encode("utf-16-le").ljust(64, b"\0")
+    font = LogFont(height=height, weight=400, quality=3, face_name=face, **fields)
+    return d.select(
+        lambda slot: variable.ExtCreateFontIndirectW(slot, font, bytes(256) + struct.pack("<II", 0x08007664, 0))
+    )
+
+
+def ext_text_a(d, x, y, data, *, options=0, rectangle=None, advances=(), mode=1, scales=TEXT_SCALES):
+    """An EMR_EXTTEXTOUTA record: bytes, then advances, after the fixed fields."""
+    options = options if rectangle is not None else options | ETO_NO_RECT
+    start = 8 + 52 + (16 if rectangle is not None else 0)
+    padded = data + bytes(-len(data) % 4)
+    dx_offset = start + len(padded) if advances else 0
+    blob = padded + b"".join(struct.pack("<i", value) for value in advances)
+    return text.ExtTextOutA((0, 0, -1, -1), mode, *scales, x, y, len(data), start, options, rectangle, dx_offset, blob)
+
+
+def text_modes(d):
+    """Controlled-font ExtTextOutA in compatible and advanced records, with rectangles, advances and alignment."""
+    text_font(d, -d.u(12))
+    d.add(fixed.SetTextColor(0x802000), fixed.SetBkColor(0xC0E0F0))
+    rows = (
+        dict(mode=1),
+        dict(mode=1, scales=(0.0, 0.0)),
+        dict(mode=2, scales=(0.0, 0.0)),
+    )
+    for row, kwargs in enumerate(rows):
+        y = d.u(4 + 18 * row)
+        d.add(ext_text_a(d, d.u(4), y, b"AB BA", **kwargs))
+        d.add(fixed.SetBkMode(2))  # OPAQUE
+        rectangle = d.rect(60, 4 + 18 * row, 120, 18 + 18 * row)
+        d.add(
+            ext_text_a(
+                d,
+                d.u(64),
+                y,
+                b"ABBA",
+                options=0x06,
+                rectangle=rectangle,
+                advances=tuple(d.u(v) for v in (10, 4, 13, 7)),
+                **kwargs,
+            )
+        )
+        d.add(fixed.SetBkMode(1))  # TRANSPARENT
+    for column, alignment in enumerate((0x18, 0x06, 0x0A)):  # baseline; centre; right bottom
+        x = d.u(20 + 40 * column)
+        d.add(fixed.SetTextAlign(alignment))
+        d.add(fixed.Rectangle(x - d.u(1), d.u(68), x + d.u(1), d.u(70)))
+        d.add(ext_text_a(d, x, d.u(70), b"AB"))
+    d.add(fixed.SetTextAlign(0))
+    # Advanced records follow a non-uniform world scale.
+    d.add(fixed.SetWorldTransform(1.5, 0.0, 0.0, 0.75, float(d.u(4)), float(d.u(84))))
+    d.add(ext_text_a(d, 0, 0, b"ABA B", mode=2, scales=(0.0, 0.0)))
+    d.add(fixed.SetBkMode(2))
+    d.add(
+        ext_text_a(
+            d, d.u(40), d.u(20), b"BA", options=0x02, rectangle=d.rect(38, 18, 60, 40), mode=2, scales=(0.0, 0.0)
+        )
+    )
+    d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+
+
 def rotated_color_adjustment(d):
     """HALFTONE stretches with colour adjustment under a rotating transform."""
     transfer_background(d)
@@ -1342,6 +1414,7 @@ FEATURES = (
     ("rotated-color-adjustment", rotated_color_adjustment, (128,)),
     ("widened-curves", widened_curves, (128, 51)),
     ("dashed-curves", dashed_curves, (128, 51)),
+    ("text-modes", text_modes, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),
