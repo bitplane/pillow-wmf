@@ -181,7 +181,13 @@ def _perpendicular(pen: PenGeometry, direction: Point) -> Point:
 
 
 def _world_vector(shape: PenShape, vector: Point) -> tuple[int, int]:
-    """A 28.4 device vector taken back through the pen's world transform, in whole world units."""
+    """A 28.4 device vector taken back through the pen's world transform, in whole world units.
+
+    An identity transform converts the 28.4 components directly, rounding
+    down; others round the transformed components half away from zero.
+    """
+    if shape.transform is None and shape.scale == (1.0, 1.0):
+        return (vector[0] >> 4, vector[1] >> 4)
     vx, vy = vector[0] / 16, vector[1] / 16
     if shape.transform is not None:
         m11, m12, m21, m22 = shape.transform

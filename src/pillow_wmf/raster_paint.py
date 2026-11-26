@@ -36,10 +36,10 @@ from .stroke import (
     widen_segment,
 )
 from .surface import Surface
-from .widen import CAP_FLAT, CAP_ROUND, JOIN_MITER, JOIN_ROUND, PenShape, dash_figures, perpendicular
+from .widen import CAP_FLAT, CAP_ROUND, JOIN_MITER, JOIN_ROUND, PenShape, perpendicular
 from .widen import outline as widen_outline
+from .widener import dashes, widen, widen_dashes
 from .widener import segments as widener_segments
-from .widener import widen, widen_dashes
 
 
 def _nudged_index(numerator, det, step):
@@ -518,19 +518,21 @@ class RasterPainter:
         """The figures a pen strokes: each dash of a patterned geometric pen, or the path."""
         pen = self.state.pen
         if pen.geometric and pen.pattern:
-            for dash, seam in self._dashes(path.segments, path.closed):
-                yield dash, False, seam
+            for segments, closed, seam, _ in self._dashes(path.segments, path.closed):
+                yield segments, closed, seam
         else:
             yield path.segments, path.closed, 0
 
     def _dashes(self, segments, closed):
-        """A patterned geometric pen's dashes of one figure, as ``(segments, seam)`` pairs."""
+        """A patterned geometric pen's dashes of one figure; see ``widener.dashes``."""
         pen = self.state.pen
-        scale = self.state.mapping.linear_scale
-        # Predefined styles pull capped dash ends back; user styles do not.
-        shorten = pen.width if pen.cap != CAP_FLAT and pen.style != PS_USERSTYLE else 0
-        logical = self.state.mapping.rotated_logical_point if self.state.mapping.rotated else None
-        return dash_figures(segments, pen.pattern, scale, shorten=shorten, closed=closed, logical=logical)
+        pattern = list(pen.pattern)
+        if pen.cap != CAP_FLAT and pen.style != PS_USERSTYLE:
+            # Predefined styles pull capped dash ends back; user styles do not.
+            for index in range(0, len(pattern) - 1, 2):
+                dash = max(0, pattern[index] - pen.width)
+                pattern[index], pattern[index + 1] = dash, pattern[index + 1] + pattern[index] - dash
+        return dashes(self.widen_shape, segments, pattern, closed=closed)
 
     @cached_property
     def widen_shape(self) -> PenShape:

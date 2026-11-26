@@ -18,11 +18,22 @@ unit toward the vertex when the joint lies on a whole pixel.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from math import sqrt
 
 from .geometry import Point, StrokeSegment, flatten_cubic
 from .numeric import float32
-from .widen import CAP_FLAT, CAP_ROUND, CAP_SQUARE, JOIN_BEVEL, JOIN_ROUND, PenShape, _miter_in_limit, _pen_record
+from .widen import (
+    CAP_FLAT,
+    CAP_ROUND,
+    CAP_SQUARE,
+    JOIN_BEVEL,
+    JOIN_ROUND,
+    PenShape,
+    _miter_in_limit,
+    _pen_record,
+    _world_vector,
+)
 from .widen import square_vector as _square_vector
 
 # A figure as WidenPath reads it: start point, commands (a line's end point,
@@ -437,10 +448,106 @@ def widen(shape: PenShape, paths: Iterable) -> list[tuple[list[Point], bool]]:
     return widener.figures
 
 
-def widen_dashes(shape: PenShape, dashes: Iterable[tuple[tuple[StrokeSegment, ...], int]]):
-    """WidenPath's figures for the dashes of a styled pen, as ``(segments, seam)`` pairs."""
+def _world_length(shape: PenShape, chord: Point) -> float:
+    """A line's length in world units: its vector in whole world units, in single precision."""
+    wx, wy = _world_vector(shape, chord)
+    if not wx and not wy:
+        return 0.0
+    f = float32
+    return f(sqrt(f(f(f(wy) * f(wy)) + f(f(wx) * f(wx)))))
+
+
+def _fraction(line: StrokeSegment, chord: Point, length: float, distance: float) -> Point:
+    """The point ``distance`` world units along a line, by its single-precision unit vector."""
+    if not length:
+        return line.start
+    f = float32
+    inverse = f(1.0 / length)
+    return tuple(line.start[axis] + _round_half_away(f(f(inverse * f(chord[axis])) * f(distance))) for axis in (0, 1))
+
+
+def dashes(shape: PenShape, figure: tuple[StrokeSegment, ...], pattern, *, closed=False):
+    """A styled pen's dashes of one figure, as the native styler walks it.
+
+    Each line is measured in whole world units, in single precision; style
+    lengths are consumed along it, a dash ending where its length runs out
+    (at the line's end included) and a gap only strictly inside the line.
+    Dash ends lie on the line by its unit vector. A dash keeps the direction,
+    chord and joint kinds of the lines it covers.
+
+    Returns ``(segments, closed, seam, dash)`` figures. A closed figure drawn
+    as one dash stays closed; one whose last dash is still drawing at the
+    close runs that dash on into its first, ``seam`` being the closing joint.
+    """
+    lines = [segment for segment in figure if segment.start != segment.end]
+    if closed and lines and lines[-1].end != lines[0].start:
+        lines.append(StrokeSegment.line(lines[-1].end, lines[0].start))
+    if not lines:
+        return [(tuple(figure), closed, 0, False)]
+    f = float32
+    entries = [f(value) for value in pattern]
+    index, remaining, drawing = 0, entries[0], True
+    finished: list[list[StrokeSegment]] = []
+    current: list[StrokeSegment] = []
+    cursor, joint = lines[0].start, False
+    for line in lines:
+        chord = line.chord or (line.end[0] - line.start[0], line.end[1] - line.start[1])
+        length = _world_length(shape, chord)
+        left, distance = length, f(0.0)
+        if drawing:
+            cursor, joint = line.start, line.curve and bool(current)
+        while True:
+            if drawing:
+                if remaining <= left:
+                    left, distance = f(left - remaining), f(distance + remaining)
+                    point = _fraction(line, chord, length, distance)
+                    current.append(replace(line, start=cursor, end=point, curve=joint, chord=chord))
+                    finished.append(current)
+                    current = []
+                    index = (index + 1) % len(entries)
+                    remaining, drawing = entries[index], False
+                    continue
+                remaining = f(remaining - left)
+                current.append(replace(line, start=cursor, curve=joint, chord=chord))
+                break
+            if remaining < left:
+                left, distance = f(left - remaining), f(distance + remaining)
+                cursor, joint = _fraction(line, chord, length, distance), False
+                index = (index + 1) % len(entries)
+                remaining, drawing = entries[index], True
+                continue
+            remaining = f(remaining - left)
+            break
+    result = []
+    if drawing and current:
+        if closed and not finished:
+            return [(tuple(current), True, 0, False)]
+        if closed:
+            tail = _drawn(current)
+            finished[0] = current + finished[0]
+            result_seam = len(tail)
+        else:
+            finished.append(current)
+            result_seam = None
+    else:
+        result_seam = None
+    for number, dash in enumerate(finished):
+        pieces = _drawn(dash)
+        seam = result_seam if number == 0 and result_seam is not None else 0
+        result.append((pieces, False, seam, True))
+    return result
+
+
+def _drawn(dash: list[StrokeSegment]) -> tuple[StrokeSegment, ...]:
+    """A dash's pieces of nonzero length, or its single zero-length piece."""
+    pieces = tuple(piece for piece in dash if piece.start != piece.end)
+    return pieces or tuple(dash[:1])
+
+
+def widen_dashes(shape: PenShape, figures):
+    """WidenPath's figures for dashed figures from ``dashes``."""
     widener = _Widener(shape)
-    for figure, seam in dashes:
-        if figure:
-            widener.figure(figure, False, seam, dash=True)
+    for segments, closed, seam, dash in figures:
+        if segments:
+            widener.figure(segments, closed, seam, dash=dash)
     return widener.figures
