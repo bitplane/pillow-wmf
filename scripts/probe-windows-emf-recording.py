@@ -1069,6 +1069,14 @@ def gap_scenarios():
                 widen_path(dc)
                 comment_path()
                 abort_path(dc)
+                # The same figure widened along its curves.
+                begin_path(dc)
+                shape()
+                end_path(dc)
+                comment_path()
+                widen_path(dc)
+                comment_path()
+                abort_path(dc)
             select(dc, stock(7))
 
     yield "dashed-readback", None, dashed_readback
