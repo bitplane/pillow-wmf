@@ -132,11 +132,19 @@ def test_polygon_fill_mode_is_saved_and_restored() -> None:
     assert context.image.getpixel((13, 3)) == (0, 0, 0)
 
 
-def test_invalid_polygon_fill_mode_does_not_change_context() -> None:
+def test_out_of_range_modes_take_native_meanings() -> None:
+    # GDI stores these values; drawing reads them as below (native references
+    # in emf-invalid-modes and emf-background-mode-values).
     context = RasterContext(8, 8)
-    with pytest.raises(UnsupportedOperation, match="Polygon fill mode"):
-        context.set_polygon_fill_mode(3)
-    assert context.calls == []
+    context.set_polygon_fill_mode(2)
+    context.set_polygon_fill_mode(3)
+    assert context._state.polygon_fill_mode == 1  # Anything but WINDING is ALTERNATE.
+    context.set_rop2(0x107)
+    assert context._state.rop2 == 7  # The low byte, wrapped into the sixteen mixes.
+    context.set_rop2(0)
+    assert context._state.rop2 == 16
+    context.set_stretch_mode(5)
+    assert context._state.stretch_mode == 2  # Out-of-range modes stretch as WHITEONBLACK.
 
 
 @pytest.mark.parametrize(("pen_style", "pen_width"), [(0, 1), (0, 5), (1, 1), (5, 0)])

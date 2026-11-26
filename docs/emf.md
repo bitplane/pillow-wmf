@@ -112,10 +112,10 @@ the codec and reference columns against the code and fixtures.
 | `SETPIXELV` | typed | full | yes |  |
 | `SETMAPPERFLAGS` | typed | full | yes | Font mapping; text is font-limited. |
 | `SETMAPMODE` | typed | full | yes | Physical extents from the header millimetres. |
-| `SETBKMODE` | typed | full | yes |  |
-| `SETPOLYFILLMODE` | typed | full | yes |  |
-| `SETROP2` | typed | full | yes |  |
-| `SETSTRETCHBLTMODE` | typed | full | yes |  |
+| `SETBKMODE` | typed | full | yes | Values other than OPAQUE are transparent; hatched `PatBlt` always paints its background. |
+| `SETPOLYFILLMODE` | typed | full | yes | Values other than WINDING fill as ALTERNATE. |
+| `SETROP2` | typed | full | yes | The low byte b selects mix ((b - 1) & 15) + 1, so 0 is R2_WHITE. |
+| `SETSTRETCHBLTMODE` | typed | full | yes | Values outside 1-4 stretch as WHITEONBLACK. |
 | `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
 | `SETCOLORADJUSTMENT` | typed | full | yes | Scaled HALFTONE copies; transfers under rotating transforms sample without it. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
@@ -134,7 +134,7 @@ the codec and reference columns against the code and fixtures.
 | `SELECTOBJECT` | typed | partial | yes | Stock brushes, pens and palette; stock fonts need the font work. |
 | `CREATEPEN` | typed | full | yes |  |
 | `CREATEBRUSHINDIRECT` | typed | full | yes | Solid, null and hatched brushes. |
-| `DELETEOBJECT` | typed | full | no |  |
+| `DELETEOBJECT` | typed | full | yes |  |
 | `ANGLEARC` | typed | full | yes | Sweeps of a full turn or more repeat the circle. |
 | `ELLIPSE` | typed | full | yes |  |
 | `RECTANGLE` | typed | full | yes |  |
@@ -151,7 +151,7 @@ the codec and reference columns against the code and fixtures.
 | `LINETO` | typed | full | yes |  |
 | `ARCTO` | typed | full | yes |  |
 | `POLYDRAW` | typed | full | yes |  |
-| `SETARCDIRECTION` | typed | full | yes | Clockwise figures are the y-mirror of counterclockwise ones. |
+| `SETARCDIRECTION` | typed | full | yes | Clockwise figures are the y-mirror of counterclockwise ones; other values fail. |
 | `SETMITERLIMIT` | typed | full | yes | Recorded as an integer; limits geometric miter joins. |
 | `BEGINPATH` | typed | full | yes |  |
 | `ENDPATH` | typed | full | yes |  |

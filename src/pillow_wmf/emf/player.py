@@ -523,7 +523,10 @@ TRANSLATIONS: dict[type, Callable] = {
     fixed.FlattenPath: _direct("flatten_path"),
     fixed.WidenPath: _direct("widen_path"),
     fixed.SelectClipPath: _direct("select_clip_path", "mode"),
-    fixed.SetArcDirection: _direct("set_arc_direction", "direction"),
+    # Native SetArcDirection fails for other values.
+    fixed.SetArcDirection: lambda r: (
+        ("set_arc_direction", {"direction": r.direction}) if r.direction in (1, 2) else (None, None)
+    ),
     fixed.ArcTo: lambda r: ("arc_to", _box_points(r)),
     fixed.AngleArc: lambda r: (
         "angle_arc",

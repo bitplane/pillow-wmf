@@ -15,10 +15,10 @@ from .constants import (
     ETO_CLIPPED,
     ETO_OPAQUE,
     HALFTONE,
+    OPAQUE,
     PS_NULL,
     PS_USERSTYLE,
     R2_COPYPEN,
-    TRANSPARENT,
     WINDING,
 )
 from .flood import flood_spans
@@ -290,7 +290,7 @@ class RasterPainter:
             passes = (
                 (False, True)
                 if (self.state.pen.style in range(1, 5) or self.state.pen.pattern)
-                and self.state.background_mode != TRANSPARENT
+                and self.state.background_mode == OPAQUE
                 else (True,)
             )
             for foreground in passes:
@@ -476,7 +476,7 @@ class RasterPainter:
                     phase = position + span.step * (pixel[major] - span.start)
                     if self._cosmetic_mark(phase):
                         yield pixel, True
-                    elif self.state.background_mode != TRANSPARENT:
+                    elif self.state.background_mode == OPAQUE:
                         yield pixel, False
                 position += len(span)
 
@@ -698,6 +698,6 @@ class RasterPainter:
             return self.state.palette.colorref(brush.color)
         return (
             self.state.palette.colorref(self.state.background_color)
-            if opaque or self.state.background_mode != TRANSPARENT
+            if opaque or self.state.background_mode == OPAQUE
             else None
         )

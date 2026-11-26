@@ -34,6 +34,7 @@ from .constants import (
     HALFTONE,
     MM_ANISOTROPIC,
     MM_TEXT,
+    OPAQUE,
     PS_ALTERNATE,
     PS_INSIDEFRAME,
     PS_NULL,
@@ -44,7 +45,6 @@ from .constants import (
     R2_NOT,
     R2_WHITE,
     TA_UPDATECP,
-    TRANSPARENT,
     WHITEONBLACK,
     WINDING,
 )
@@ -574,21 +574,14 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         self.mapping.set_layout(a["layout"])
 
-    def _prepare_set_polygon_fill_mode(self, a):
-        if a["mode"] not in (ALTERNATE, WINDING):
-            raise UnsupportedOperation(f"Polygon fill mode {a['mode']}")
-
     def _apply_set_polygon_fill_mode(self, call, prepared, result):
-        a = call.kwargs
-        self._state.polygon_fill_mode = a["mode"]
-
-    def _prepare_set_rop2(self, a):
-        if a["mode"] not in range(R2_BLACK, R2_WHITE + 1):
-            raise UnsupportedOperation(f"ROP2 mode {a['mode']}")
+        # Any value other than WINDING fills as ALTERNATE.
+        self._state.polygon_fill_mode = WINDING if call.kwargs["mode"] == WINDING else ALTERNATE
 
     def _apply_set_rop2(self, call, prepared, result):
-        a = call.kwargs
-        self._state.rop2 = a["mode"]
+        # GDI keeps the low byte and wraps it into the sixteen mixes, so 0 is
+        # R2_WHITE and 17 is R2_BLACK.
+        self._state.rop2 = (((call.kwargs["mode"] & 0xFF) - 1) & 15) + 1
 
     def _prepare_set_color_adjustment(self, a):
         adjustment = ColorAdjustment(
@@ -620,17 +613,16 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_color_adjustment(self, call, prepared, result):
         self._state.color_adjustment = prepared
 
-    def _prepare_set_stretch_mode(self, a):
-        if a["mode"] not in (BLACKONWHITE, WHITEONBLACK, COLORONCOLOR, HALFTONE):
-            raise UnsupportedOperation(f"Stretch mode {a['mode']}")
-
     def _apply_set_stretch_mode(self, call, prepared, result):
-        a = call.kwargs
-        self._state.stretch_mode = a["mode"]
+        # Values outside the four modes stretch as WHITEONBLACK.
+        mode = call.kwargs["mode"]
+        self._state.stretch_mode = (
+            mode if mode in (BLACKONWHITE, WHITEONBLACK, COLORONCOLOR, HALFTONE) else WHITEONBLACK
+        )
 
     def _apply_set_background_mode(self, call, prepared, result):
-        a = call.kwargs
-        self._state.background_mode = a["mode"]
+        # The value is kept as given; drawing paints a background only for OPAQUE.
+        self._state.background_mode = call.kwargs["mode"]
 
     def _apply_set_background_color(self, call, prepared, result):
         a = call.kwargs
@@ -1814,7 +1806,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             *origin,
             alignment,
             advances,
-            opaque=self._state.background_mode != TRANSPARENT,
+            opaque=self._state.background_mode == OPAQUE,
             max_pixels=self.max_bitmap_pixels,
             scale=abs(sx),
             extra=self._state.text_state.character_extra,
