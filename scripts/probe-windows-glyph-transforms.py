@@ -237,6 +237,49 @@ def main():
             ctypes.POINTER(ctypes.c_int),
             ptr,
         )
+        create_emf = bind(gdi, "CreateEnhMetaFileW", ptr, ptr, ctypes.c_wchar_p, ptr, ctypes.c_wchar_p)
+        close_emf = bind(gdi, "CloseEnhMetaFile", ptr, ptr)
+        get_bits = bind(gdi, "GetEnhMetaFileBits", wintypes.UINT, ptr, wintypes.UINT, ptr)
+        delete_emf = bind(gdi, "DeleteEnhMetaFile", wintypes.BOOL, ptr)
+
+        def recorded_boxes(world, height, angle, calls):
+            """Record the calls into an EMF on this DC; print each EXTTEXTOUTW record's bounds."""
+            emf = check(create_emf(dc, None, None, None), "CreateEnhMetaFileW")
+            set_mode(emf, 2)
+            set_world(emf, ctypes.byref(XForm(*world)))
+            font = make_font(height, angle, angle)
+            previous = select(emf, font)
+            for text, mode, advances in calls:
+                set_bk(emf, mode)
+                set_align(emf, 0)
+                array = (ctypes.c_int * len(text))(*advances) if advances else None
+                text_out(emf, 40, 40, 0, None, text, len(text), array)
+            select(emf, previous)
+            metafile = close_emf(emf)
+            delete(font)
+            size = get_bits(metafile, 0, None)
+            data = ctypes.create_string_buffer(size)
+            get_bits(metafile, size, data)
+            delete_emf(metafile)
+            raw, position, index = data.raw, 0, 0
+            while position < len(raw):
+                kind, length = struct.unpack_from("<II", raw, position)
+                if kind == 84:
+                    text, mode, advances = calls[index]
+                    label = "dx=" + ",".join(map(str, advances)) if advances else "dx=none"
+                    bounds = ",".join(map(str, struct.unpack_from("<4i", raw, position + 8)))
+                    recorded = ",".join(
+                        map(
+                            str,
+                            struct.unpack_from(
+                                f"<{len(text)}i", raw, position + struct.unpack_from("<I", raw, position + 72)[0]
+                            ),
+                        )
+                    )
+                    print(f"emfbox {text!r} mode={mode} {label} -> {bounds} recorded_dx={recorded}")
+                    index += 1
+                position += length
+
         check(set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))), "SetWorldTransform")
         strings = (
             "A",
@@ -260,9 +303,10 @@ def main():
             font = make_font(height, angle, angle)
             previous = select(dc, font)
             print(f"bounds height={height} escapement={angle}")
+            calls = []
             for text in strings:
                 partial = (ctypes.c_int * len(text))()
-                extent(dc, text, len(text), 0, None, partial, None)
+                extent(dc, text, len(text), 0, None, partial, ctypes.byref(wintypes.SIZE()))
                 dx = [partial[0]] + [partial[i] - partial[i - 1] for i in range(1, len(text))]
                 for mode in (1, 2):
                     set_bk(dc, mode)
@@ -275,10 +319,24 @@ def main():
                         get_bounds(dc, ctypes.byref(rect), 0)
                         label = "dx=" + ",".join(map(str, advances)) if advances else "dx=none"
                         print(f"box {text!r} mode={mode} {label} -> {rect.left},{rect.top},{rect.right},{rect.bottom}")
+                        calls.append((text, mode, advances))
             set_bk(dc, 1)
             set_bounds(dc, None, 0)
             select(dc, previous)
             delete(font)
+            recorded_boxes((1.0, 0.0, 0.0, 1.0, 0.0, 0.0), height, angle, calls)
+        # The same strings recorded under a rotating world transform, as the
+        # recorder fixture draws them.
+        font = make_font(-10, 0, 0)
+        previous = select(dc, font)
+        calls = []
+        for text in strings:
+            for mode in (1, 2):
+                calls.append((text, mode, None))
+        select(dc, previous)
+        delete(font)
+        print("bounds world=(0.9, 0.4, -0.4, 0.9, 10.0, 10.0) height=-10 escapement=0")
+        recorded_boxes((0.9, 0.4, -0.4, 0.9, 10.0, 10.0), -10, 0, calls)
 
         # Upright glyphs along a differing escapement, drawn at sixteen sub-pixel
         # offsets on each axis: where pixels jump pins each glyph's 28.4 position.
