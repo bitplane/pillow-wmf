@@ -1895,6 +1895,10 @@ class RasterContext(ExecutionContext[DrawingState]):
 
         # GM_ADVANCED rotates glyphs by the orientation and lays the baseline
         # along the escapement; compatible records use the escapement for both.
+        if not compatible and m11 * m22 - m12 * m21 < 0:
+            # The world transform mirrors GM_ADVANCED angles itself; undo the
+            # compatible-mode reflection of the escapement.
+            request = replace(request, escapement=-request.escapement)
         orientation = request.escapement if compatible else request.orientation
         matrix = notional_matrix(orientation)
         advance_matrix = notional_matrix(request.escapement) if orientation != request.escapement else None
