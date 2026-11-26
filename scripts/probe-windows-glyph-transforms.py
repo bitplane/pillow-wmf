@@ -16,7 +16,8 @@ Then three sweeps: ``box`` lines give the bounds GetBoundsRect accumulates
 for runs of a rotated font (identity world, so device pixels), without and
 with explicit advances; ``sweep`` blocks draw upright glyphs along a
 differing escapement at sixteen sub-pixel offsets per axis (``pair`` blocks
-add glyph pairs and explicit advances); ``outline``
+add glyph pairs and explicit advances); ``opaque`` blocks show rotated
+and sheared background cells at sub-pixel origins; ``outline``
 blocks give GGO_NATIVE points across sizes, transforms and simulated bold
 italic.
 """
@@ -408,6 +409,35 @@ def main():
             set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
             select(dc, previous)
             delete(font)
+
+        # Opaque cells under rotation and shear at sub-pixel origins, with the
+        # text drawn in white so only the black background cell remains.
+        set_text_color = bind(gdi, "SetTextColor", wintypes.DWORD, ptr, wintypes.DWORD)
+        set_bk_color = bind(gdi, "SetBkColor", wintypes.DWORD, ptr, wintypes.DWORD)
+        set_text_color(dc, 0xFFFFFF)
+        set_bk_color(dc, 0x000000)
+        set_bk(dc, 2)
+        for matrix in ((0.9, 0.4, -0.4, 0.9), (1.0, 0.0, 0.45, 1.0), (0.8, 0.6, -0.6, 0.8), (0.6, -0.8, 0.8, 0.6)):
+            for height in (-8, -13):
+                font = make_font(height, 0, 0)
+                previous = select(dc, font)
+                for alignment in (0, 24):
+                    for sx in (0, 4, 9, 13):
+                        for sy in (0, 4, 9, 13):
+                            ctypes.memset(bits, 0xFF, SIZE * SIZE * 4)
+                            set_align(dc, alignment)
+                            shift = (ORIGIN[0] + sx / 16, ORIGIN[1] + sy / 16)
+                            set_world(dc, ctypes.byref(XForm(*matrix, *shift)))
+                            text_out(dc, 0, 0, 0, None, "AB A", 4, None)
+                            print_rows(
+                                f"opaque height={height} transform={matrix} align={alignment} shift={sx / 16},{sy / 16}"
+                            )
+                set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
+                select(dc, previous)
+                delete(font)
+        set_bk(dc, 1)
+        set_text_color(dc, 0x000000)
+        set_bk_color(dc, 0xFFFFFF)
 
         # Exact native outlines across sizes, transforms and simulated styles.
         for name in ("identity", "rotate", "shear", "mirror-x", "scale"):
