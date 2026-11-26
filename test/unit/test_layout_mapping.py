@@ -199,3 +199,14 @@ def test_isotropic_fit_uses_the_device_pixel_shape():
 def test_device_capabilities_must_be_positive():
     with pytest.raises(ValueError, match="must be positive"):
         ReferenceDevice(pixels=(0, 768))
+
+
+def test_page_mapping_follows_a_rotating_world_transform():
+    dc = RasterContext(40, 40)
+    dc.set_graphics_mode(2)
+    dc.set_world_transform(0.0, 1.0, -1.0, 0.0, 10.0, 0.0)
+    dc.set_map_mode(8)
+    dc.set_window_extent(1, 1)
+    dc.set_viewport_extent(2, 2)
+    # World first: (3, 1) -> (9, 3); then the page doubles it.
+    assert dc.mapping.fixed_point(3, 1) == (18 * 16, 6 * 16)

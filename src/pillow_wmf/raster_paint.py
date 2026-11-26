@@ -455,7 +455,9 @@ class RasterPainter:
             pen.cap,
             pen.join,
             self.state.miter_limit,
-            tuple(float(value) for value in self.state.mapping.world[:4]) if self.state.mapping.rotated else None,
+            tuple(float(value) for value in self.state.mapping.device_world[:4])
+            if self.state.mapping.rotated
+            else None,
             pen.width,
         )
 
@@ -547,7 +549,9 @@ class RasterPainter:
             CAP_ROUND,
             JOIN_ROUND,
             self.state.miter_limit,
-            tuple(float(value) for value in self.state.mapping.world[:4]) if self.state.mapping.rotated else None,
+            tuple(float(value) for value in self.state.mapping.device_world[:4])
+            if self.state.mapping.rotated
+            else None,
             self.state.pen.width,
         )
 
@@ -572,7 +576,7 @@ class RasterPainter:
                 CAP_ROUND,
                 JOIN_MITER,
                 self.state.miter_limit,
-                tuple(float(value) for value in self.state.mapping.world[:4]),
+                tuple(float(value) for value in self.state.mapping.device_world[:4]),
                 width,
             )
             perps = None

@@ -108,8 +108,6 @@ def logical_color(colorref):
 SRCCOPY = 0x00CC0020
 
 
-# Operations whose GM_ADVANCED output has no native references yet. They
-# raise rather than reuse GM_COMPATIBLE rules that may not match.
 @dataclass(frozen=True)
 class ParallelogramTransfer:
     """A source rectangle bound for a 28.4 parallelogram, with an optional mask test."""
@@ -126,30 +124,6 @@ class ParallelogramTransfer:
     blend: object = None
 
 
-# Calls that stroke with the selected pen. Extended geometric pens build
-# their outlines from axis-aligned scales, so they are refused when rotated.
-PEN_STROKES = frozenset(
-    {
-        "arc",
-        "chord",
-        "ellipse",
-        "line_to",
-        "pie",
-        "poly_bezier",
-        "poly_bezier_to",
-        "poly_draw",
-        "poly_polygon",
-        "poly_polyline",
-        "polygon",
-        "polyline",
-        "polyline_to",
-        "rectangle",
-        "round_rect",
-        "stroke_and_fill_path",
-        "stroke_path",
-    }
-)
-
 # The stock fonts' logical fonts on a 96 DPI display. Most name raster
 # faces; text with them is font-limited like any face the collection lacks.
 STOCK_FONTS = {
@@ -165,21 +139,6 @@ STOCK_FONTS = {
 
 # A preparation for a call that fails natively without effect.
 NATIVE_FAILURE = object()
-
-UNVERIFIED_IN_ADVANCED_MODE = frozenset(
-    {
-        "set_map_mode",
-        "set_window_origin",
-        "set_window_extent",
-        "set_viewport_origin",
-        "set_viewport_extent",
-        "offset_window_origin",
-        "offset_viewport_origin",
-        "scale_window_extent",
-        "scale_viewport_extent",
-        "set_layout",
-    }
-)
 
 
 def _round_half_away(value) -> int:
@@ -282,8 +241,6 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_effect(self, call):
         """Preparation lives beside its handler; simple state calls need none."""
-        if self.mapping.graphics_mode == GM_ADVANCED and call.name in UNVERIFIED_IN_ADVANCED_MODE:
-            raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
@@ -445,7 +402,7 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _floor_logical(self, point):
         """The logical point at or below a 28.4 device point, as GetCurrentPositionEx reports it."""
         if self.mapping.rotated:
-            m11, m12, m21, m22, dx, dy = self.mapping.world
+            m11, m12, m21, m22, dx, dy = self.mapping.device_world
             x, y = point[0] / 16 - dx, point[1] / 16 - dy
             det = m11 * m22 - m12 * m21
             return math.floor((x * m22 - y * m21) / det), math.floor((y * m11 - x * m12) / det)
@@ -516,8 +473,6 @@ class RasterContext(ExecutionContext[DrawingState]):
             raise InvalidOperation("World transforms require GM_ADVANCED")
         if transform[0] * transform[3] - transform[1] * transform[2] == 0:
             raise InvalidOperation("Singular world transform")
-        if (transform[1] or transform[2]) and not self.mapping.identity_page:
-            raise UnsupportedOperation("Rotated or sheared world transforms need an identity page mapping")
         return transform
 
     def _apply_set_world_transform(self, call, prepared, result):
@@ -1422,7 +1377,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         dx, dy = self.mapping.clip_displacement(a["x"], a["y"])
         if self.mapping.rotated:
             # The logical offset is mapped by the transform's linear part and rounded.
-            m11, m12, m21, m22 = self.mapping.world[:4]
+            m11, m12, m21, m22 = self.mapping.device_world[:4]
             dx, dy = (
                 (1 if value >= 0 else -1) * math.floor(abs(value) + 0.5)
                 for value in (a["x"] * m11 + a["y"] * m21, a["x"] * m12 + a["y"] * m22)
@@ -1480,7 +1435,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         """
         if width < 1 or height < 1:
             return RegionMask()
-        m11, m12, m21, m22, dx, dy = self.mapping.world
+        m11, m12, m21, m22, dx, dy = self.mapping.device_world
         ratio = float32(float32(2 * min(width, height)) / float32(2 * max(width, height)))
         if 2 * width < 2 * height:
             m11, m12 = float32(ratio * m11), float32(ratio * m12)
@@ -1812,7 +1767,7 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _linear_transform(self):
         """The world-to-device linear part (m11, m12, m21, m22), page scaling included."""
         if self.mapping.rotated:
-            return self.mapping.world[:4]
+            return self.mapping.device_world[:4]
         (sx, _), (sy, _) = self.mapping._transform()
         return (sx, 0.0, 0.0, sy)
 

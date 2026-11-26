@@ -137,7 +137,7 @@ def realize_transformed_pen(width: int, mapping, *, geometric: bool = False) -> 
     pen is a hairline when its transformed x diameter is below 1.5 pixels;
     a geometric pen never is.
     """
-    m11, m12, m21, m22 = (float(value) for value in mapping.world[:4])
+    m11, m12, m21, m22 = (float(value) for value in mapping.device_world[:4])
     if not width:
         return realize_pen(0)
     if mapping.uniform_rotation:
