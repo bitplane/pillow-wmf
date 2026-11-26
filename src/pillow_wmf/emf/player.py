@@ -454,6 +454,10 @@ def _ext_create_pen(record):
     }
 
 
+# Text records carrying a graphics mode and font transform scales.
+TEXT_RECORDS = (text.ExtTextOutA, text.ExtTextOutW)
+
+
 def _ext_text_out(record):
     options = record.options & ~ETO_NO_RECT
     if isinstance(record, text.ExtTextOutW):
@@ -978,7 +982,14 @@ def play(
             continue
         if name is None:
             continue  # The record fails natively without drawing.
+        font_xform = isinstance(record, TEXT_RECORDS) and record.graphics_mode != GM_ADVANCED
+        if font_xform:
+            # Native playback sizes a GM_COMPATIBLE record's font by the
+            # scales it was recorded with, then clears them.
+            invoke(index, kind, "set_font_xform", {"x_scale": record.ex_scale, "y_scale": record.ey_scale})
         ok, result = invoke(index, kind, name, arguments)
+        if font_xform:
+            invoke(index, kind, "set_font_xform", {"x_scale": None, "y_scale": None})
         if creation:
             if ok and not isinstance(result, Handle):
                 raise PlaybackError(f"Record {index}: object creation did not return a handle")

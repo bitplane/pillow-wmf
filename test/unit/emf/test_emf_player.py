@@ -476,10 +476,19 @@ def test_text():
     unicode = text.ExtTextOutW((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, "é\0".encode("utf-16-le"))
     advanced = text.ExtTextOutA((0, 0, 0, 0), 2, 1.0, 1.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, b"a\0\0\0")
     calls, omissions = run([narrow, opaque, glyphs, unicode, advanced])
+    # GM_COMPATIBLE records are bracketed by their font transform scales.
+    mark = Call.make("set_font_xform", x_scale=0.0, y_scale=0.0)
+    clear = Call.make("set_font_xform", x_scale=None, y_scale=None)
     assert calls == [
+        mark,
         Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"ab"), options=0, rectangle=None, advances=(5, 6)),
+        clear,
+        mark,
         Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"a"), options=2, rectangle=(1, 2, 3, 4), advances=(0,)),
+        clear,
+        mark,
         Call.make("ext_text_out", x=3, y=4, text=GlyphIndices((7, 8)), options=0x10, rectangle=None, advances=()),
+        clear,
         Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"a"), options=0, rectangle=None, advances=()),
     ]
     assert [o.reason for o in omissions] == ["Unicode text is not yet supported"]

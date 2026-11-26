@@ -78,6 +78,8 @@ from .stroke import frame_footprint
 from .surface import Surface
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
+from .text_math import text_rotation
+from .text_transform import TransformedFont, baseline_vector, place_run
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
@@ -170,15 +172,6 @@ class ParallelogramTransfer:
     # TransparentBlt; ``x, y`` locate the sample and None leaves the pixel.
     blend: object = None
 
-
-# Operations whose geometry assumes axis-aligned mapping. A rotating or
-# shearing world transform refuses them rather than drawing them unrotated.
-AXIS_ALIGNED_ONLY = frozenset(
-    {
-        "text_out",
-        "ext_text_out",
-    }
-)
 
 # Calls that stroke with the selected pen. Extended geometric pens build
 # their outlines from axis-aligned scales, so they are refused when rotated.
@@ -276,6 +269,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         )
         # The DC starts with the stock default palette selected.
         self._default_palette: LogicalPalette | None = self._state.palette
+        self._font_xform = None
 
     @property
     def image(self):
@@ -321,8 +315,6 @@ class RasterContext(ExecutionContext[DrawingState]):
         """Preparation lives beside its handler; simple state calls need none."""
         if self.mapping.graphics_mode == GM_ADVANCED and call.name in UNVERIFIED_IN_ADVANCED_MODE:
             raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
-        if self.mapping.rotated and call.name in AXIS_ALIGNED_ONLY:
-            raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
@@ -1766,6 +1758,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         # Mapper flags constrain physical-font selection, not drawing with an
         # already explicitly supplied TrueType face. Retain them in DC state.
         origin = self._state.position if self._state.text_state.alignment & TA_UPDATECP else (args["x"], args["y"])
+        origin_xy = origin
         precise_origin = tuple(Fraction(value, 16) for value in self.mapping.fixed_point(*origin))
         origin = self._point(*origin)
         alignment = self._state.text_state.alignment
@@ -1785,6 +1778,11 @@ class RasterContext(ExecutionContext[DrawingState]):
             advances = advances[::2]
         decoded = self.fonts.decode_run(request, face, data) if glyph_indices is None else None
         characters = decoded.text if decoded is not None else None
+        if self._general_text(request):
+            layout = self._transformed_text(
+                request, face, characters, glyph_indices, origin_xy, alignment, advances, options, vertical_advances
+            )
+            return layout, rectangle
         layout = layout_text(
             self.fonts.layout_font(
                 request,
@@ -1792,6 +1790,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                 (abs(sx), abs(sy)),
                 characters=characters,
                 advanced=self.mapping.graphics_mode == GM_ADVANCED,
+                aspect=self._font_aspect(),
             ),
             data,
             *origin,
@@ -1818,6 +1817,114 @@ class RasterContext(ExecutionContext[DrawingState]):
                 position=self.mapping.advance_logical_position(self._state.position, origin, layout.position),
             )
         return layout, rectangle
+
+    def _linear_transform(self):
+        """The world-to-device linear part (m11, m12, m21, m22), page scaling included."""
+        if self.mapping.rotated:
+            return self.mapping.world[:4]
+        (sx, _), (sy, _) = self.mapping._transform()
+        return (sx, 0.0, 0.0, sy)
+
+    def _general_text(self, request):
+        """GM_ADVANCED text whose font transform is not a positive scale takes general placement."""
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            return False
+        m11, m12, m21, m22 = self._linear_transform()
+        return bool(m12 or m21 or m11 < 0 or m22 < 0 or request.escapement % 3600)
+
+    def _transformed_text(
+        self, request, face, characters, glyph_indices, origin, alignment, advances, options, vertical_advances
+    ):
+        """Realize and place a run through its full notional-to-device matrix; see ``text_transform``."""
+        if vertical_advances or options & ETO_PDY:
+            raise UnsupportedOperation("Paired advances under a general text transform")
+        if self._state.background_mode == OPAQUE:
+            raise UnsupportedOperation("Opaque text under a general text transform")
+        if request.underline or request.strikeout:
+            raise UnsupportedOperation("Text decorations under a general text transform")
+        if alignment & TA_UPDATECP:
+            raise UnsupportedOperation("Current-position text under a general text transform")
+        text_state = self._state.text_state
+        if text_state.character_extra or text_state.justification[0]:
+            raise UnsupportedOperation("Text spacing under a general text transform")
+        if request.weight >= 700 > face.weight or (request.italic and not face.italic):
+            raise UnsupportedOperation("Synthetic styles under a general text transform")
+        compatible = self._font_xform is not None
+        if not compatible and request.orientation != request.escapement:
+            raise UnsupportedOperation("Escapement apart from orientation under a general text transform")
+        upem = face.units_per_em
+        if request.height < 0:
+            em_height = Fraction(-request.height)
+        elif request.height > 0:
+            em_height = Fraction(request.height * upem, face.ascent + face.descent)
+            em_height = Fraction(int(em_height * 65536), 65536)
+        else:
+            raise UnsupportedOperation("Default font height under a general text transform")
+        if request.width:
+            em_width = Fraction(abs(request.width) * upem, face.average_width)
+        else:
+            em_width = em_height * self._font_aspect()
+        sine, cosine = text_rotation(request.escapement)
+        # Notional (u, v), y up, to logical (x, y), y down, rotated by the escapement.
+        l11, l12 = em_width / upem * Fraction(cosine), -em_height / upem * Fraction(sine)
+        l21, l22 = -em_width / upem * Fraction(sine), -em_height / upem * Fraction(cosine)
+        m11, m12, m21, m22 = (Fraction(value) for value in self._linear_transform())
+        matrix = (
+            m11 * l11 + m21 * l21,
+            m11 * l12 + m21 * l22,
+            m12 * l11 + m22 * l21,
+            m12 * l12 + m22 * l22,
+        )
+        font = TransformedFont(
+            face.data,
+            face.index,
+            matrix,
+            upem,
+            face.ascent,
+            face.descent,
+            face.design_advances,
+            quality=request.quality,
+        )
+        if glyph_indices is None:
+            indices = []
+            for character in characters:
+                codepoint = ord(character)
+                index = face.cmap.get(codepoint, 0)
+                if not index and face.symbol and 0xF000 <= codepoint <= 0xF0FF:
+                    index = face.cmap.get(codepoint - 0xF000, 0)
+                if not index and self.fonts.missing_glyph == "error":
+                    raise UnsupportedOperation(f"Missing glyph for U+{codepoint:04X}")
+                indices.append(index)
+        else:
+            indices = list(glyph_indices)
+        world_baseline = (
+            float(m11) * float(cosine) - float(m21) * float(sine),
+            float(m12) * float(cosine) - float(m22) * float(sine),
+        )
+        run = place_run(
+            font,
+            indices,
+            self.mapping.fixed_point(*origin),
+            alignment,
+            advances=advances,
+            baseline=baseline_vector(matrix, world_baseline) if advances else None,
+            max_pixels=self.max_bitmap_pixels,
+        )
+        return TextLayout(run.glyphs)
+
+    def _font_aspect(self):
+        """A metafile text record's font transform stretches the width by its y over x scale."""
+        if self._font_xform is None:
+            return 1
+        x_scale, y_scale = self._font_xform
+        if not x_scale or not y_scale:
+            return 1
+        return Fraction(abs(y_scale)) / Fraction(abs(x_scale))
+
+    def _apply_set_font_xform(self, call, prepared, result):
+        # A DC field, not saved by SaveDC: playback sets and clears it per record.
+        a = call.kwargs
+        self._font_xform = None if a["x_scale"] is None else (float32(a["x_scale"]), float32(a["y_scale"]))
 
     def _draw_text(self, layout, rectangle, options):
         painter = self._painter()

@@ -141,6 +141,7 @@ PROBES = {
     "module-ids": Probe("probe-windows-module-ids.py", output="module-ids"),
     "color-engine-phase": Probe("probe-windows-color-engine-phase.py", output="color-engine-phase"),
     "coordinate-limits": Probe("probe-windows-coordinate-limits.py", output="coordinate-limits"),
+    "glyph-transforms": Probe("probe-windows-glyph-transforms.py", output="glyph-transforms"),
 }
 
 

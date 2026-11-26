@@ -303,11 +303,13 @@ class FontFace:
         face.cmap = {0xF000 | byte: face.cmap[0xF000 | byte] for byte in WINDOWS_SYMBOL_BYTES}
         return face
 
-    def realize(self, request, scale, *, missing_glyph="error", advanced=False):
+    def realize(self, request, scale, *, missing_glyph="error", advanced=False, aspect=1):
         """Classic compatible-mode realization; natural width follows height.
 
         In GM_ADVANCED the world transform stretches the glyphs: a natural
-        width follows the horizontal scale and the height the vertical one.
+        width follows the horizontal scale and the height the vertical one,
+        the width also multiplied by ``aspect`` (a metafile text record's
+        font transform).
         """
         sx, sy = scale
         height = abs(request.height) * sy if request.height else 16
@@ -329,8 +331,8 @@ class FontFace:
             if request.width
             else None
         )
-        if advanced and not request.width and abs(sx) != abs(sy):
-            width = height * Fraction(abs(sx)) / Fraction(abs(sy))
+        if advanced and not request.width and (abs(sx) != abs(sy) or aspect != 1):
+            width = height * Fraction(abs(sx)) / Fraction(abs(sy)) * Fraction(aspect)
         return self.at_size(
             height,
             width=width,

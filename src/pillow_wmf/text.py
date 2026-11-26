@@ -79,8 +79,8 @@ class FontCollection:
             except UnsupportedOperation as error:
                 raise ValueError(f"Invalid default font: {error}") from error
 
-    def realize(self, request, face, scale, *, advanced=False):
-        primary = face.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced)
+    def realize(self, request, face, scale, *, advanced=False, aspect=1):
+        primary = face.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced, aspect=aspect)
         fallback_faces = []
         for family in self.fallbacks.get(face.family.casefold(), ()):
             key = family.casefold(), request.weight or 400, bool(request.italic)
@@ -91,7 +91,8 @@ class FontCollection:
                 raise UnsupportedOperation("A symbol face cannot be a Unicode fallback")
             fallback_faces.append(fallback)
         linked = tuple(
-            f.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced) for f in fallback_faces
+            f.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced, aspect=aspect)
+            for f in fallback_faces
         )
         control_fallback = None
         if fallback_faces:
@@ -115,9 +116,9 @@ class FontCollection:
             control_fallback = FontRun(raw, raw_links)
         return FontRun(primary, linked, control_fallback)
 
-    def layout_font(self, request, face, scale, *, characters=None, advanced=False):
+    def layout_font(self, request, face, scale, *, characters=None, advanced=False, aspect=1):
         """Prepare a run; controlled fonts never depend on host discovery."""
-        return self.realize(request, face, scale, advanced=advanced)
+        return self.realize(request, face, scale, advanced=advanced, aspect=aspect)
 
     def resolve(self, request):
         request = self.default_font if request is None else request

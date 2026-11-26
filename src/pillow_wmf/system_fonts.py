@@ -361,7 +361,7 @@ class SystemFontCollection(FontCollection):
         # a substitute's OS/2 charset flags must not reinterpret the input.
         return decode_codepage(data, codepage)
 
-    def layout_font(self, request, face, scale, *, characters=None, advanced=False):
+    def layout_font(self, request, face, scale, *, characters=None, advanced=False, aspect=1):
         if characters is None:
             if face is self._symbol_face or (face.family.casefold(), face.weight, face.italic) != (
                 self._name(request).casefold(),
@@ -369,7 +369,7 @@ class SystemFontCollection(FontCollection):
                 bool(request.italic),
             ):
                 raise UnsupportedOperation("Glyph-index text requires the requested font, not a substitute")
-            return self.realize(request, face, scale, advanced=advanced)
+            return self.realize(request, face, scale, advanced=advanced, aspect=aspect)
         missing = {ord(c) for c in characters if ord(c) >= 32 and not face.cmap.get(ord(c))}
         linked = []
         if not face.symbol:
@@ -381,9 +381,14 @@ class SystemFontCollection(FontCollection):
                 fallback = self._load(entry)
                 if fallback is None or fallback is face:
                     continue
-                linked.append(fallback.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced))
+                linked.append(
+                    fallback.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced, aspect=aspect)
+                )
                 missing.difference_update(c for c, glyph in fallback.cmap.items() if glyph)
                 self._report(request, fallback, "glyph coverage")
         if missing:
             self._report(request, face, "missing glyph")
-        return FontRun(face.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced), tuple(linked))
+        return FontRun(
+            face.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced, aspect=aspect),
+            tuple(linked),
+        )

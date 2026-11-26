@@ -59,8 +59,8 @@ def test_raster_world_transform_contract():
         context.set_world_transform(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     context.set_world_transform(0.0, 1.0, -1.0, 0.0, 8.0, 0.0)
     assert context.mapping.rotated and context.mapping.device_point(2, 3) == (5, 2)
-    # Unmodelled operations are refused under rotation, not drawn unrotated.
-    with pytest.raises(UnsupportedOperation, match="GM_ADVANCED|rotating"):
+    # Rotated text draws through its full transform; without a font it is refused.
+    with pytest.raises(UnsupportedOperation, match="[Ff]ont"):
         context.text_out(0, 0, b"x")
     context.set_world_transform(2.0, 0.0, 0.0, 3.0, 1.0, 0.5)
     assert context.mapping.world == (2.0, 0.0, 0.0, 3.0, 1.0, 0.5)

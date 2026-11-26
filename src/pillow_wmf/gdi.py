@@ -306,6 +306,15 @@ class GDI:
     def set_mapper_flags(self, flags: int) -> None:
         return self.invoke(Call.make("set_mapper_flags", flags=flags))
 
+    def set_font_xform(self, x_scale: float | None, y_scale: float | None) -> None:
+        """Mark a GM_COMPATIBLE metafile text record, with the scales it was recorded with.
+
+        EMF playback sets these around such a record and clears them with
+        None. While set, text takes compatible-mode orientation, and nonzero
+        scales size its font in place of the page scale.
+        """
+        return self.invoke(Call.make("set_font_xform", x_scale=x_scale, y_scale=y_scale))
+
     def line_to(self, x: int, y: int) -> None:
         return self.invoke(Call.make("line_to", x=x, y=y))
 
