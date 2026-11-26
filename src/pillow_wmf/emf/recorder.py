@@ -1154,19 +1154,16 @@ class Recorder(TraceContext):
     def _clip_path_box(self, state) -> Rect | None:
         """The bounding box of the region SelectClipPath makes from the path.
 
-        A path is filled by the polygon fill mode; a widened one covers its
-        pen's stroke footprint. None for a path without figures, which makes
-        no region and keeps the clip.
+        A path, widened or not, is filled by the polygon fill mode. None for a
+        path without figures, which makes no region and keeps the clip.
         """
         figures = state.figures
         if figures is None and not state.widened and state.shadow is not None:
             # Shapes and arcs: the shadow DC's flattened figures, closed.
             figures = [(list(path.flattened().vertices), True) for path in state.shadow._path_figures(close=True)]
-        extended = state.pen.realize is not None and state.pen.realize[0] == "ext_create_pen"
-        if state.widened and (figures is None or extended or state.pen.style == PS_INSIDEFRAME):
-            # Shapes, arcs, extended and inside-frame pens: the shadow DC's
-            # widened outlines, filled with the DC's polygon fill mode, as
-            # any clip path.
+        if state.widened:
+            # The shadow DC's widened outlines, filled with the DC's polygon
+            # fill mode, as any clip path.
             if state.shadow is None:
                 raise UnsupportedOperation("SelectClipPath of this widened path is not recorded")
             contours = tuple(
@@ -1189,29 +1186,9 @@ class Recorder(TraceContext):
         margin = 16 * (abs(state.pen.width) * max(1, max(abs(v) for v in state.mapping.linear_scale)) + 4)
         left, top = (min(xs) - margin) // 16, (min(ys) - margin) // 16
         right, bottom = (max(xs) + margin) // 16 + 1, (max(ys) + margin) // 16 + 1
-        if state.widened:
-            from ..raster_paint import RasterPainter
-            from ..raster_state import DrawingState, Pen
-            from ..surface import Surface
-
-            width, height = right - left, bottom - top
-            shifted = [
-                DevicePath.polyline([(x - 16 * left, y - 16 * top) for x, y in points], closed=closed)
-                for points, closed in figures
-            ]
-            drawing = DrawingState(
-                mapping=deepcopy(state.mapping), pen=Pen((0, 0, 0), state.pen.width, state.pen.style)
-            )
-            painter = RasterPainter(Surface(width, height), drawing)
-            pixels = set(painter._stroke_pixels(tuple(shifted)))
-            if painter.realized_pen.cosmetic:
-                # A widened hairline also covers the figure ends a drawn one omits.
-                pixels |= {((x + 8) // 16 - left, (y + 8) // 16 - top) for points, _ in figures for x, y in points}
-            box = _box((x + left, y + top) for x, y in pixels)
-        else:
-            contours = tuple(list(points) for points, _ in figures)
-            spans = list(coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode))
-            box = _box(point for y, start, end in spans for point in ((start, y), (end - 1, y)))
+        contours = tuple(list(points) for points, _ in figures)
+        spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
+        box = _box(point for y, start, end in spans for point in ((start, y), (end - 1, y)))
         return box or (0, 0, -1, -1)
 
     def _record_end_path(self, a, state, records):

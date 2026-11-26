@@ -270,12 +270,18 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   only measures the path, which `StrokePath` and `FillPath` then add, and a
   point-list record inside the bracket has empty bounds of its own. An
   excluded clip rectangle shrinks the clip box to what it leaves, and
-  `SelectClipPath` clips to the bounding box of the path's fill coverage, or
-  of the pen's stroke footprint once widened. Shapes, arcs and extended pens
-  in a widened path take the widened outlines, filled with the DC's polygon
-  fill mode, so overlapping caps can cancel. Shapes and arcs take the
-  playback figures; in `GM_COMPATIBLE`, `AngleArc` builds them as in
-  `GM_ADVANCED`, and `ArcTo` as described above.
+  `SelectClipPath` clips to the bounding box of the path's fill coverage under
+  the DC's polygon fill mode. A widened path is its widened outlines, so
+  overlapping caps can cancel. Shapes and arcs take the playback figures; in
+  `GM_COMPATIBLE`, `AngleArc` builds them as in `GM_ADVANCED`, and `ArcTo` as
+  described above. A path without figures makes no region: `SelectClipPath`
+  then keeps the clip.
+- A wide stroke reaches past its figure's 28.4 bounds by, on each axis, the
+  larger device magnitude of the pen width's (w, w) and (w, -w) vectors,
+  halved, plus one pixel; square caps add half of that again, and mitred
+  strokes (`Rectangle` frames, and geometric pens with miter joins) take it
+  times the miter limit. The low edges round down and the high edges up. A
+  call following an arc starts from the exact 28.4 point the arc left.
 - Without an explicit frame, the frame is the bounds in 0.01 mm of the
   reference device; the header's micrometre extension is the reference
   display's size at 96 DPI.
@@ -285,77 +291,81 @@ Recordings of the covered calls are byte-identical to native ones
 waits for the font work. Refused: pattern brushes from device bitmaps other
 than 1- and 32-bpp (native `CreateBitmap` cannot make them), compressed
 transfer sources (a recorded transfer carries uncompressed samples, which
-cannot keep an RLE source's unwritten pixels), and `SelectClipPath` of
-widened inside-frame paths. Null object and palette selections fail without
+cannot keep an RLE source's unwritten pixels). Null object and palette selections fail without
 a record, as natively; so do DIB pattern brushes from RLE DIBs, whose
 creation fails, and source-less `MaskBlt`, which records nothing.
 
 ## Geometric pens
 
-Extended geometric pens (`widen.py`) widen each figure into closed outlines
-filled with the winding rule, matching native `WidenPath` output point for
-point:
+Wide pens are widened as native GDI widens a path
+([`widener.py`](../src/pillow_wmf/widener.py)), point for point: `WidenPath`
+replaces each figure with the outlines, and a wide stroke fills them with the
+winding rule. `Rectangle` frames are the exception described under
+transforms.
 
-- Round caps with round joins use the support-vertex construction shared with
-  wide `CreatePen` strokes. Square caps with round joins keep those bodies.
-- Every other combination places the body on the pen perpendicular as native
-  widening computes it. The pen is held as its first half, from a vertex to
-  the opposite one, after the vertex preceding that half around the pen, so
-  its first edge is the reverse of its last. A binary search over the edges'
-  cross products with the line direction finds the draw vertex where their
-  sign changes; the perpendicular runs from half the adjacent edge before it
-  along the edge with the smaller cross product, by the share of the other,
-  divided with rounding at the half, and is negated when the first edge's
-  cross product is negative. Each component snaps to the half-pixel grid, x
-  ties toward zero and y ties away from it. Flat and square caps, bevels and
-  miters share it.
-- Inner joins pass through the vertex; round inner joins also sweep the pen.
-  Miter tips round to the nearest 28.4 point. A tip is kept when the vector
-  from the vertex to it, taken back through the pen's world transform and
-  rounded to whole world units, is no longer than half the pen width times
-  the miter limit (compared squared, in single precision); otherwise the
-  join bevels.
-- Round caps and round joins walk the pen's vertices between the pen edges
-  holding the two offsets: each offset's edge is the one whose keyframe
-  interval holds the segment direction (taken unmirrored, even where the
-  perpendicular itself is mirrored). The walk runs from the leading end of
-  the first edge to the trailing end of the second, so a cap covers exactly
-  half the pen. A join's walk that ends on the head of the pen's second half
-  emits it twice when that head is the second edge's keyed vertex. Square
-  caps with round joins sweep between their support vertices instead, and a
-  sweep reaching the head of the pen's second half in vertex order also
-  emits that vertex.
-- Square caps extend along the line by the 28.4 direction scaled, in single
-  precision, by half the pen's world width over the direction's length in
-  whole world units (the direction taken back through the pen's world
-  transform and rounded), each component rounded half away from zero.
+- Each figure is walked line by line. A Bézier is flattened as it is walked:
+  its first piece takes the start tangent and its last piece the end tangent
+  (or the piece's chord where that tangent is zero) as the direction that
+  chooses pen vectors, and the joints between its pieces are always round.
+  Every other joint, including those at the ends of a Bézier, uses the pen's
+  join. Zero-length lines are skipped.
+- The pen is held as its first half, from a vertex to the opposite one, after
+  the vertex preceding that half around the pen, so its first edge is the
+  reverse of its last. A binary search over the edges' cross products with
+  the line direction finds the draw vertex where their sign changes, negated
+  when the first edge's cross product is negative. The draw vector is that
+  vertex rounded to the half-pixel grid, ties away from zero. The
+  perpendicular runs from half the adjacent edge before the draw vertex along
+  the edge with the smaller cross product, by the share of the other, divided
+  with rounding at the half; each component snaps to the half-pixel grid, x
+  ties toward zero and y ties away from it.
+- A pen with round joins and round or square caps (every `CreatePen` pen)
+  uses draw vectors for its round joins and round caps; other pens use
+  perpendiculars there. Joints inside a curve always use draw vectors.
+- Each line contributes its vector on both sides of the figure. A round join
+  walks the pen's vertices between the two lines' draw vertices on the outer
+  side, each moved one unit toward the joint when the joint lies on a whole
+  pixel; the walk's ends are included according to which neighbouring edge
+  each draw vertex lies nearer. Without draw vectors throughout, the inner
+  side passes through the vertex, walks back and passes through it again; with
+  them it passes through the vertex once. A bevel passes through the vertex
+  on the inner side. A miter adds its tip on the outer side: the lines
+  through the two offsets along the lines' chords intersect in single
+  precision, rounded half away from zero, and the tip is kept when its vector
+  from the joint, taken back through the world transform to whole world
+  units, is no longer than half the pen width times the miter limit
+  (compared squared, in single precision).
+- Round caps walk half the pen from the line's draw vertex. Square caps extend
+  along the line by the direction scaled, in single precision, by half the
+  pen's world width over the direction's length in whole world units, each
+  component rounded half away from zero; flat caps join the two offsets.
+- A closed figure becomes its left side and its reversed right side. An open
+  figure becomes one outline: the start cap, the left side, the end cap and
+  the reversed right side. A figure of one point is a round-capped dot, and
+  nothing for other caps.
+- Vectors are taken to whole world units through the inverse world transform,
+  rounding half away from zero; an identity transform converts the 28.4
+  components directly, rounding down.
 - Predefined geometric styles are multiples of the width (dash 3:1, dot 1:1,
-  and so on); user styles are logical lengths. Dashes are measured in logical
-  units, cut by interpolating along the device segment, and drawn as open
-  figures; a dash that crosses a vertex keeps its join. Under a rotating
-  transform segment lengths are measured between the logical points nearest
-  their device ends. On predefined styles, round and square caps pull each
-  dash end back by one width, so dots become zero-length dashes; user styles
-  are not pulled back.
+  and so on); user styles are logical lengths. On predefined styles, round
+  and square caps pull each dash end back by one width, so dots become
+  zero-length dashes; user styles are not pulled back. Each line is measured
+  in whole world units, its length in single precision, and style lengths are
+  consumed along it in single precision: a dash ends where its length runs
+  out, at the line's end included, and a gap only strictly inside the line.
+  Dash ends lie on the line by its single-precision unit vector, rounded half
+  away from zero. A dash keeps the direction, chord and joint kinds of the
+  lines it covers, and a zero-length dash still has caps.
 - On a closed figure a dash still drawing at the closing vertex runs on into
-  the first dash as one figure, whose `WidenPath` outline starts at the
-  closing joint's near side.
+  the first dash as one figure, whose outline starts with the right side up
+  to the closing joint, reversed. A closed figure drawn as one dash stays
+  closed.
 - Cosmetic alternate and user styles step through device pixels, user style
   entries in units of three pixels like the predefined styles. Cosmetic pens
   are always one pixel wide and solid.
-- `WidenPath` flattens each figure and replaces it with these outlines as
-  closed polygon figures, one per dash for patterned pens. A `CreatePen`
-  style is ignored: the pen widens as the solid pen of its width. A cosmetic
-  `ExtCreatePen` pen cannot be widened; the call fails and keeps the path.
-- For `CreatePen` pens and geometric pens with round caps and joins,
-  `WidenPath` stitches one outline per open figure: the start cap, the far
-  side forward, the end cap and the near side back. A closed figure gives
-  its two sides as two figures. The outer side of a joint sweeps the pen
-  between the two body supports and the inner side passes through the
-  vertex. Every support index comes from the forward segment directions, the
-  near side taking the opposite pen vertex, and a forward sweep that ends at
-  the head of the pen's second half also emits that vertex before the body
-  point.
+- A `CreatePen` style is ignored by `WidenPath`: the pen widens as the solid
+  pen of its width. A cosmetic `ExtCreatePen` pen cannot be widened; the call
+  fails and keeps the path.
 - Hatched and DIB pattern pens fill the widened footprint with the brush,
   tiled from the brush origin like any brush; a DIB pattern pen's LOGBRUSH
   colour is its colour usage.
@@ -489,13 +499,18 @@ products plus the 28.4 translation.
 - `Rectangle` frames are mitred: each body lies on the pen perpendicular
   used by geometric pens, one per box axis, taken from the two edges that
   leave the left-top corner and shared by both parallel edges. Other figures
-  keep the support-vertex bodies of wide `CreatePen` strokes.
+  are widened as described under geometric pens.
 - A wide `PS_INSIDEFRAME` pen insets the box at its transformed corners: the
-  vectors (-width, width) and (width, width) are mapped to 28.4 and halved,
-  rounding up; the right-top corner moves by the first, the left-top by the
-  second and the left-bottom back by the first. A box narrower than the pen
-  on either axis is filled with the pen instead, and arcs, chords and pies
-  in it draw nothing.
+  vectors (-width, width) and (width, width) are mapped through the
+  world-to-device transform to 28.4 and halved, rounding up; the right-top
+  corner moves by the first, the left-top by the second and the left-bottom
+  back by the first. The corners are those of the box as given, in
+  `GM_COMPATIBLE` too, where other boxes lose a pixel at the right and bottom.
+  Shapes built into a path are inset the same way, and so is `ArcTo`, whose
+  current position follows the inset arc. A box narrower than the pen on
+  either axis is filled with the pen instead; in a path it keeps its full
+  size. Arcs, chords and pies in such a box draw nothing, and `ArcTo` does
+  nothing at all, leaving the current position.
 - Geometric pens use the caps, joins and styles above with the realized pen.
 - `PatBlt` and the DIB transfers (`BitBlt`, `StretchBlt`, `StretchDIBits`
   and `MaskBlt` records, any ROP3) cover the polygon fill of their
