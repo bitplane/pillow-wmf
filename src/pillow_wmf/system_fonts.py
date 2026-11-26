@@ -283,14 +283,12 @@ class SystemFontCollection(FontCollection):
         Native GDI discards the requested ordinary family, selecting the default
         from pitch/family hints. An explicitly named symbol face keeps its symbol
         encoding. MAC_CHARSET follows this path unless the caller opts into a
-        legacy Macintosh decoding environment. Charset 254 is a UTF-8 extension,
-        not an unknown charset that can safely be treated as ANSI.
+        legacy Macintosh decoding environment. Charset 254 is the UTF-8
+        extension, decoded as UTF-8.
         """
         charset = self._charset(request)
-        if charset == 254:
-            raise UnsupportedOperation("Unsupported text charset: 254 (Windows UTF-8 extension)")
         name = self._name(request).casefold()
-        unknown = charset not in TEXT_CHARSETS and charset not in (1, 2, 255)
+        unknown = charset not in TEXT_CHARSETS and charset not in (1, 2, 254, 255)
         if charset == 77 and self.mac_codepage is not None:
             unknown = False
         if unknown:

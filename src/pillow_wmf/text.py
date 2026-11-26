@@ -18,6 +18,7 @@ from .text_encoding import CODEPAGE_BITS as CODEPAGE_BITS
 from .text_encoding import SINGLE_BYTE_CHARSETS as SINGLE_BYTE_CHARSETS
 from .text_encoding import TEXT_CHARSETS as TEXT_CHARSETS
 from .text_encoding import UNDEFINED_BYTE_MAPPINGS as UNDEFINED_BYTE_MAPPINGS
+from .text_encoding import UTF8_CODEPAGE
 from .text_encoding import decode_codepage as decode_codepage
 from .text_encoding import decode_single_byte as decode_single_byte
 from .text_layout import TextLayout as TextLayout
@@ -194,6 +195,8 @@ class FontCollection:
             return self.oem_codepage, 30
         if charset == 77 and self.mac_codepage is not None:
             return self.mac_codepage, 29
+        if charset == 254:
+            return UTF8_CODEPAGE, None  # The Windows UTF-8 extension.
         if encoding := TEXT_CHARSETS.get(charset):
             return encoding
         raise UnsupportedOperation(f"Unsupported text charset: {charset}")
@@ -212,6 +215,8 @@ class FontCollection:
                 raise UnsupportedOperation("Unsupported symbol font charset request")
             return DecodedText.single_byte("".join(chr(0xF000 | byte) for byte in data))
         codepage, bit = self._encoding(request)
+        if bit is None:
+            return decode_codepage(data, codepage)  # UTF-8 needs no code-page coverage.
         coverage = 1 << bit
         if charset == 255:
             page_bit = OEM_COVERAGE_BITS.get(codepage, CODEPAGE_BITS.get(codepage))

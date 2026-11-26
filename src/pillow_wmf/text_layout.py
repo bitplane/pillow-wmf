@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil, floor
 
-from .constants import TA_RTLREADING
 from .dbcs import collapse_advances
 from .font import Glyph
-from .gdi import InvalidOperation, UnsupportedOperation
+from .gdi import InvalidOperation
 from .mapping import fixed, rounded
 from .numeric import float32
 from .text_encoding import decode_single_byte
@@ -93,9 +92,9 @@ def layout_text(
         )
         return (x + rounded(dx), y + rounded(dy)) if snap else (x + dx, y + dy)
 
-    horizontal, vertical = alignment & 6, alignment & 24
-    if alignment & ~(31 | TA_RTLREADING) or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
-        raise UnsupportedOperation("Text alignment")
+    # GDI reads TA_CENTER, then TA_RIGHT; TA_BASELINE, then TA_BOTTOM; other bits are ignored.
+    horizontal = 6 if alignment & 6 == 6 else alignment & 2
+    vertical = 24 if alignment & 24 == 24 else alignment & 8
     count = len(characters) if glyph_indices is None else len(glyph_indices)
     if advances and len(advances) != count:
         raise InvalidOperation("Text advance count must match the byte count")
