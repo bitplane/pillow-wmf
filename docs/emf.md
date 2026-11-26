@@ -120,10 +120,12 @@ Text records play through the font collection's faces:
   logical units, rounded half up. Escaped GM_COMPATIBLE text under a world
   transform kept from GM_ADVANCED rotates in device space the same way.
   When a GM_ADVANCED escapement differs from the orientation, each glyph's
-  centre (origin plus half its advance) sits on the escapement at the running
-  sum of per-glyph extents: the distance from the centre, along the
-  escapement, to an ellipse through the half advance and the whole-pixel ink
-  top or bottom widened by a sixteenth of the font's ascent.
+  centre (origin plus half its advance) sits on the escapement at its back
+  extent past the running sum of the earlier glyphs' extents, with that sum
+  rounded to whole logical units. A glyph's extents are the distances from
+  its centre, along the escapement, to an ellipse through the half advance
+  and the whole-pixel ink top or bottom widened by a sixteenth of the font's
+  ascent.
 - A zero font height takes the device's default 16 pixel em, converted to a
   whole number of logical units along the world y axis, on every text path.
 - Under a non-uniform positive GM_ADVANCED scale, glyphs round from the

@@ -528,7 +528,13 @@ def _escapement_positions(font, indices, advances, baseline, extra, break_extra,
         width, (dx, dy) = font.glyph_advance(index)
         top, bottom = font.ink_extent(index)
         back, forward = _gen_widths(alpha, beta, width, top, bottom, frame.ascent)
-        centre = carry + back
+        if advances:
+            centre = carry + back
+        else:
+            # The running sum is kept in whole logical units.
+            centre = (
+                _round_half_away(float32(float32(_round_half_away(float32(carry / scale))) * float32(scale))) + back
+            )
         positions.append(
             (
                 _round_half_away(float32(float32(centre) * ux)) - int(dx / 2),
@@ -539,7 +545,9 @@ def _escapement_positions(font, indices, advances, baseline, extra, break_extra,
             logical += advances[number]
             carry = _round_half_away(float32(float32(logical) * float32(scale)))
         else:
-            carry = centre + forward + extra + (break_extra if number in breaks else 0)
+            carry = carry + back + forward + extra + (break_extra if number in breaks else 0)
+    if not advances:
+        carry = _round_half_away(float32(float32(_round_half_away(float32(carry / scale))) * float32(scale)))
     positions.append((_round_half_away(float32(carry * ux)), _round_half_away(float32(carry * uy))))
     return positions
 
