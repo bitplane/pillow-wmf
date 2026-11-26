@@ -1150,6 +1150,26 @@ def text_modes(d):
     d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
 
 
+def text_transforms(d):
+    """Controlled-font text under non-uniform, mirrored and rotating world transforms, in both record modes."""
+    d.add(fixed.SetTextColor(0x802000), fixed.SetBkMode(1))
+    transforms = (
+        (1.5, 0.0, 0.0, 0.75),  # non-uniform
+        (-1.0, 0.0, 0.0, 1.0),  # mirrored
+        (0.9, 0.4, -0.4, 0.9),  # rotating
+        (1.0, 0.0, 0.45, 1.0),  # shearing
+    )
+    for row, matrix in enumerate(transforms):
+        for column, (mode, scales, escapement) in enumerate(
+            ((1, TEXT_SCALES, 0), (1, (13.0, 40.0), 0), (2, (0.0, 0.0), 0), (1, TEXT_SCALES, 300))
+        ):
+            text_font(d, -d.u(10), escapement=escapement, orientation=escapement)
+            x = 6 + 31 * column + (24 if matrix[0] < 0 else 0)
+            d.add(fixed.SetWorldTransform(*matrix, float(d.u(x)), float(d.u(6 + 31 * row))))
+            d.add(ext_text_a(d, 0, 0, b"AB A", mode=mode, scales=scales))
+            d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+
+
 def rotated_color_adjustment(d):
     """HALFTONE stretches with colour adjustment under a rotating transform."""
     transfer_background(d)
@@ -1417,6 +1437,7 @@ FEATURES = (
     ("widened-curves", widened_curves, (128, 51)),
     ("dashed-curves", dashed_curves, (128, 51)),
     ("text-modes", text_modes, (128, 51)),
+    ("text-transforms", text_transforms, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),
