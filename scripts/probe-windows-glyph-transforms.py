@@ -15,7 +15,8 @@ with baseline alignment:
 Then three sweeps: ``box`` lines give the bounds GetBoundsRect accumulates
 for runs of a rotated font (identity world, so device pixels), without and
 with explicit advances; ``sweep`` blocks draw upright glyphs along a
-differing escapement at sixteen sub-pixel offsets per axis; ``outline``
+differing escapement at sixteen sub-pixel offsets per axis (``pair`` blocks
+add glyph pairs and explicit advances); ``outline``
 blocks give GGO_NATIVE points across sizes, transforms and simulated bold
 italic.
 """
@@ -358,6 +359,50 @@ def main():
                         text_out(dc, 0, 0, 0, None, text, len(text), None)
                         print_rows(
                             f"sweep upright-{name} height={height} transform={matrix} text {text!r} "
+                            f"shift={shift[0]},{shift[1]}"
+                        )
+            set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
+            select(dc, previous)
+            delete(font)
+
+        # Glyph pairs along a differing escapement, with and without explicit
+        # advances (zero advances stack every glyph at its own back extent).
+        pairs = (
+            ("B ", None),
+            (" A", None),
+            (" ", None),
+            ("AB ", None),
+            ("  A", None),
+            ("B  A", None),
+            ("AAB A", None),
+            ("A A", None),
+            ("BB A", None),
+            ("B AB", None),
+            ("AB", (0, 0)),
+            ("BA", (0, 0)),
+            ("B A", (0, 0, 0)),
+            ("AB A", (0, 0, 0, 0)),
+            ("B A", (12, 12, 12)),
+            ("AB A", (12, 12, 12, 12)),
+        )
+        for name, height, matrix in (("identity", -25, TRANSFORMS["identity"]), ("rotate", -8, TRANSFORMS["rotate"])):
+            font = make_font(height, 300, 0)
+            check(set_world(dc, ctypes.byref(XForm(*matrix, 0.0, 0.0))), "SetWorldTransform")
+            previous = select(dc, font)
+            for text, advances in pairs:
+                if advances and height == -25 and any(advances):
+                    continue
+                array = (ctypes.c_int * len(text))(*advances) if advances else None
+                label = f" dx={','.join(map(str, advances))}" if advances else ""
+                for axis in (0, 1):
+                    for step in range(16):
+                        ctypes.memset(bits, 0xFF, SIZE * SIZE * 4)
+                        set_align(dc, 24)
+                        shift = (step / 16, 0.0) if axis == 0 else (0.0, step / 16)
+                        set_world(dc, ctypes.byref(XForm(*matrix, ORIGIN[0] + shift[0], ORIGIN[1] + shift[1])))
+                        text_out(dc, 0, 0, 0, None, text, len(text), array)
+                        print_rows(
+                            f"pair upright-{name} height={height} transform={matrix} text {text!r}{label} "
                             f"shift={shift[0]},{shift[1]}"
                         )
             set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
