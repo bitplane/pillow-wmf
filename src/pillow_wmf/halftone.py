@@ -96,7 +96,7 @@ def halftone_bitmap(bitmap, x, y, sw, sh, width, height, *, content=None):
     A view with valid=False means no output, never replication.
     """
     if min(sw, sh, width, height) <= 0:
-        raise UnsupportedOperation("HALFTONE reflected extents")
+        return HalftoneMode.NOOP  # An empty extent transfers nothing.
     if not has_source(bitmap, x, y, sw, sh):
         return HalftoneMode.NOOP
     left, top = max(0, x), max(0, y)
@@ -116,10 +116,8 @@ class ExpansionAxis:
 
     def __init__(self, source, destination):
         self.source, self.destination = source, destination
-        self.radius = (destination + source - 1) // source - 1
-        taps = 2 * self.radius + 1
-        if taps > MAX_FILTER_TAPS:
-            raise UnsupportedOperation("HALFTONE filter tap limit")
+        # The filter widens with the expansion ratio, up to the engine's tap limit.
+        self.radius = min((destination + source - 1) // source - 1, (MAX_FILTER_TAPS - 1) // 2)
         self.kernel = tuple(
             tent_power(round_ratio((destination - abs(k) * source) * FD6, destination))
             for k in range(-self.radius, self.radius + 1)

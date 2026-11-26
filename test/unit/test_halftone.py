@@ -247,9 +247,10 @@ def test_fast_run_stencils_partition_the_integer_replication_runs():
                 assert all(-1 <= scan <= source and w >= 0 for scan, w in weights)
 
 
-def test_excessive_tap_allocation_is_rejected():
-    with pytest.raises(UnsupportedOperation, match="tap limit"):
-        ExpansionAxis(1, 1_000_000_000)
+def test_excessive_expansion_keeps_the_kernel_within_the_tap_limit():
+    from pillow_wmf.limits import MAX_FILTER_TAPS
+
+    assert len(ExpansionAxis(1, 1_000_000_000).kernel) <= MAX_FILTER_TAPS
 
 
 def test_halftone_transfers_are_freed_without_the_cycle_collector():
