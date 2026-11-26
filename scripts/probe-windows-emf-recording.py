@@ -1207,6 +1207,18 @@ def text_scenarios():
 
     yield "text-advanced", None, text_advanced
 
+    def text_bounds(dc):
+        set_graphics_mode(dc, 2)
+        text_font(dc, -10)
+        for row, matrix in enumerate(((0.9, 0.4, -0.4, 0.9), (1.0, 0.0, 0.45, 1.0))):
+            set_world_transform(dc, ctypes.byref(XForm(*matrix, 10.0, 10.0 + 60.0 * row)))
+            for mode in (1, 2):
+                set_bk_mode(dc, mode)
+                for column, text in enumerate(("BA", "AB", "B", "A B")):
+                    wide(dc, 28 * column, 24 * (mode - 1), text)
+
+    yield "text-bounds", None, text_bounds
+
 
 def records(data):
     position = 0
