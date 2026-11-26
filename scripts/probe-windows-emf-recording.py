@@ -1029,6 +1029,50 @@ def gap_scenarios():
 
     yield "inside-frame-readback", None, inside_frame_readback
 
+    def dashed_readback(dc):
+        # GetPath of styled geometric pens widened along curves and lines, in
+        # sixteenths of a pixel, written into GDI comments.
+        api("GdiComment", boolean, ptr, wintypes.UINT, ctypes.c_char_p)
+        api("GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+
+        def comment_path():
+            count = gdi.GetPath(dc, None, None, 0)
+            pts, kinds = (wintypes.POINT * max(count, 1))(), (ctypes.c_ubyte * max(count, 1))()
+            gdi.GetPath(dc, pts, kinds, count)
+            data = b"PATH" + b"".join(
+                struct.pack("<iiB", p.x, p.y, k) for p, k in zip(pts[:count], kinds[:count], strict=True)
+            )
+            gdi.GdiComment(dc, len(data), data)
+
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 16, 16, None)
+        set_viewport_ext(dc, 1, 1, None)
+        brush = LogBrush(0, 0, 0)
+        user = (wintypes.DWORD * 4)(14 * 16, 4 * 16, 6 * 16, 4 * 16)
+        pens = (
+            lambda: ext_create_pen(0x00010000 | 0x2000 | 0x0200 | 1, 64, ctypes.byref(brush), 0, None),
+            lambda: ext_create_pen(0x00010000 | 0x2000 | 0x0200 | 7, 64, ctypes.byref(brush), 4, user),
+        )
+        shapes = (
+            lambda: ellipse(dc, 64, 64, 480, 352),
+            lambda: (move_to(dc, 32, 928, None), poly_bezier_to(dc, *points((128, 640), (384, 1120), (384, 768)))),
+            lambda: (move_to(dc, 32, 32, None), line_to(dc, 400, 96), line_to(dc, 160, 320)),
+        )
+        for pen in pens:
+            select(dc, pen())
+            for shape in shapes:
+                begin_path(dc)
+                shape()
+                end_path(dc)
+                flatten_path(dc)
+                comment_path()
+                widen_path(dc)
+                comment_path()
+                abort_path(dc)
+            select(dc, stock(7))
+
+    yield "dashed-readback", None, dashed_readback
+
 
 def records(data):
     position = 0
