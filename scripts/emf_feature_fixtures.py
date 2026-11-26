@@ -1145,7 +1145,7 @@ TEXT_SCALES = (100 * 271 / 1024, 100 * 203 / 768)
 def text_font(d, height, **fields):
     """Select the controlled layout font."""
     face = TEXT_FACE.encode("utf-16-le").ljust(64, b"\0")
-    font = LogFont(height=height, quality=3, face_name=face, **{"weight": 400} | fields)
+    font = LogFont(height=height, face_name=face, **{"weight": 400, "quality": 3} | fields)
     return d.select(
         lambda slot: variable.ExtCreateFontIndirectW(slot, font, bytes(256) + struct.pack("<II", 0x08007664, 0))
     )
