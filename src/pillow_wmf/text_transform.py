@@ -27,7 +27,7 @@ import freetype as ft
 
 from .binary import ResourceLimitError
 from .embolden import embolden
-from .font import _FREETYPE, Glyph, _Face, _unpack_bitmap
+from .font import _FREETYPE, Glyph, _Face, _unpack_bitmap, whole_em
 from .gdi import UnsupportedOperation
 from .numeric import efloat_sqrt, float32
 
@@ -100,7 +100,7 @@ class TransformedFont:
         if b or c or not d:
             return self.matrix
         em = abs(Fraction(d)) * self.units_per_em
-        whole = int(em + Fraction(1, 2))
+        whole = whole_em(em, self.units_per_em)
         return (a, b, c, d * whole / em) if whole else self.matrix
 
     def _render(self, index, max_pixels):
@@ -156,13 +156,7 @@ class TransformedFont:
             b, d = b + OBLIQUE * a, d + OBLIQUE * c
 
         def device(point):
-            # Each product is rounded to 26.6 before the sum, as fixed-point
-            # multiplication does.
-            u, v = point
-            return (
-                _round_half_away(64 * a * u) + _round_half_away(64 * b * v),
-                _round_half_away(64 * c * u) + _round_half_away(64 * d * v),
-            )
+            return _device_rule(a, b, c, d, *point)
 
         # A mirroring transform reverses the outline's orientation.
         closed = Fraction(a) * Fraction(d) - Fraction(b) * Fraction(c) < 0
@@ -547,6 +541,36 @@ def _escapement_positions(font, indices, advances, baseline, extra, break_extra,
             carry = centre + forward + extra + (break_extra if number in breaks else 0)
     positions.append((_round_half_away(float32(carry * ux)), _round_half_away(float32(carry * uy))))
     return positions
+
+
+def _q16(value) -> Fraction:
+    return Fraction(_round_half_away(Fraction(value) * 65536), 65536)
+
+
+def _device_rule(a, b, c, d, u, v):
+    """A notional point (u, v) as 26.6 device coordinates, as the scaler maps it.
+
+    A rotating or shearing matrix is applied in two stages: each axis first
+    scales by the larger component of its matrix column, held in 16.16 per
+    notional unit, and rounds; the remaining matrix, in 16.16, then maps the
+    scaled point with each product rounded. A mirroring scale-only matrix
+    holds its x scale in 16.16; others round each product of the exact matrix.
+    """
+    if b or c:
+        sx = _q16(max(abs(Fraction(a)), abs(Fraction(c))))
+        sy = _q16(max(abs(Fraction(b)), abs(Fraction(d))))
+        x, y = _round_half_away(64 * sx * u), _round_half_away(64 * sy * v)
+        qa, qb, qc, qd = (
+            _round_half_away(Fraction(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
+        )
+        return (
+            ((x * qa + 0x8000) >> 16) + ((y * qb + 0x8000) >> 16),
+            ((x * qc + 0x8000) >> 16) + ((y * qd + 0x8000) >> 16),
+        )
+    if (Fraction(a) > 0) != (Fraction(d) > 0):  # not mirrored: notional y up maps to device y down
+        return _round_half_away(64 * a * u), _round_half_away(64 * d * v)
+    sign = 1 if a >= 0 else -1
+    return sign * _round_half_away(64 * _q16(abs(Fraction(a))) * u), _round_half_away(64 * d * v)
 
 
 def _column(font, column):

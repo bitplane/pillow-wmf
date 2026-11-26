@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from importlib.resources import files
 from io import BytesIO
-from math import ceil
+from math import ceil, floor
 from pathlib import Path
 from threading import Lock, RLock
 
@@ -234,6 +234,13 @@ def _unpack_bitmap(bitmap, *, mono):
     return b"".join(data[row : row + width] for row in range(0, rows * pitch, pitch))
 
 
+def whole_em(size, units_per_em) -> int:
+    """The scaler's whole-pixel em: the pixels per notional unit held in
+    16.16, times the em square, rounded."""
+    per_unit = Fraction(floor(Fraction(size) * 65536 / units_per_em + Fraction(1, 2)), 65536)
+    return floor(per_unit * units_per_em + Fraction(1, 2))
+
+
 def default_em_height(m21, m22) -> Fraction:
     """The logical em of a zero font height: the device's 16 pixel default
     through the world y axis (whose device image is (m21, m22)), rounded to
@@ -390,10 +397,12 @@ class FontFace:
             self.index,
             # An isotropic scale realizes both axes at the whole-pixel em.
             (
-                Fraction(width) * (rounded(size) / Fraction(size) if width == size else 1) / self.units_per_em,
+                Fraction(width)
+                * (whole_em(size, self.units_per_em) / Fraction(size) if width == size else 1)
+                / self.units_per_em,
                 0,
                 0,
-                -Fraction(rounded(size)) / self.units_per_em,
+                -Fraction(whole_em(size, self.units_per_em)) / self.units_per_em,
             ),
             self.units_per_em,
             self.ascent,
@@ -443,7 +452,7 @@ class FontFace:
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
         if size <= 0:
             raise ValueError("Font pixel size must be positive")
-        mask_width = rounded(size) if width is None else width
+        mask_width = whole_em(size, self.units_per_em) if width is None else width
         width = size if width is None else width
         escapement %= 3600
         key = (
@@ -470,7 +479,9 @@ class FontFace:
                     with _FREETYPE:
                         font = _Face.from_bytes(self.data, index=self.index)
                     # Glyph IDs come from the selected cmap; FreeType only rasterizes.
-                    font.set_char_size(max(1, int(mask_width * 64)), max(1, rounded(size) * 64), 72, 72)
+                    font.set_char_size(
+                        max(1, int(mask_width * 64)), max(1, whole_em(size, self.units_per_em) * 64), 72, 72
+                    )
                 except ft.FT_Exception as error:
                     raise UnsupportedOperation(
                         f"Cannot realize font {self.family!r} at {size} pixels: {error}"
@@ -482,7 +493,9 @@ class FontFace:
                 def metric(units):
                     return rounded(units * vertical)
 
-                ascent, bottom = self.device_metrics.get(rounded(size), (metric(self.ascent), -metric(self.descent)))
+                ascent, bottom = self.device_metrics.get(
+                    whole_em(size, self.units_per_em), (metric(self.ascent), -metric(self.descent))
+                )
                 background_cell = ascent, -bottom
                 if escapement % 1800:
                     # General transforms bound the font's ink with an em/64

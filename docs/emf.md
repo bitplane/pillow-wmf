@@ -108,7 +108,8 @@ Text records play through the font collection's faces:
   transform scales, which size the font in place of the page scale.
 - Under rotating or shearing transforms glyphs are scan-converted from the
   outline through the full notional-to-device matrix by the TrueType rules
-  (26.6 products; dropout control fills the pixel to the left or below,
+  (each axis scaled by its column's larger component in 16.16 per unit, then
+  the remaining 16.16 matrix; dropout control fills the pixel to the left or below,
   or the other neighbour when that falls outside the outline's pixel bounds). The cell spans the head table's bounds
   widened by 1/64 em, rounded out to pixels along the ascender; opaque cells,
   underline and strikeout are parallelograms along the baseline. A logical
