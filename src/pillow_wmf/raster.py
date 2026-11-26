@@ -60,12 +60,13 @@ from .ellipse import (
     round_rect_figure,
 )
 from .execution import CREATED_KINDS, ExecutionContext
+from .font import default_em_height
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon, coverage_spans
 from .gradient import mesh_triangles
 from .limits import DEFAULT_LIMITS
 from .mapping import IDENTITY_TRANSFORM, Mapping
-from .numeric import efloat_sqrt, float32
+from .numeric import float32
 from .objects import EncodedText, FontRequest, GlyphIndices, UnicodeText
 from .paint import pattern_rop2
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
@@ -1875,9 +1876,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         else:
             # The default height is a 16 pixel em on the device's y axis,
             # rounded to whole logical units.
-            a, b = float32(16 * m21), float32(16 * m22)
-            length = efloat_sqrt(float32(float32(a * a) + float32(b * b)))
-            em_height = Fraction(_round_half_away(float32(float32(1 / length) * 256)) or 24)
+            em_height = default_em_height(m21, m22)
         if request.width:
             em_width = Fraction(abs(request.width) * upem, face.average_width)
         else:

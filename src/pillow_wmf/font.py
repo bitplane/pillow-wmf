@@ -16,7 +16,7 @@ from PIL import Image
 from .binary import ResourceLimitError
 from .gdi import UnsupportedOperation
 from .mapping import fixed, rounded
-from .numeric import float32
+from .numeric import efloat_sqrt, float32
 from .symbol import WINDOWS_SYMBOL_BYTES
 from .text_math import text_rotation
 
@@ -226,6 +226,18 @@ def _unpack_bitmap(bitmap, *, mono):
     return b"".join(data[row : row + width] for row in range(0, rows * pitch, pitch))
 
 
+def default_em_height(m21, m22) -> Fraction:
+    """The logical em of a zero font height: the device's 16 pixel default
+    through the world y axis (whose device image is (m21, m22)), rounded to
+    whole logical units with GDI's single-precision arithmetic."""
+    a, b = float32(16 * m21), float32(16 * m22)
+    length = efloat_sqrt(float32(float32(a * a) + float32(b * b)))
+    if not length:
+        return Fraction(24)
+    value = float32(float32(1 / length) * 256)
+    return Fraction(int(abs(value) + 0.5) or 24)
+
+
 class FontFace:
     """A pinned TrueType face with its Windows metrics, not Pillow's metrics."""
 
@@ -327,7 +339,7 @@ class FontFace:
         font transform).
         """
         sx, sy = scale
-        height = abs(request.height) * sy if request.height else 16
+        height = abs(request.height) * sy if request.height else default_em_height(0, sy) * abs(sy)
         device_scale = 1
         if request.height > 0:
             # Cell-to-em conversion retains a fractional size for metrics;

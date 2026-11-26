@@ -123,7 +123,10 @@ Text records play through the font collection's faces:
   escapement, to an ellipse through the half advance and the whole-pixel ink
   top or bottom widened by a sixteenth of the font's ascent.
 - A zero font height takes the device's default 16 pixel em, converted to a
-  whole number of logical units along the world y axis.
+  whole number of logical units along the world y axis, on every text path.
+- Under a non-uniform positive GM_ADVANCED scale, glyphs round from the
+  precise reference point; TA_CENTER halves the device advance and TA_RIGHT
+  subtracts the run's logical width converted back to whole device pixels.
 - Current-position text continues from the 28.4 device point the previous run
   left. An opaque cell widens over ink protruding past the advances, and, with
   explicit advances, to the left of the origin.

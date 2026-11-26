@@ -252,10 +252,12 @@ class TransformedFont:
     def vertical(self, units: int) -> tuple[int, int]:
         """A notional vertical offset as a 28.4 device vector.
 
-        A scale-only transform takes whole pixels at its 16.16 vertical scale.
+        A scale-only transform takes whole pixels at its 16.16 vertical scale,
+        from the unrounded em as the horizontal path does.
         """
         a, b, c, d = self._device_matrix()
         if not b and not c:
+            d = self.matrix[3]
             scale = Fraction(_round_half_away(abs(Fraction(d)) * 65536), 65536)
             pixels = _round_half_away(abs(units) * scale)
             return (0, pixels * 16 if (d < 0) == (units < 0) else -pixels * 16)

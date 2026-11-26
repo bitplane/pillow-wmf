@@ -136,8 +136,8 @@ def layout_text(
     run_width = total * scale if advances else rounded((total // 65536) / scale) * scale
     if escapement % 900 and not advances:
         run_width = Fraction(total, 65536)
-    if device_run and not advances:
-        # A non-uniform GM_ADVANCED scale aligns by the device advance,
+    if device_run and not advances and horizontal != 2:
+        # A non-uniform GM_ADVANCED scale centres by the device advance,
         # without logical rounding.
         run_width = Fraction(total // 65536)
     width = rounded(run_width)
@@ -145,7 +145,7 @@ def layout_text(
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
     center_offset = (width + (not mirrored_layout)) // 2
     origin_x = x - (width if horizontal == 2 else center_offset if horizontal == 6 else 0)
-    if horizontal == 2 and precise_origin is not None:
+    if horizontal == 2 and precise_origin is not None and not (device_run and not advances):
         # Subtract the advance before rounding the aligned reference point.
         origin_x = rounded(precise_origin[0] - run_width)
     elif horizontal == 6 and precise_origin is not None and device_run:
