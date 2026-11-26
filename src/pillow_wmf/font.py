@@ -98,6 +98,8 @@ class RasterFont:
     synthetic_italic: bool = False
     decorations: tuple[tuple[int, int], ...] = ()
     background_cell: tuple[int, int] = (0, 0)
+    # The horizontal pixels per design unit as the scaler quantizes it, 16.16.
+    advance_fixed: Fraction = Fraction(1)
     _glyphs: dict[int, Glyph] = field(default_factory=GlyphCache)
     # One FreeType face has one glyph slot: glyph realization is serialized.
     # Copies made with dataclasses.replace share the face, cache and lock.
@@ -145,7 +147,7 @@ class RasterFont:
             advance = (
                 (slot.advance.x + 32) // 64
                 if self.hinted
-                else rounded(self.design_advances[index] * self.advance_scale)
+                else rounded(self.design_advances[index] * self.advance_fixed)
             )
             if self.escapement % 900:
                 advance = self.design_advances[index] * Fraction(self.advance_scale)
@@ -445,6 +447,7 @@ class FontFace:
                     self.symbol,
                     missing_glyph,
                     em_width=width,
+                    advance_fixed=Fraction(round(Fraction(width) * 65536 / self.units_per_em), 65536),
                     escapement=escapement,
                     background_cell=background_cell,
                     synthetic_bold=synthetic_bold,

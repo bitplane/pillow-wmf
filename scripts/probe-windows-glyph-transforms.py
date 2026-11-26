@@ -9,7 +9,7 @@ with baseline alignment:
     case NAME height=H transform=(m11, m12, m21, m22) escapement=E
     glyph CH box=W,H origin=X,Y cell=CX,CY
     bits ROW MASK              (# marks a set bit)
-    text LABEL
+    text LABEL [align=A]       (baseline alignment unless given)
     row Y X0 MASK              (one per changed row)
 """
 
@@ -160,12 +160,14 @@ def main():
                         )
                         print(f"bits {row} {mask}")
             # The world origin maps to the device origin; draw at its inverse.
-            for label in ("A", "B", "AB A"):
+            runs = [("A", 24), ("B", 24), ("AB A", 24), ("AB A", 0), ("AB A", 8), ("AB A", 30), ("AB A", 26)]
+            for label, alignment in runs:
                 ctypes.memset(bits, 0xFF, SIZE * SIZE * 4)
+                set_align(dc, alignment)
                 set_world(dc, ctypes.byref(XForm(*matrix, float(ORIGIN[0]), float(ORIGIN[1]))))
                 text_out(dc, 0, 0, 0, None, label, len(label), None)
                 set_world(dc, ctypes.byref(XForm(*matrix, 0.0, 0.0)))
-                print(f"text {label!r}")
+                print(f"text {label!r}" + (f" align={alignment}" if alignment != 24 else ""))
                 for y in range(SIZE):
                     row = [pixels[y * SIZE + x] & 0xFFFFFF != 0xFFFFFF for x in range(SIZE)]
                     if any(row):

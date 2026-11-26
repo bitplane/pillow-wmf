@@ -1880,8 +1880,9 @@ class RasterContext(ExecutionContext[DrawingState]):
             face.index,
             matrix,
             upem,
-            face.ascent,
-            face.descent,
+            # Vertical alignment takes the cell for scale-only transforms and
+            # the font-wide outline bounds for rotating or shearing ones.
+            *(face.outline_cell if matrix[1] or matrix[2] else (face.ascent, face.descent)),
             face.design_advances,
             quality=request.quality,
         )
