@@ -211,6 +211,11 @@ def _oriented(corners, rectangle):
     return (p0, p1, p2), (x, y, width, height)
 
 
+# Device space as a mapping, for figures built after the page transform.
+DEVICE_MAPPING = Mapping()
+ARC_FIELDS = ("left", "top", "right", "bottom", "start_x", "start_y", "end_x", "end_y")
+
+
 class RasterContext(ExecutionContext[DrawingState]):
     """Draw the currently supported GDI calls into an RGB Pillow image.
 
@@ -431,20 +436,44 @@ class RasterContext(ExecutionContext[DrawingState]):
         self._state.fixed_position = path.commands[-1][-1]
 
     def _start_point(self):
-        """The 28.4 point a *To call starts from: the exact point an arc left, else the position."""
-        if self._state.fixed_position is not None:
-            return self._state.fixed_position
-        return self._path_point(*self._state.position)
+        """The 28.4 point a *To call starts from.
+
+        After an arc the current position is the exact 28.4 point it left. A
+        GM_ADVANCED DC with a page or world transform draws from it as it is;
+        otherwise drawing starts from it floored to a whole device pixel.
+        """
+        exact = self._state.fixed_position
+        if exact is None:
+            return self._path_point(*self._state.position)
+        transformed = not (self.mapping.identity_page and self.mapping.world == IDENTITY_TRANSFORM)
+        if self.mapping.graphics_mode == GM_ADVANCED and transformed:
+            return exact
+        return exact[0] & ~15, exact[1] & ~15
 
     def _apply_arc_to(self, call, prepared, result):
         a = call.kwargs
         box = (a["left"], a["top"], a["right"], a["bottom"])
         end = (a["end_x"], a["end_y"])
-        path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end, inside_frame=True)
+        if self.mapping.graphics_mode == GM_COMPATIBLE:
+            path = self._compatible_arc(a)
+        else:
+            path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end, inside_frame=True)
         if path is None:
             return  # A box narrower than an inside-frame pen: nothing happens.
         # The current position is the arc's 28.4 end, floored to a logical point.
         self._stroke_from_position(path, self._floor_logical(path.commands[-1][-1]))
+
+    def _compatible_arc(self, a):
+        """The figure a GM_COMPATIBLE Arc of the same box and radials draws; None if it draws nothing."""
+        state = self._state
+        saved = state.recording_path, state.path
+        state.recording_path, state.path = True, ()
+        try:
+            self._apply_rectangle(Call.make("arc", **{key: a[key] for key in ARC_FIELDS}), None, None)
+            figures = state.path
+        finally:
+            state.recording_path, state.path = saved
+        return DevicePath(figures[0][0]) if figures else None
 
     def _floor_logical(self, point):
         """The logical point at or below a 28.4 device point, as GetCurrentPositionEx reports it."""
@@ -459,7 +488,6 @@ class RasterContext(ExecutionContext[DrawingState]):
         )
 
     def _prepare_angle_arc(self, a):
-        # GM_COMPATIBLE arcs take the same 28.4 geometry, without a world transform.
         if a["radius"] < 0:
             return NATIVE_FAILURE  # A radius past 2^31 fails natively.
 
@@ -470,15 +498,35 @@ class RasterContext(ExecutionContext[DrawingState]):
         x, y, radius = a["x"], a["y"], a["radius"]
         box = (x - radius, y - radius, x + radius, y + radius)
 
-        def point(angle):
+        def point(angle, centre=(x, y), radii=(radius, radius)):
             # Angles reduce to one turn first, as native trigonometry does.
             angle = math.radians(angle % 360)
-            return (x + radius * math.cos(angle), y - radius * math.sin(angle))
+            return (centre[0] + radii[0] * math.cos(angle), centre[1] - radii[1] * math.sin(angle))
+
+        if self.mapping.graphics_mode == GM_COMPATIBLE:
+            # GM_COMPATIBLE maps the circle's box to whole device pixels and
+            # builds the arc in device space, about that box's centre.
+            (x0, y0), (x1, y1) = self.mapping.point(x - radius, y - radius), self.mapping.point(x + radius, y + radius)
+            centre, radii = (Fraction(x0 + x1, 2), Fraction(y0 + y1, 2)), (Fraction(x1 - x0, 2), Fraction(y1 - y0, 2))
+
+            def figure(start, end, angles):
+                return advanced_arc(
+                    DEVICE_MAPPING,
+                    (x0, y0, x1, y1),
+                    point(start, centre, radii),
+                    point(end, centre, radii),
+                    direction=self._state.arc_direction,
+                    null_pen=self._state.pen.style == PS_NULL,
+                    angles=angles,
+                )
+        else:
+
+            def figure(start, end, angles):
+                return self._advanced_arc(box, point(start), point(end), angles=angles)
 
         def arc(start, sweep):
             """Bezier pieces of one arc; a zero sweep is one zero-length piece."""
-            angles = (start, start + sweep)
-            commands = self._advanced_arc(box, point(start), point(start + sweep), angles=angles).commands
+            commands = figure(start, start + sweep, (start, start + sweep)).commands
             return ((commands[0][0],) * 4,) if not sweep else commands
 
         # A sweep of a turn or more draws the remainder, then each turn as the
@@ -1666,7 +1714,8 @@ class RasterContext(ExecutionContext[DrawingState]):
                     null_pen=self._state.pen.style == PS_NULL,
                     drawing_bounds=oriented_bounds if advanced else drawing_bounds,
                     radial_bounds=(x0, y0, x1, y1),
-                    clockwise=self.mapping.rtl,
+                    # AD_CLOCKWISE reverses a GM_COMPATIBLE arc in device space.
+                    clockwise=self.mapping.rtl != (not advanced and self._state.arc_direction == 2),
                     advanced=advanced,
                     corners=corners,
                 )

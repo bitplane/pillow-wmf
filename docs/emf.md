@@ -73,7 +73,15 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   zero-length Bezier. The current position ends at the final angle.
 - After `ArcTo` and `AngleArc` the DC keeps the arc's exact 28.4 end, and
   the next `LineTo`, `PolylineTo` or `PolyBezierTo` starts from it, so a
-  path figure continues across the arc.
+  path figure continues across the arc. Drawing starts from it as it is in
+  GM_ADVANCED under a page or world transform, and otherwise from it floored
+  to a whole device pixel.
+- In GM_COMPATIBLE (direct drawing; EMF playback is always GM_ADVANCED),
+  `ArcTo` draws the figure `Arc` would, and `AngleArc` maps its circle's box
+  to whole device pixels and builds the arc about that box's centre in
+  device space. `AD_CLOCKWISE` reverses GM_COMPATIBLE arcs, chords and pies
+  in device space
+  ([`test_compatible_arcs.py`](../test/unit/test_compatible_arcs.py)).
 - Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
   `PlgBlt`, `AlphaBlend`, `TransparentBlt`) map their logical source
   rectangle through the recorded source transform, rounding each edge half
@@ -663,4 +671,3 @@ source pixel. A mask bit of 1 copies the source pixel.
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
   differs from native along slanted edges.
-- `GM_COMPATIBLE` ArcTo and AngleArc take the `GM_ADVANCED` arc geometry.
