@@ -1033,6 +1033,95 @@ def rle_bands(d):
     d.add(bitmaps.SetDIBitsToDevice(0, 0, 0, 0, *placement, *blocks, info + bits))
 
 
+def invalid_modes(d):
+    """Out-of-range mode values for ROP2, fill, stretch, background and arc direction.
+
+    Each row starts from a valid mode, sets an out-of-range value and then
+    draws something whose appearance shows the mode in effect.
+    """
+    d.pen(PS_NULL, 0, 0)
+    d.brush(BS_SOLID, 0x30A0E0)
+    for column in range(8):
+        d.add(fixed.Rectangle(*d.rect(column * 16, 0, column * 16 + 8, 128)))
+    d.brush(BS_SOLID, 0x0000C0)
+    for column, value in enumerate((0, 17, 23, 29, 0x107, 0x10D, 0xFFFFFFFF, 255)):
+        d.add(
+            fixed.SetROP2(7), fixed.SetROP2(value), fixed.Rectangle(*d.rect(2 + 16 * column, 2, 14 + 16 * column, 24))
+        )
+    d.add(fixed.SetROP2(13))
+    star = [
+        (8 + 7 * math.cos(math.radians(90 + 144 * i)), 36 - 7 * math.sin(math.radians(90 + 144 * i))) for i in range(5)
+    ]
+    d.brush(BS_SOLID, 0x008000)
+    for column, value in enumerate((0, 3, 0x101, 0x102, 0xFFFFFFFF)):
+        points = tuple((d.u(x + 16 * column), d.u(y)) for x, y in star)
+        d.add(fixed.SetPolyFillMode(2), fixed.SetPolyFillMode(value), variable.Polygon((0, 0, 0, 0), points))
+    d.add(fixed.SetPolyFillMode(1))
+    info, bits = rgb_dib(16, 16, lambda x, y: (255, 255, 255) if (x + y) % 2 else (40, 40, 160))
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    for column, value in enumerate((0, 5, 0x101, 0x104, 0xFFFFFFFF)):
+        d.add(fixed.SetStretchBltMode(3), fixed.SetStretchBltMode(value))
+        fields = (
+            d.u(2 + 16 * column),
+            d.u(48),
+            0,
+            0,
+            16,
+            16,
+            offset,
+            len(info),
+            offset + len(info),
+            len(bits),
+            0,
+            SRCCOPY,
+        )
+        d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *fields, 5, 5, info + bits))
+    d.add(fixed.SetStretchBltMode(3))
+    d.brush(BS_HATCHED, 0x800080, HS_DIAGCROSS)
+    d.add(fixed.SetBkColor(0x00FFFF))
+    for column, value in enumerate((0, 3, 0x101, 0x102, 0xFFFFFFFF)):
+        d.add(
+            fixed.SetBkMode(1),
+            fixed.SetBkMode(value),
+            fixed.Rectangle(*d.rect(2 + 16 * column, 66, 14 + 16 * column, 86)),
+        )
+    d.add(fixed.SetBkMode(2))
+    d.pen(PS_SOLID, 0, 0x000000)
+    for column, value in enumerate((0, 3, 0x101, 0xFFFFFFFF)):
+        box = d.rect(2 + 16 * column, 92, 14 + 16 * column, 104)
+        d.add(fixed.SetArcDirection(2), fixed.SetArcDirection(value))
+        d.add(fixed.Arc(*box, box[2], (box[1] + box[3]) // 2, box[0], box[1]))
+    d.add(fixed.SetArcDirection(1))
+
+
+def color_adjustment_combos(d):
+    """Colour adjustment steps in combination, on every channel level.
+
+    The source holds all 256 levels in each channel; each panel stretches it
+    2x in HALFTONE under one combination of reference black and white,
+    per-channel gamma, the log filter, contrast, brightness and negative.
+    """
+    info, bits = rgb_dib(16, 16, lambda x, y: (16 * y + x, 255 - (16 * y + x), (7 * (16 * y + x)) % 256))
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    d.add(fixed.SetStretchBltMode(HALFTONE))
+    combos = (
+        # (flags, rg, gg, bg, black, white, contrast, brightness)
+        (0, 18000, 8000, 25000, 0, 10000, 40, 0),
+        (0, 15000, 15000, 15000, 0, 10000, 0, 30),
+        (2, 10000, 10000, 10000, 0, 10000, -30, 20),  # CA_LOG_FILTER
+        (1, 12000, 9000, 10000, 0, 10000, 25, -15),  # CA_NEGATIVE
+        (0, 10000, 10000, 10000, 1000, 8500, 35, 10),
+        (3, 20000, 6500, 13000, 800, 9000, -45, 40),
+        (2, 25000, 25000, 25000, 2000, 7000, 0, 0),
+        (1, 10000, 10000, 10000, 3000, 6000, -100, -100),
+    )
+    for index, (flags, rg, gg, bg, black, white, contrast, brightness) in enumerate(combos):
+        d.add(fixed.SetColorAdjustment(24, flags, 0, rg, gg, bg, black, white, contrast, brightness, 0, 0))
+        x, y = 32 * (index % 4), 32 * (index // 4)
+        fields = (x, y, 0, 0, 16, 16, offset, len(info), offset + len(info), len(bits), 0, SRCCOPY)
+        d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *fields, 32, 32, info + bits))
+
+
 def state_record(*records):
     """Records that should not change a bitmap DC's output, followed by drawing."""
 
@@ -1118,6 +1207,8 @@ FEATURES = (
     ("rotated-color-adjustment", rotated_color_adjustment, (128,)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
+    ("invalid-modes", invalid_modes, (128,)),
+    ("color-adjustment-combos", color_adjustment_combos, (128,)),
     *((f"state-{name}", state_record(*records), (128,)) for name, records in STATE_RECORDS.items()),
 )
 SCALE_NAMES = {128: "unit", 51: "up-2-5"}
