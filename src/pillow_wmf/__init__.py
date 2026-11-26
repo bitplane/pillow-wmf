@@ -10,6 +10,7 @@ from .objects import (
     PaletteEntries,
     PaletteUpdate,
     RegionGeometry,
+    UnicodeText,
 )
 from .playback import Omission, PlaybackError
 from .plugin import register as _register
@@ -37,6 +38,7 @@ __all__ = [
     "PaletteEntries",
     "PaletteUpdate",
     "RegionGeometry",
+    "UnicodeText",
     "FontCollection",
     "FontFace",
     "FontSubstitution",

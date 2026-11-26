@@ -16,6 +16,7 @@ from pillow_wmf.objects import (
     PaletteEntries,
     PaletteUpdate,
     RegionGeometry,
+    UnicodeText,
 )
 
 DIB = bytes.fromhex("28000000 01000000 01000000 0100 1800 00000000 04000000 00000000 00000000 00000000 00000000")
@@ -468,12 +469,13 @@ def test_offsets_outside_the_record_are_reported():
 
 
 def test_text():
+    # ETO_NO_RECT does not remove the rectangle: playback reads the fixed layout.
     narrow = text.ExtTextOutA(
-        (0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 2, 60, 0x0100, None, 64, b"ab\0\0" + struct.pack("<2i", 5, 6)
+        (0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 2, 76, 0x0100, (0, 0, 0, 0), 80, b"ab\0\0" + struct.pack("<2i", 5, 6)
     )
     opaque = text.ExtTextOutA((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 1, 76, 2, (1, 2, 3, 4), 80, b"a\0\0\0" + bytes(4))
     glyphs = text.ExtTextOutW((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 2, 76, 0x10, (1, 2, 3, 4), 0, struct.pack("<2H", 7, 8))
-    unicode = text.ExtTextOutW((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, "é\0".encode("utf-16-le"))
+    unicode = text.ExtTextOutW((0, 0, 0, 0), 2, 0.0, 0.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, "é\0".encode("utf-16-le"))
     advanced = text.ExtTextOutA((0, 0, 0, 0), 2, 1.0, 1.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, b"a\0\0\0")
     calls, omissions = run([narrow, opaque, glyphs, unicode, advanced])
     # GM_COMPATIBLE records are bracketed by their font transform scales.
@@ -489,9 +491,35 @@ def test_text():
         mark,
         Call.make("ext_text_out", x=3, y=4, text=GlyphIndices((7, 8)), options=0x10, rectangle=None, advances=()),
         clear,
+        Call.make("ext_text_out", x=3, y=4, text=UnicodeText("é"), options=0, rectangle=None, advances=()),
         Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"a"), options=0, rectangle=None, advances=()),
     ]
-    assert [o.reason for o in omissions] == ["Unicode text is not yet supported"]
+    assert not omissions
+
+
+def test_poly_and_small_text():
+    entries = (
+        text.EmrText(1, 2, 2, 120, 0x100, (0, 0, 0, 0), 124),
+        text.EmrText(5, 6, 0, 0, 2, (1, 2, 3, 4), 0),
+    )
+    poly = text.PolyTextOutW((0, 0, 0, 0), 2, 0.0, 0.0, entries, "hi".encode("utf-16-le") + struct.pack("<2i", 7, 8))
+    small = text.SmallTextOut(1, 2, 0x302, 2, 0.0, 0.0, None, b"\xe9a")
+    wide = text.SmallTextOut(1, 2, 2, 2, 0.0, 0.0, (1, 2, 3, 4), "x".encode("utf-16-le"))
+    calls, omissions = run([poly, small, wide])
+    assert calls == [
+        Call.make("ext_text_out", x=1, y=2, text=UnicodeText("hi"), options=0, rectangle=None, advances=(7, 8)),
+        Call.make("ext_text_out", x=5, y=6, text=UnicodeText(""), options=2, rectangle=(1, 2, 3, 4), advances=()),
+        # 8-bit characters widen to code units; without a rectangle nothing is opaque.
+        Call.make("ext_text_out", x=1, y=2, text=UnicodeText("\xe9a"), options=2, rectangle=None, advances=()),
+        Call.make("ext_text_out", x=1, y=2, text=UnicodeText("x"), options=2, rectangle=(1, 2, 3, 4), advances=()),
+    ]
+    assert not omissions
+
+
+def test_short_text_record_stops_playback():
+    short = text.ExtTextOutA((0, 0, 0, 0), 2, 0.0, 0.0, 3, 4, 3, 56, 0x0100, None, None, b"abc\0")
+    calls, omissions = run([short, fixed.MoveToEx(1, 2)])
+    assert calls == [] and not omissions
 
 
 def test_clip_regions_are_combined_from_device_rectangles():

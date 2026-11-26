@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from ._values import freeze
 from .constants import ETO_GLYPH_INDEX, ETO_PDY
-from .objects import EncodedText, GlyphIndices
+from .objects import EncodedText, GlyphIndices, UnicodeText
 
 if TYPE_CHECKING:
     from .objects import BitmapData, FontRequest, PaletteEntries, PaletteUpdate, RegionGeometry
@@ -55,14 +55,16 @@ class Call:
                 else:
                     text = EncodedText(text)
                 arguments["text"] = text
+            elif isinstance(text, str):
+                text = arguments["text"] = UnicodeText(text)
             if isinstance(text, GlyphIndices):
                 if name != "ext_text_out":
                     raise InvalidOperation("Glyph indices require ext_text_out")
                 arguments["options"] = arguments.get("options", 0) | ETO_GLYPH_INDEX
-            elif not isinstance(text, EncodedText):
-                raise TypeError("Text must be EncodedText or GlyphIndices")
+            elif not isinstance(text, (EncodedText, UnicodeText)):
+                raise TypeError("Text must be EncodedText, UnicodeText or GlyphIndices")
             elif arguments.get("options", 0) & ETO_GLYPH_INDEX:
-                raise InvalidOperation("EncodedText cannot be used with ETO_GLYPH_INDEX; use GlyphIndices")
+                raise InvalidOperation("Character text cannot be used with ETO_GLYPH_INDEX; use GlyphIndices")
         return cls(name, tuple(sorted((name, freeze(value)) for name, value in arguments.items())))
 
     @property
@@ -528,14 +530,14 @@ class GDI:
     def poly_polygon(self, polygons: tuple[tuple[tuple[int, int], ...], ...]) -> None:
         return self.invoke(Call.make("poly_polygon", polygons=polygons))
 
-    def text_out(self, x: int, y: int, text: EncodedText | bytes) -> None:
+    def text_out(self, x: int, y: int, text: EncodedText | UnicodeText | str | bytes) -> None:
         return self.invoke(Call.make("text_out", x=x, y=y, text=text))
 
     def ext_text_out(
         self,
         x: int,
         y: int,
-        text: EncodedText | GlyphIndices | bytes,
+        text: EncodedText | UnicodeText | GlyphIndices | str | bytes,
         options: int = 0,
         rectangle: tuple[int, int, int, int] | None = None,
         advances: tuple[int, ...] = (),

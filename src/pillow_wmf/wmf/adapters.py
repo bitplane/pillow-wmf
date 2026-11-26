@@ -3,7 +3,7 @@
 from ..clip import RegionMask
 from ..constants import ETO_PDY
 from ..gdi import UnsupportedOperation
-from ..objects import EncodedFaceName, EncodedText, GlyphIndices
+from ..objects import EncodedFaceName, EncodedText, GlyphIndices, UnicodeText
 from .objects import Font, Palette, Region, Scan
 
 
@@ -50,6 +50,12 @@ def wire_arguments(name, arguments):
         text = arguments["text"]
         if isinstance(text, EncodedText):
             arguments["text"] = text.data
+        elif isinstance(text, UnicodeText):
+            # WMF text is ANSI; ASCII is independent of the playback code page.
+            try:
+                arguments["text"] = text.text.encode("ascii")
+            except UnicodeEncodeError as error:
+                raise UnsupportedOperation("WMF text export of non-ASCII Unicode text needs encoded bytes") from error
         elif isinstance(text, GlyphIndices):
             arguments["text"] = b"".join(index.to_bytes(2, "little") for index in text.indices)
             advances = arguments.get("advances", ())

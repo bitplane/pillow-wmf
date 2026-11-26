@@ -1086,7 +1086,7 @@ TEXT_SCALES = (100 * 271 / 1024, 100 * 203 / 768)
 def text_font(d, height, **fields):
     """Select the controlled layout font."""
     face = TEXT_FACE.encode("utf-16-le").ljust(64, b"\0")
-    font = LogFont(height=height, weight=400, quality=3, face_name=face, **fields)
+    font = LogFont(height=height, quality=3, face_name=face, **{"weight": 400} | fields)
     return d.select(
         lambda slot: variable.ExtCreateFontIndirectW(slot, font, bytes(256) + struct.pack("<II", 0x08007664, 0))
     )
@@ -1150,6 +1150,98 @@ def text_modes(d):
     d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
 
 
+def ext_text_w(d, x, y, string, *, options=0, rectangle=None, advances=(), mode=1, scales=TEXT_SCALES):
+    """An EMR_EXTTEXTOUTW record with its fixed rectangle field."""
+    rectangle = rectangle if rectangle is not None else (0, 0, -1, -1)
+    data = string.encode("utf-16-le")
+    start = 8 + 52 + 16
+    padded = data + bytes(-len(data) % 4)
+    dx_offset = start + len(padded) if advances else 0
+    blob = padded + b"".join(struct.pack("<i", value) for value in advances)
+    chars = len(data) // 2
+    return text.ExtTextOutW((0, 0, -1, -1), mode, *scales, x, y, chars, start, options, rectangle, dx_offset, blob)
+
+
+def poly_text(cls, entries, *, mode=1, scales=TEXT_SCALES, unit=2):
+    """A PolyTextOut record; each entry is (x, y, data, options, rectangle, advances or None for offset 0).
+
+    Playback always reads an entry's advances.
+    """
+    cursor = 8 + 32 + 40 * len(entries)
+    blob = b""
+    texts = []
+    for x, y, data, options, rectangle, advances in entries:
+        string_offset = cursor + len(blob) if data else 0
+        blob += data + bytes(-len(data) % 4)
+        dx_offset = 0
+        if advances is not None:
+            dx_offset = cursor + len(blob)
+            blob += b"".join(struct.pack("<i", value) for value in advances)
+        texts.append(text.EmrText(x, y, len(data) // unit, string_offset, options, rectangle, dx_offset))
+    return cls((0, 0, -1, -1), mode, *scales, tuple(texts), blob)
+
+
+def text_records(d):
+    """Unicode ExtTextOutW, PolyTextOutA/W and SmallTextOut with the controlled encoding font."""
+    face = "Pillow WMF Encoding".encode("utf-16-le").ljust(64, b"\0")
+    font = LogFont(height=-d.u(12), weight=400, quality=3, face_name=face)
+    d.select(lambda slot: variable.ExtCreateFontIndirectW(slot, font, bytes(256) + struct.pack("<II", 0x08007664, 0)))
+    d.add(fixed.SetTextColor(0x802000), fixed.SetBkColor(0xC0E0F0), fixed.SetBkMode(1))
+    word = "A\u00e9\u20ac\u0416B"
+    d.add(ext_text_w(d, d.u(4), d.u(4), word))
+    d.add(ext_text_w(d, d.u(64), d.u(4), word, advances=tuple(d.u(v) for v in (12, 6, 14, 9, 10))))
+    d.add(ext_text_w(d, d.u(4), d.u(20), word, mode=2, scales=(0.0, 0.0)))
+    # ETO_NO_RECT leaves the fixed layout, rectangle included, in place.
+    narrow = ext_text_a(d, d.u(64), d.u(20), b"A\xe9B", options=0x100, advances=tuple(d.u(v) for v in (9, 13, 9)))
+    d.add(narrow)
+    w = lambda value: value.encode("utf-16-le")  # noqa: E731
+    d.add(fixed.SetBkMode(2))
+    d.add(
+        poly_text(
+            text.PolyTextOutW,
+            (
+                (d.u(4), d.u(36), w("B\u0416A"), 0, (0, 0, -1, -1), tuple(d.u(v) for v in (8, 12, 8))),
+                (d.u(40), d.u(36), w("\u20acA"), 0x02, d.rect(38, 36, 60, 50), tuple(d.u(v) for v in (14, 9))),
+                (d.u(64), d.u(36), b"", 0x02, d.rect(64, 38, 72, 46), ()),
+            ),
+        )
+    )
+    d.add(fixed.SetBkMode(1))
+    d.add(
+        poly_text(
+            text.PolyTextOutA,
+            (
+                (d.u(80), d.u(36), b"\xe9A", 0x100, (0, 0, -1, -1), (d.u(8), d.u(8))),
+                (d.u(100), d.u(36), b"BA", 0, (0, 0, -1, -1), (d.u(9), d.u(9))),
+            ),
+            unit=1,
+        )
+    )
+    # Small records widen 8-bit characters to UTF-16 code units.
+    small = text.SmallTextOut
+    d.add(small(d.u(4), d.u(54), 0x300, 1, *TEXT_SCALES, None, b"A\xe9B", None))
+    d.add(fixed.SetBkMode(2))
+    d.add(small(d.u(40), d.u(54), 0x002, 1, *TEXT_SCALES, d.rect(40, 54, 70, 68), w("\u0416\u20ac")))
+    d.add(fixed.SetBkMode(1))
+    d.add(small(d.u(80), d.u(54), 0x100, 2, 0.0, 0.0, None, w("BA\u00e9")))
+    # Current-position output: ExtTextOutW, then PolyTextOutW.
+    d.add(fixed.SetTextAlign(1), fixed.MoveToEx(d.u(4), d.u(72)))
+    d.add(ext_text_w(d, 0, 0, "AB"))
+    d.add(
+        poly_text(
+            text.PolyTextOutW,
+            (
+                (0, 0, w("BA"), 0, (0, 0, -1, -1), (d.u(9), d.u(9))),
+                (d.u(90), d.u(90), w("A"), 0, (0, 0, -1, -1), (d.u(9),)),
+            ),
+        )
+    )
+    d.add(ext_text_w(d, 0, 0, "\u0416"))
+    d.add(fixed.SetTextAlign(0))
+    # A zero advance offset addresses the record's own header.
+    d.add(poly_text(text.PolyTextOutW, ((d.u(4), d.u(88), w("AB"), 0, (0, 0, -1, -1), None),)))
+
+
 def text_transforms(d):
     """Controlled-font text under non-uniform, mirrored and rotating world transforms, in both record modes."""
     d.add(fixed.SetTextColor(0x802000), fixed.SetBkMode(1))
@@ -1167,6 +1259,43 @@ def text_transforms(d):
             x = 6 + 31 * column + (24 if matrix[0] < 0 else 0)
             d.add(fixed.SetWorldTransform(*matrix, float(d.u(x)), float(d.u(6 + 31 * row))))
             d.add(ext_text_a(d, 0, 0, b"AB A", mode=mode, scales=scales))
+            d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+
+
+def text_transform_styles(d):
+    """Opaque, decorated, current-position, paired-advance and synthetic text under rotation, shear and mirroring."""
+    d.add(fixed.SetTextColor(0x802000), fixed.SetBkColor(0xC0E0F0))
+    transforms = ((0.9, 0.4, -0.4, 0.9), (1.0, 0.0, 0.45, 1.0), (-1.0, 0.0, 0.0, 1.0))
+    rows = (
+        ("opaque", {}, 1),
+        ("decorated", {"underline": 1, "strikeout": 1}, 1),
+        ("current-position", {}, 1),
+        ("paired", {}, 1),
+        ("synthetic", {"weight": 700, "italic": 1}, 1),
+        ("escapement", {"escapement": 300}, 2),
+        ("default-height", {}, 1),
+    )
+    for column, matrix in enumerate(transforms):
+        for row, (kind, fields, mode) in enumerate(rows):
+            scales = TEXT_SCALES if mode == 1 else (0.0, 0.0)
+            height = 0 if kind == "default-height" else -d.u(8)
+            text_font(d, height, **fields)
+            x = 6 + 42 * column + (30 if matrix[0] < 0 else 0)
+            d.add(fixed.SetWorldTransform(*matrix, float(d.u(x)), float(d.u(4 + 17 * row))))
+            if kind == "opaque":
+                d.add(fixed.SetBkMode(2))
+                d.add(ext_text_a(d, 0, 0, b"AB A", mode=mode, scales=scales))
+                d.add(fixed.SetBkMode(1))
+            elif kind == "current-position":
+                d.add(fixed.SetTextAlign(1), fixed.MoveToEx(0, 0))
+                d.add(ext_text_a(d, 0, 0, b"AB", mode=mode, scales=scales))
+                d.add(ext_text_a(d, 0, 0, b"BA", mode=mode, scales=scales))
+                d.add(fixed.SetTextAlign(0))
+            elif kind == "paired":
+                pairs = tuple(d.u(v) for v in (7, 2, 9, -3, 6, 4))
+                d.add(ext_text_a(d, 0, 0, b"ABA", options=0x2000, advances=pairs, mode=mode, scales=scales))
+            else:
+                d.add(ext_text_a(d, 0, 0, b"AB A", mode=mode, scales=scales))
             d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
 
 
@@ -1438,6 +1567,8 @@ FEATURES = (
     ("dashed-curves", dashed_curves, (128, 51)),
     ("text-modes", text_modes, (128, 51)),
     ("text-transforms", text_transforms, (128, 51)),
+    ("text-records", text_records, (128, 51)),
+    ("text-transform-styles", text_transform_styles, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),

@@ -85,6 +85,15 @@ class OffsetRecord(FixedRecord):
             raise FormatError(f"{self.kind.name} data lies outside the record")
         return self.data[start : start + size]
 
+    def record_bytes(self, offset: int, size: int) -> bytes:
+        """Bytes addressed from the record start, envelope and fields included, as playback reads them."""
+        if offset >= self.data_offset():
+            return self.blob(offset, size)
+        whole = self.to_bytes()
+        if offset + size > len(whole):
+            raise FormatError(f"{self.kind.name} data lies outside the record")
+        return whole[offset : offset + size]
+
     @classmethod
     def read(cls, reader: Reader, limits: Limits):
         values = reader.unpack(cls.wire_layout)

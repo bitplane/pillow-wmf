@@ -64,12 +64,12 @@ def test_rectangle_records_reserve_a_triangle_sized_mesh():
     assert variable.GradientFill(record.bounds, 0, record.vertices, record.shapes).body() == NATIVE_TWO_RECTANGLES
 
 
-def test_rectangle_records_without_the_reservation_are_omitted():
+def test_rectangle_records_without_the_reservation_stop_playback():
+    from pillow_wmf.emf import fixed
     from pillow_wmf.emf.player import play
 
     short = variable.GradientFill((0, 0, 9, 9), 0, ((0, 0, 0, 0, 0, 0), (9, 9, 0, 0, 0, 0)), ((0, 1),), b"")
-    metafile = Metafile.build([short], frame=(0, 0, 1000, 1000))
-    omissions = play(metafile, RasterContext(10, 10, trace_calls=False), strict=False, rect=(0, 0, 10, 10))
-    assert [omission.reason for omission in omissions] == [
-        "Rectangle gradients without reserved mesh space stop native playback"
-    ]
+    metafile = Metafile.build([short, fixed.Rectangle(0, 0, 9, 9)], frame=(0, 0, 1000, 1000))
+    context = RasterContext(10, 10, trace_calls=False)
+    assert not play(metafile, context, strict=False, rect=(0, 0, 10, 10))
+    assert context.image.getextrema() == ((255, 255),) * 3

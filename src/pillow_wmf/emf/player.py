@@ -29,7 +29,16 @@ from ..dib_rle import truncate_rle
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
-from ..objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, PaletteUpdate, RegionGeometry
+from ..objects import (
+    BitmapData,
+    EncodedText,
+    FontRequest,
+    GlyphIndices,
+    PaletteEntries,
+    PaletteUpdate,
+    RegionGeometry,
+    UnicodeText,
+)
 from ..palette import DEFAULT_COLORS
 from ..playback import Omission as Omission
 from ..playback import Omissions, PlaybackError, SaveLevels
@@ -48,6 +57,7 @@ DIB_PAL_COLORS = 1
 SRCCOPY = 0x00CC0020
 GM_COMPATIBLE = 1
 ETO_NO_RECT = text.ETO_NO_RECT
+ETO_PDY = text.ETO_PDY
 EMFPLUS_HEADER = 0x4001
 EMFPLUS_DUAL = 0x0001
 RGN_COPY = 5
@@ -214,7 +224,7 @@ def _transparent_blt(record):
 
 def _gradient_fill(record):
     if record.padding is not None and len(record.padding) != record.reserved:
-        raise Unsupported("Rectangle gradients without reserved mesh space stop native playback")
+        raise Stop("Rectangle gradients without reserved mesh space fail native record validation")
     return "gradient_fill", {"mode": record.mode, "vertices": record.vertices, "meshes": record.shapes}
 
 
@@ -455,27 +465,81 @@ def _ext_create_pen(record):
 
 
 # Text records carrying a graphics mode and font transform scales.
-TEXT_RECORDS = (text.ExtTextOutA, text.ExtTextOutW)
+TEXT_RECORDS = (text.ExtTextOutA, text.ExtTextOutW, text.PolyTextOutA, text.PolyTextOutW, text.SmallTextOut)
+
+
+class Stop(Exception):
+    """Native playback rejects the record and plays nothing after it."""
+
+
+def _text_arguments(x, y, value, options, rectangle, advances):
+    # Playback passes ETO_NO_RECT through; GDI ignores it.
+    options &= ~ETO_NO_RECT
+    return {
+        "x": x,
+        "y": y,
+        "text": value,
+        "options": options,
+        "rectangle": rectangle if options & (ETO_OPAQUE | ETO_CLIPPED) else None,
+        "advances": advances,
+    }
 
 
 def _ext_text_out(record):
-    options = record.options & ~ETO_NO_RECT
+    if not record.playable():
+        raise Stop(f"{record_name(record_type(record))} fails native record validation")
+    options = record.options
+    advances = record.advances
     if isinstance(record, text.ExtTextOutW):
-        if not options & ETO_GLYPH_INDEX:
-            raise Unsupported("Unicode text is not yet supported")
         data = record.text
-        value = GlyphIndices(struct.unpack(f"<{len(data) // 2}H", data))
+        if options & ETO_GLYPH_INDEX:
+            value = GlyphIndices(struct.unpack(f"<{len(data) // 2}H", data))
+        else:
+            value = UnicodeText.from_utf16(data)
+    elif options & ETO_GLYPH_INDEX:
+        # ExtTextOutA reads WORD glyph indices, as many as the record holds.
+        size = len(record.to_bytes())
+        count = min(record.chars, max(0, size - record.string_offset) // 2)
+        data = record.record_bytes(record.string_offset, 2 * count)
+        value = GlyphIndices(struct.unpack(f"<{count}H", data))
+        advances = advances[: count * (2 if options & ETO_PDY else 1)]
     else:
         value = EncodedText(record.text)
-    rectangle = record.rectangle if options & (ETO_OPAQUE | ETO_CLIPPED) else None
-    return "ext_text_out", {
-        "x": record.x,
-        "y": record.y,
-        "text": value,
-        "options": options,
-        "rectangle": rectangle,
-        "advances": record.advances,
-    }
+    return "ext_text_out", _text_arguments(record.x, record.y, value, options, record.rectangle, advances)
+
+
+def _poly_text_out(record):
+    """PolyTextOut draws each entry as ExtTextOut, always with its advances."""
+    if not record.playable():
+        raise Stop(f"{record_name(record_type(record))} fails native record validation")
+    calls = []
+    for index, entry in enumerate(record.texts):
+        data = record.text(index) if entry.chars else b""
+        if isinstance(record, text.PolyTextOutW):
+            if entry.options & ETO_GLYPH_INDEX:
+                value = GlyphIndices(struct.unpack(f"<{len(data) // 2}H", data))
+            else:
+                value = UnicodeText.from_utf16(data)
+        elif entry.options & ETO_GLYPH_INDEX:
+            value = GlyphIndices(tuple(data))
+        else:
+            value = EncodedText(data)
+        advances = record.advances(index) if entry.chars else ()
+        calls.append(_text_arguments(entry.x, entry.y, value, entry.options, entry.rectangle, advances))
+    return "poly_text_out", calls
+
+
+def _small_text_out(record):
+    """8-bit SmallTextOut characters widen to UTF-16 code units, not through a code page."""
+    expected = -len(record.text) % 4
+    if record.trailing or (record.padding is not None and len(record.padding) != expected):
+        raise Stop("SMALLTEXTOUT fails native record validation")
+    if record.options & text.SMALLTEXT_TYPE_ANSI:
+        value = UnicodeText("".join(chr(byte) for byte in record.text))
+    else:
+        value = UnicodeText.from_utf16(record.text)
+    options = record.options & ~(ETO_NO_RECT | text.SMALLTEXT_TYPE_ANSI)
+    return "ext_text_out", _text_arguments(record.x, record.y, value, options, record.bounds, ())
 
 
 def _direct(name, *fields, **renamed):
@@ -575,6 +639,9 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.ExtCreatePen: _ext_create_pen,
     text.ExtTextOutA: _ext_text_out,
     text.ExtTextOutW: _ext_text_out,
+    text.PolyTextOutA: _poly_text_out,
+    text.PolyTextOutW: _poly_text_out,
+    text.SmallTextOut: _small_text_out,
 }
 
 
@@ -974,6 +1041,8 @@ def play(
             if translate is None:
                 raise Unsupported(f"{record_name(kind)} is not yet supported")
             name, arguments = translate(record)
+        except Stop:
+            break
         except (Unsupported, FormatError) as reason:
             # FormatError: offset-addressed data lies outside the record.
             if creation:
@@ -987,7 +1056,12 @@ def play(
             # Native playback sizes a GM_COMPATIBLE record's font by the
             # scales it was recorded with, then clears them.
             invoke(index, kind, "set_font_xform", {"x_scale": record.ex_scale, "y_scale": record.ey_scale})
-        ok, result = invoke(index, kind, name, arguments)
+        if name == "poly_text_out":
+            ok, result = True, None
+            for call in arguments:
+                invoke(index, kind, "ext_text_out", call)
+        else:
+            ok, result = invoke(index, kind, name, arguments)
         if font_xform:
             invoke(index, kind, "set_font_xform", {"x_scale": None, "y_scale": None})
         if creation:

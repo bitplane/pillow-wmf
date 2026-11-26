@@ -179,8 +179,8 @@ the codec and reference columns against the code and fixtures.
 | `SETDIBITSTODEVICE` | typed | full | yes | Scaled with the playback transform, partial and compressed bands included. |
 | `STRETCHDIBITS` | typed | full | yes |  |
 | `EXTCREATEFONTINDIRECTW` | typed | full | yes | Faces outside the supplied fonts are font-limited. |
-| `EXTTEXTOUTA` | typed | partial | yes | Refused under rotating or shearing transforms. |
-| `EXTTEXTOUTW` | typed | partial | no | Glyph indices only; refused under rotating or shearing transforms. |
+| `EXTTEXTOUTA` | typed | partial | yes | The rectangle field is always read, as natively, whatever `ETO_NO_RECT` says. |
+| `EXTTEXTOUTW` | typed | partial | yes | Unicode text or glyph indices; the rectangle field is always read. |
 | `POLYBEZIER16` | typed | full | yes |  |
 | `POLYGON16` | typed | full | yes |  |
 | `POLYLINE16` | typed | full | yes |  |
@@ -192,8 +192,8 @@ the codec and reference columns against the code and fixtures.
 | `CREATEMONOBRUSH` | typed | full | yes | Colours come from the text and background colours. |
 | `CREATEDIBPATTERNBRUSHPT` | typed | full | yes |  |
 | `EXTCREATEPEN` | typed | full | yes | Cosmetic, alternate and user-styled pens; geometric pens with any cap, join, dash, hatch or DIB pattern. |
-| `POLYTEXTOUTA` | typed | no | no |  |
-| `POLYTEXTOUTW` | typed | no | no |  |
+| `POLYTEXTOUTA` | typed | partial | yes | Each entry plays as ExtTextOut, always with its rectangle and advances. |
+| `POLYTEXTOUTW` | typed | partial | yes | Each entry plays as ExtTextOut, always with its rectangle and advances. |
 | `SETICMMODE` | typed | full | yes | No effect on a bitmap DC. |
 | `CREATECOLORSPACE` | typed | full | yes | No effect on a bitmap DC. |
 | `SETCOLORSPACE` | typed | full | yes | No effect on a bitmap DC. |
@@ -203,7 +203,7 @@ the codec and reference columns against the code and fixtures.
 | `PIXELFORMAT` | typed | full | yes | No effect on a bitmap DC. |
 | `DRAWESCAPE` | typed | full | yes | No effect on a bitmap DC. |
 | `EXTESCAPE` | typed | full | yes | No effect on a bitmap DC. |
-| `SMALLTEXTOUT` | typed | no | no |  |
+| `SMALLTEXTOUT` | typed | partial | yes | 8-bit characters widen to UTF-16 code units without a code page. |
 | `FORCEUFIMAPPING` | typed | full | yes | No effect on shapes; font-limited. |
 | `NAMEDESCAPE` | typed | full | yes | No effect on a bitmap DC. |
 | `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
@@ -212,7 +212,7 @@ the codec and reference columns against the code and fixtures.
 | `ALPHABLEND` | typed | full | yes | Constant and per-pixel alpha with nearest sampling. |
 | `SETLAYOUT` | typed | full | yes | Mirrors the playback transform about the reference device width; the DC layout is unchanged. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
-| `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; playback refuses them without it. |
+| `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; without it native playback stops. |
 | `SETLINKEDUFIS` | typed | full | yes | No effect on shapes; font-limited. |
 | `SETTEXTJUSTIFICATION` | typed | full | no | Text is font-limited. |
 | `COLORMATCHTOTARGETW` | typed | full | yes | `CS_ENABLE` without a profile name stops playback; otherwise no effect on a bitmap DC. |

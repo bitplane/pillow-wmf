@@ -150,7 +150,7 @@ def test_encoded_text_keeps_bytes_for_selected_font_decoding():
 
 def test_explicit_text_payload_rejects_conflicting_encoding_flags():
     trace = TraceContext()
-    with pytest.raises(InvalidOperation, match="EncodedText"):
+    with pytest.raises(InvalidOperation, match="Character text"):
         trace.ext_text_out(0, 0, EncodedText(b"A"), ETO_GLYPH_INDEX)
     with pytest.raises(InvalidOperation, match="ext_text_out"):
         trace.text_out(0, 0, GlyphIndices((1,)))

@@ -14,9 +14,12 @@ ETO_PDY = 0x2000
 
 @dataclass(frozen=True)
 class ExtTextOutRecord(OffsetRecord):
-    """Text and advances addressed by offset; the rectangle is optional.
+    """Text and advances addressed by offset.
 
-    ``rectangle`` is None exactly when ETO_NO_RECT is set in ``options``.
+    Playback always reads the fixed layout with the rectangle present, whatever
+    ETO_NO_RECT says (MS-EMF describes the rectangle as optional). ``rectangle``
+    and ``dx_offset`` are None only for a record too short to hold them, which
+    native playback rejects.
     """
 
     bounds: tuple[int, int, int, int]
@@ -29,16 +32,19 @@ class ExtTextOutRecord(OffsetRecord):
     string_offset: int
     options: int
     rectangle: tuple[int, int, int, int] | None
-    dx_offset: int
+    dx_offset: int | None
     data: bytes = b""
     code_unit: ClassVar[int]
 
+    # The fixed record: envelope, header fields, rectangle and advance offset.
+    FIXED_SIZE: ClassVar[int] = ENVELOPE_SIZE + 68
+
     def data_offset(self) -> int:
-        return ENVELOPE_SIZE + 52 + (16 if self.rectangle is not None else 0)
+        return self.FIXED_SIZE if self.rectangle is not None else ENVELOPE_SIZE + 48
 
     def payload(self) -> bytes:
-        if (self.rectangle is None) != bool(self.options & ETO_NO_RECT):
-            raise ValueError("Text rectangle is required unless ETO_NO_RECT is set")
+        if (self.rectangle is None) != (self.dx_offset is None):
+            raise ValueError("The text rectangle and advance offset are present together")
         result = pack(
             "4iIffiiIII",
             *self.bounds,
@@ -52,13 +58,13 @@ class ExtTextOutRecord(OffsetRecord):
             self.options,
         )
         if self.rectangle is not None:
-            result += pack("4i", *self.rectangle)
-        return result + pack("I", self.dx_offset) + self.data
+            result += pack("4iI", *self.rectangle, self.dx_offset)
+        return result + self.data
 
     @property
     def text(self) -> bytes:
         """The undecoded string: bytes for ExtTextOutA, UTF-16LE for ExtTextOutW."""
-        return self.blob(self.string_offset, self.chars * self.code_unit)
+        return self.record_bytes(self.string_offset, self.chars * self.code_unit)
 
     @property
     def advances(self) -> tuple[int, ...]:
@@ -66,15 +72,33 @@ class ExtTextOutRecord(OffsetRecord):
         count = self.chars * (2 if self.options & ETO_PDY else 1)
         if not self.dx_offset:
             return ()
-        return struct.unpack(f"<{count}i", self.blob(self.dx_offset, 4 * count))
+        return struct.unpack(f"<{count}i", self.record_bytes(self.dx_offset, 4 * count))
+
+    def playable(self) -> bool:
+        """Whether native playback accepts the record's size and offsets."""
+        if self.rectangle is None:
+            return False
+        size = ENVELOPE_SIZE + len(self.payload())
+        unit = self.code_unit
+        advance = (2 if self.options & ETO_PDY else 1) * 4 if self.dx_offset else 0
+        if (unit + advance) * self.chars + 0x4F & ~3 > size:
+            return False
+        if not self.chars:
+            return True
+        try:
+            return self.text is not None and self.advances is not None
+        except FormatError:
+            return False
 
     @classmethod
     def read(cls, reader: Reader, limits: Limits):
         *bounds, mode, ex_scale, ey_scale, x, y, chars, string_offset, options = reader.unpack("4iIffiiIII")
         if chars > limits.max_points:
             raise FormatError("Character count limit exceeded")
-        rectangle = None if options & ETO_NO_RECT else reader.unpack("4i")
-        dx_offset = reader.unpack("I")[0]
+        rectangle = dx_offset = None
+        if reader.remaining >= 20:
+            *rectangle, dx_offset = reader.unpack("4iI")
+            rectangle = tuple(rectangle)
         return cls(
             tuple(bounds),
             mode,
@@ -107,29 +131,30 @@ class ExtTextOutW(ExtTextOutRecord):
 
 @dataclass(frozen=True)
 class EmrText:
-    """One string of a PolyTextOut record; offsets address the record's data."""
+    """One string of a PolyTextOut record; offsets address the record's data.
+
+    Like ExtTextOut, each entry always carries its rectangle.
+    """
 
     x: int
     y: int
     chars: int
     string_offset: int
     options: int
-    rectangle: tuple[int, int, int, int] | None
+    rectangle: tuple[int, int, int, int]
     dx_offset: int
 
+    SIZE: ClassVar[int] = 40
+
     def to_bytes(self) -> bytes:
-        if (self.rectangle is None) != bool(self.options & ETO_NO_RECT):
-            raise ValueError("Text rectangle is required unless ETO_NO_RECT is set")
-        result = pack("iiIII", self.x, self.y, self.chars, self.string_offset, self.options)
-        if self.rectangle is not None:
-            result += pack("4i", *self.rectangle)
-        return result + pack("I", self.dx_offset)
+        return pack(
+            "iiIII4iI", self.x, self.y, self.chars, self.string_offset, self.options, *self.rectangle, self.dx_offset
+        )
 
     @classmethod
     def read(cls, reader: Reader) -> "EmrText":
-        x, y, chars, string_offset, options = reader.unpack("iiIII")
-        rectangle = None if options & ETO_NO_RECT else reader.unpack("4i")
-        return cls(x, y, chars, string_offset, options, rectangle, reader.unpack("I")[0])
+        x, y, chars, string_offset, options, *rectangle, dx_offset = reader.unpack("iiIII4iI")
+        return cls(x, y, chars, string_offset, options, tuple(rectangle), dx_offset)
 
 
 @dataclass(frozen=True)
@@ -143,7 +168,7 @@ class PolyTextOutRecord(OffsetRecord):
     code_unit: ClassVar[int]
 
     def data_offset(self) -> int:
-        return ENVELOPE_SIZE + 32 + sum(len(text.to_bytes()) for text in self.texts)
+        return ENVELOPE_SIZE + 32 + EmrText.SIZE * len(self.texts)
 
     def payload(self) -> bytes:
         header = pack("4iIffI", *self.bounds, self.graphics_mode, self.ex_scale, self.ey_scale, len(self.texts))
@@ -151,17 +176,29 @@ class PolyTextOutRecord(OffsetRecord):
 
     def text(self, index: int) -> bytes:
         entry = self.texts[index]
-        return self.blob(entry.string_offset, entry.chars * self.code_unit)
+        return self.record_bytes(entry.string_offset, entry.chars * self.code_unit)
 
     def advances(self, index: int) -> tuple[int, ...]:
+        """Playback always reads advances; a zero offset addresses the record header."""
         entry = self.texts[index]
         count = entry.chars * (2 if entry.options & ETO_PDY else 1)
-        return struct.unpack(f"<{count}i", self.blob(entry.dx_offset, 4 * count)) if entry.dx_offset else ()
+        return struct.unpack(f"<{count}i", self.record_bytes(entry.dx_offset, 4 * count))
+
+    def playable(self) -> bool:
+        """Whether native playback accepts every entry's string and advance extents."""
+        try:
+            for index, entry in enumerate(self.texts):
+                if entry.chars:
+                    self.text(index)
+                    self.advances(index)
+        except FormatError:
+            return False
+        return True
 
     @classmethod
     def read(cls, reader: Reader, limits: Limits):
         *bounds, mode, ex_scale, ey_scale, count = reader.unpack("4iIffI")
-        if count > limits.max_points or count > reader.remaining // 24:
+        if count > limits.max_points or count > reader.remaining // EmrText.SIZE:
             raise FormatError("Invalid string count")
         texts = tuple(EmrText.read(reader) for _ in range(count))
         return cls(tuple(bounds), mode, ex_scale, ey_scale, texts, reader.rest())

@@ -48,6 +48,7 @@ from .constants import (
     WHITEONBLACK,
     WINDING,
 )
+from .dbcs import DecodedText
 from .ellipse import (
     advanced_arc,
     advanced_ellipse_cubics,
@@ -65,7 +66,7 @@ from .gradient import mesh_triangles
 from .limits import DEFAULT_LIMITS
 from .mapping import IDENTITY_TRANSFORM, Mapping
 from .numeric import float32
-from .objects import FontRequest, GlyphIndices
+from .objects import EncodedText, FontRequest, GlyphIndices, UnicodeText
 from .paint import pattern_rop2
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
 from .raster_paint import RasterPainter
@@ -1767,7 +1768,14 @@ class RasterContext(ExecutionContext[DrawingState]):
             alignment ^= 2
         text = args["text"]
         glyph_indices = text.indices if isinstance(text, GlyphIndices) else None
-        data = text.data if glyph_indices is None else b""
+        unicode = text.text if isinstance(text, UnicodeText) else None
+        if unicode is not None and face.symbol:
+            # The symbol cmap places its glyphs at U+F020-U+F0FF; character
+            # codes below U+0100 reach them as ANSI bytes do.
+            unicode = "".join(chr(0xF000 | ord(c)) if ord(c) < 0x100 else c for c in unicode)
+        # Unicode text has one advance per code unit; stand-in bytes keep the
+        # layout's one-byte-per-character spans.
+        data = text.data if isinstance(text, EncodedText) else bytes(len(unicode or ""))
         advances = args.get("advances", ())
         vertical_advances = ()
         if options & ETO_PDY and not advances:
@@ -1776,7 +1784,10 @@ class RasterContext(ExecutionContext[DrawingState]):
         if options & ETO_PDY and advances:
             vertical_advances = advances[1::2]
             advances = advances[::2]
-        decoded = self.fonts.decode_run(request, face, data) if glyph_indices is None else None
+        if unicode is not None:
+            decoded = DecodedText.single_byte(unicode)
+        else:
+            decoded = self.fonts.decode_run(request, face, data) if glyph_indices is None else None
         characters = decoded.text if decoded is not None else None
         if self._general_text(request):
             layout = self._transformed_text(
