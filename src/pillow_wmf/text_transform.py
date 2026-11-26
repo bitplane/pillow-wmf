@@ -61,8 +61,6 @@ class TransformedFont:
     # ink by a pixel along the baseline and adds a pixel to each advance.
     oblique: bool = False
     embolden: bool = False
-    # Compatible-mode records advance by the unrounded design widths.
-    exact_advances: bool = False
     _frame: object = field(default=None, repr=False)
     _glyphs: dict = field(default_factory=dict, repr=False)
     _lock: Lock = field(default_factory=Lock, repr=False, compare=False)
@@ -180,9 +178,9 @@ class TransformedFont:
         """The glyph's device advance vector in 28.4 units scaled by 2^32.
 
         A scale-only transform scales the design width by its 16.16 pixels
-        per unit and rounds to whole pixels. Others round it to whole pixels
-        at the transformed x axis's pixels per em and lay it along that axis,
-        or, for a compatible-mode record, lay the unrounded width along it.
+        per unit and rounds to whole pixels; others round it to whole pixels
+        at the transformed x axis's pixels per em and lay it along that axis.
+        Runs place glyphs by logical extents instead; see ``RasterContext``.
         """
         a, b, c, d = self._device_matrix() if self.advance_matrix is None else self.advance_matrix
         units = self.design_advances.get(index, 0)
@@ -190,26 +188,12 @@ class TransformedFont:
             scale = Fraction(_round_half_away(abs(Fraction(a)) * 65536), 65536)
             pixels = _round_half_away(units * scale) + (1 if self.embolden and units else 0)
             return ((pixels if a >= 0 else -pixels) * 16 << 32, 0)
-        if not self.exact_advances:
-            # Whole pixels at the transformed x axis's whole pixels per em,
-            # rounded half up, laid along that axis.
-            length = sqrt(float(a) ** 2 + float(c) ** 2)
-            em = int(length * self.units_per_em + 0.5)
-            pixels = int(Fraction(units * em, self.units_per_em) + Fraction(1, 2)) + (
-                1 if self.embolden and units else 0
-            )
-            return tuple(
-                _round_half_away(Fraction(pixels * float(value) / length) * 16 * (1 << 32)) for value in (a, c)
-            )
-        # The design width times the 28.4 image of the notional x axis, in
-        # single precision, taken exactly into 32.32.
-        vector = tuple(int(float32(units * float32(16 * float32(value))) * (1 << 32)) for value in (a, c))
-        if self.embolden and units:
-            vector = tuple(
-                value + int(float32(16 * unit) * (1 << 32))
-                for value, unit in zip(vector, self.frame().base, strict=True)
-            )
-        return vector
+        # Whole pixels at the transformed x axis's whole pixels per em,
+        # rounded half up, laid along that axis.
+        length = sqrt(float(a) ** 2 + float(c) ** 2)
+        em = int(length * self.units_per_em + 0.5)
+        pixels = int(Fraction(units * em, self.units_per_em) + Fraction(1, 2)) + (1 if self.embolden and units else 0)
+        return tuple(_round_half_away(Fraction(pixels * float(value) / length) * 16 * (1 << 32)) for value in (a, c))
 
     def vertical(self, units: int) -> tuple[int, int]:
         """A notional vertical offset as a 28.4 device vector.
