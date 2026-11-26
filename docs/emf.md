@@ -152,8 +152,9 @@ Text records play through the font collection's faces:
   unit), before the remaining matrix. The strengths are 20 per mille of the
   pixels per em along the y column, plus one pixel horizontally; a
   one-pixel strength moves right-facing edges right. Once the vertical scale
-  alone gives a vertical strength, an unrotated outline is first scaled down
-  by that many pixels per em along both axes, leaving the shear terms
+  gives a vertical strength, the outline is first scaled down by that many
+  pixels per em: along x by the world's vertical scale, along y by the
+  vertical scale including the italic shear, leaving the cross terms
   whole. Horizontal monochrome text of an unhinted face takes the same
   TrueType scan rules and emboldening.
 - Stock fonts select their logical fonts (mostly raster faces, so

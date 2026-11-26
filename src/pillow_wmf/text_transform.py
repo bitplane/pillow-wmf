@@ -175,14 +175,18 @@ class TransformedFont:
             # strength keeps a minimum pixel, the vertical one does not.
             # The strength follows the unsheared y column's length in pixels.
             strength = (EMBOLDEN_PER_MILLE * _ppem(wb, wd, self.units_per_em) - 10) // 1000
-            # Once the vertical scale alone asks for a vertical strength, an
-            # unrotated outline is realized that many pixels smaller along
-            # both axes (the shear terms keep their full size).
-            em = _ppem(0, wd, self.units_per_em)
-            reduce = (EMBOLDEN_PER_MILLE * em - 10) // 1000
-            rx, ry = sx, sy
-            if reduce > 0 and not (wb and wc):
-                rx, ry = _q16(sx * Fraction(em - reduce, em)), _q16(sy * Fraction(em - reduce, em))
+            # Once the vertical scale asks for a vertical strength, the outline
+            # is realized that many pixels per em smaller: along x by the
+            # world's vertical scale, along y by the vertical scale with the
+            # italic shear (the cross terms keep their full size).
+
+            def reduced(scale, vertical):
+                em = _ppem(0, vertical, self.units_per_em)
+                pixels = (EMBOLDEN_PER_MILLE * em - 10) // 1000
+                return _q16(scale * Fraction(em - pixels, em)) if pixels > 0 else scale
+
+            rx = reduced(sx, wd)
+            ry = reduced(sy, Fraction(wd) + (OBLIQUE * Fraction(wc) if self.oblique else 0))
             stage = [
                 [(_round_half_away(64 * rx * u), _round_half_away(64 * ry * v), on) for (u, v), on in contour]
                 for contour in _raw_contours(outline)
