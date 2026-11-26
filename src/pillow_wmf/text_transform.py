@@ -173,7 +173,7 @@ class TransformedFont:
             strength = (EMBOLDEN_PER_MILLE * strength_ppem - 10) // 1000
             moved = embolden(stage, strength + 1, max(0, strength), grid_fitted=True)
             qa, qb, qc, qd = (
-                _round_half_away(Fraction(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
+                _round_half_away(_q16(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
             )
             flat = (
                 _flatten(
@@ -561,8 +561,9 @@ def _device_rule(a, b, c, d, u, v):
 
     A rotating or shearing matrix is applied in two stages: each axis first
     scales by the larger component of its matrix column, held in 16.16 per
-    notional unit, and rounds; the remaining matrix, in 16.16, then maps the
-    scaled point with each product rounded. A mirroring scale-only matrix
+    notional unit, and rounds; the remaining matrix (the driver's 16.16
+    matrix divided by those scales, rounded to 16.16) then maps the scaled
+    point with each product rounded. A mirroring scale-only matrix
     holds its x scale in 16.16; others round each product of the exact matrix.
     """
     if b or c:
@@ -570,7 +571,7 @@ def _device_rule(a, b, c, d, u, v):
         sy = _q16(max(abs(Fraction(b)), abs(Fraction(d))))
         x, y = _round_half_away(64 * sx * u), _round_half_away(64 * sy * v)
         qa, qb, qc, qd = (
-            _round_half_away(Fraction(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
+            _round_half_away(_q16(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
         )
         return (
             ((x * qa + 0x8000) >> 16) + ((y * qb + 0x8000) >> 16),

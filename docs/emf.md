@@ -632,6 +632,7 @@ source pixel. A mask bit of 1 copies the source pixel.
   ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
   records the native results).
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
-- Text under rotation and shear: some alignment and escapement placements
-  and two glyph masks with vertices on pixel boundaries differ by a pixel;
-  `GM_COMPATIBLE` ArcTo and AngleArc take the `GM_ADVANCED` arc geometry.
+- Synthetic bold outlines at larger sizes can differ from native by a pixel,
+  and the recorder's bounds for some rotated runs without explicit advances
+  differ by a logical unit.
+- `GM_COMPATIBLE` ArcTo and AngleArc take the `GM_ADVANCED` arc geometry.
