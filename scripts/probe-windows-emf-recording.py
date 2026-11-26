@@ -1340,6 +1340,26 @@ def completion_scenarios():
 
             yield f"compatible-{shape}{'-after-world' if world else ''}", None, draw
 
+    resets = {
+        "set": lambda dc: set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))),
+        "modify": lambda dc: modify_world_transform(dc, None, 1),
+        "modify-set": lambda dc: (
+            modify_world_transform(dc, None, 1),
+            set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))),
+        ),
+    }
+    for shape in ("rectangle", "ellipse"):
+        for reset_name, reset in resets.items():
+
+            def draw(dc, shape=shapes[shape], reset=reset):
+                set_graphics_mode(dc, 2)
+                set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.45, 1.0, 0.0, 0.0)))
+                reset(dc)
+                set_graphics_mode(dc, 1)
+                shape(dc)
+
+            yield f"compatible-{shape}-after-shear-{reset_name}", None, draw
+
 
 def records(data):
     position = 0

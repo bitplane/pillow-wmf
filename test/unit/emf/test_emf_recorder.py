@@ -927,6 +927,26 @@ def completion_scenarios():
 
             yield f"compatible-{shape}{'-after-world' if world else ''}", None, draw
 
+    resets = {
+        "set": lambda r: r.set_world_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+        "modify": lambda r: r.modify_world_transform(1, 0, 0, 1, 0, 0, 1),
+        "modify-set": lambda r: (
+            r.modify_world_transform(1, 0, 0, 1, 0, 0, 1),
+            r.set_world_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+        ),
+    }
+    for shape in ("rectangle", "ellipse"):
+        for reset_name, reset in resets.items():
+
+            def draw(r, shape=shapes[shape], reset=reset):
+                r.set_graphics_mode(2)
+                r.set_world_transform(1.0, 0.0, 0.45, 1.0, 0.0, 0.0)
+                reset(r)
+                r.set_graphics_mode(1)
+                shape(r)
+
+            yield f"compatible-{shape}-after-shear-{reset_name}", None, draw
+
 
 SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios(), *completion_scenarios()]
 

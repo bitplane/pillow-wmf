@@ -289,10 +289,6 @@ class _State:
     # The exact 28.4 device point an arc left the current position at, which
     # the next *To call starts from; None once a logical point sets it.
     fixed_position: tuple[int, int] | None = None
-    # Whether a world transform was set since the DC began or last took
-    # MWT_IDENTITY, even an identity one; GM_COMPATIBLE boxes then keep their
-    # bottom edges.
-    world_set: bool = False
     bounds: Rect | None = None
     path: Rect | None = None
     recording_path: bool = False
@@ -428,9 +424,7 @@ class Recorder(TraceContext):
             return min(xs) >> 4, min(ys) >> 4, ((max(xs) + 15) >> 4) - inset, ((max(ys) + 15) >> 4) - inset
         (x0, y0), (x1, y1) = self._device(state, left, top), self._device(state, right, bottom)
         if state.graphics_mode == GM_COMPATIBLE:
-            # A world transform set at any point leaves the bottom edge of
-            # every box but a rectangle in place.
-            x1, y1 = x1 - 1, y1 - (0 if state.world_set and not closed else 1)
+            x1, y1 = x1 - 1, y1 - 1
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
     def _inclusive(self, state: _State, right: int, bottom: int) -> tuple[int, int]:
@@ -955,7 +949,6 @@ class Recorder(TraceContext):
         records.append(fixed.ModifyWorldTransform(*values, 4))
         if state.graphics_mode == GM_ADVANCED:
             state.mapping.world = values
-            state.world_set = True
 
     def _record_modify_world_transform(self, a, state, records):
         values = tuple(a[key] for key in ("m11", "m12", "m21", "m22", "dx", "dy"))
@@ -964,7 +957,6 @@ class Recorder(TraceContext):
             world = modified_world(state.mapping.world, a["mode"], tuple(float32(v) for v in values))
             if world is not None:
                 state.mapping.world = world
-                state.world_set = a["mode"] != 1  # MWT_IDENTITY
 
     # Drawing
 
@@ -1020,7 +1012,9 @@ class Recorder(TraceContext):
             closure=closure,
             radial_bounds=(x0, y0, x1 + 1, y1 + 1),
         )
-        box = _box(((x + 15) // 16, (y + 15) // 16) for command in figure.commands for x, y in command)
+        points = [point for command in figure.commands for point in command]
+        xs, ys = [x for x, _ in points], [y for _, y in points]
+        box = (min(xs) >> 4, min(ys) >> 4, (max(xs) + 15) >> 4, (max(ys) + 15) >> 4)
         if record_type is fixed.ArcTo:
             box = _union(box, self._device_box(state, (state.position,)))
         self._draw(state, self._stroked(state, box))
@@ -1757,7 +1751,6 @@ def _legacy_source(bitmap: BitmapData) -> BitmapData | None:
 
 _SAVED = (
     "mapping",
-    "world_set",
     "graphics_mode",
     "pen",
     "position",
