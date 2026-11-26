@@ -969,6 +969,62 @@ def rotated_insideframe(d):
     d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
 
 
+def widened_curves(d):
+    """Wide pens along curves, widened paths filled by alternation, inside-frame paths."""
+
+    def pts(*values):
+        return tuple((d.u(x), d.u(y)) for x, y in values)
+
+    def ext_pen(style, width, color):
+        d.select(lambda slot: bitmaps.ExtCreatePen(slot, 0, 0, 0, 0, PS_GEOMETRIC | style, d.u(width), 0, color, 0))
+
+    d.brush(BS_NULL, 0, 0)
+    styles = (
+        PS_JOIN_MITER | PS_ENDCAP_FLAT,
+        PS_JOIN_BEVEL | PS_ENDCAP_SQUARE,
+        PS_JOIN_MITER | PS_ENDCAP_ROUND,
+        PS_JOIN_ROUND | PS_ENDCAP_FLAT,
+    )
+    for column, style in enumerate(styles):
+        left = 4 + 31 * column
+        ext_pen(style, 5, (0x800000, 0x008000, 0x000080, 0x808000)[column])
+        d.add(fixed.Ellipse(*d.rect(left, 4, left + 26, 22)))
+        d.add(fixed.Pie(*d.rect(left, 24, left + 26, 44), *d.rect(left + 26, 30, left, 26)))
+        d.add(variable.PolyBezier((0, 0, 0, 0), pts((left + 2, 58), (left + 8, 40), (left + 24, 70), (left + 24, 48))))
+    # Widened paths filled and clipped by alternation keep the widener's
+    # self-overlapping contours.
+    d.add(fixed.SetPolyFillMode(ALTERNATE))
+    d.brush(BS_SOLID, 0x2060C0)
+    for column, style in enumerate((PS_JOIN_MITER | PS_ENDCAP_FLAT, PS_JOIN_ROUND | PS_ENDCAP_ROUND)):
+        left = 4 + 32 * column
+        ext_pen(style, 7, 0)
+        d.add(fixed.BeginPath(), fixed.Ellipse(*d.rect(left, 72, left + 28, 92)), fixed.EndPath(), fixed.WidenPath())
+        d.add(fixed.FillPath(0, 0, 0, 0))
+    d.pen(PS_SOLID, d.u(7), 0)
+    d.add(fixed.BeginPath(), variable.PolyBezier((0, 0, 0, 0), pts((70, 76), (76, 64), (96, 100), (100, 74))))
+    d.add(fixed.EndPath(), fixed.WidenPath(), fixed.FillPath(0, 0, 0, 0))
+    d.add(fixed.SaveDC())
+    ext_pen(PS_JOIN_MITER | PS_ENDCAP_FLAT, 6, 0)
+    d.add(fixed.BeginPath(), fixed.Pie(*d.rect(104, 70, 126, 94), *d.rect(126, 82, 104, 70)), fixed.EndPath())
+    d.add(fixed.WidenPath(), fixed.SelectClipPath(RGN_COPY))
+    d.brush(BS_HATCHED, 0xC02020, HS_DIAGCROSS)
+    d.add(fixed.Rectangle(*d.rect(100, 66, 128, 98)))
+    d.add(fixed.RestoreDC(-1))
+    # Inside-frame pens inset the shapes a path is built from; a box narrower
+    # than the pen keeps its full size, and a covered pie adds nothing, so
+    # SelectClipPath fails and keeps the clip.
+    d.pen(6, d.u(7), 0x008080)  # PS_INSIDEFRAME
+    d.brush(BS_SOLID, 0xC0C000)
+    d.add(fixed.BeginPath(), fixed.Rectangle(*d.rect(4, 100, 30, 124)), fixed.Ellipse(*d.rect(34, 100, 60, 124)))
+    d.add(fixed.Rectangle(*d.rect(64, 100, 69, 124)), fixed.EndPath(), fixed.StrokeAndFillPath(0, 0, 0, 0))
+    d.add(fixed.SaveDC(), fixed.IntersectClipRect(*d.rect(72, 98, 126, 126)))
+    d.add(fixed.BeginPath(), fixed.Pie(*d.rect(80, 100, 85, 124), *d.rect(85, 100, 80, 110)), fixed.EndPath())
+    d.add(fixed.SelectClipPath(RGN_AND))
+    d.brush(BS_HATCHED, 0x404040, HS_BDIAGONAL)
+    d.add(fixed.Rectangle(*d.rect(70, 96, 128, 128)))
+    d.add(fixed.RestoreDC(-1))
+
+
 def rotated_color_adjustment(d):
     """HALFTONE stretches with colour adjustment under a rotating transform."""
     transfer_background(d)
@@ -1233,6 +1289,7 @@ FEATURES = (
     ("gradient-rop2", gradient_rop2, (128,)),
     ("rotated-insideframe", rotated_insideframe, (128, 51)),
     ("rotated-color-adjustment", rotated_color_adjustment, (128,)),
+    ("widened-curves", widened_curves, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),

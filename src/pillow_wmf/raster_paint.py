@@ -39,6 +39,7 @@ from .stroke import (
 from .surface import Surface
 from .widen import CAP_FLAT, CAP_ROUND, JOIN_MITER, JOIN_ROUND, PenShape, dash_figures, perpendicular
 from .widen import outline as widen_outline
+from .widener import widen
 
 
 def _nudged_index(numerator, det, step):
@@ -505,6 +506,10 @@ class RasterPainter:
         if self.state.pen.style == PS_NULL:
             return set()
         pixels: set[tuple[int, int]] = set()
+        pen = self.state.pen
+        if not self.realized_pen.cosmetic and not (pen.geometric and pen.pattern) and not miter:
+            outlines = tuple(points for points, _ in widen(self.widen_shape, paths))
+            return set(self.contour_pixels(outlines, fill_mode=WINDING))
         for path in paths:
             for segments, closed, _ in self._pen_figures(path):
                 pixels.update(self._figure_pixels(segments, closed, miter=miter))
@@ -527,8 +532,28 @@ class RasterPainter:
         else:
             yield path.segments, path.closed, 0
 
+    @cached_property
+    def widen_shape(self) -> PenShape:
+        """The pen as the native widener sees it: round caps and joins unless extended."""
+        if self.pen_shape is not None:
+            return self.pen_shape
+        sx, sy = self.state.mapping.linear_scale
+        return PenShape(
+            self.realized_pen,
+            (8 * self.state.pen.width * sx, 8 * self.state.pen.width * sy),
+            (float(sx), float(sy)),
+            CAP_ROUND,
+            JOIN_ROUND,
+            self.state.miter_limit,
+            tuple(float(value) for value in self.state.mapping.world[:4]) if self.state.mapping.rotated else None,
+            self.state.pen.width,
+        )
+
     def widened_outlines(self, paths: tuple[DevicePath, ...]) -> list[Polygon]:
-        """WidenPath's closed outlines: perpendicular bodies or support-vertex sweeps."""
+        """WidenPath's closed outlines, as the native widener builds them."""
+        pen = self.state.pen
+        if not (pen.geometric and pen.pattern):
+            return [points for points, _ in widen(self.widen_shape, paths)]
         outlines: list[Polygon] = []
         for path in paths:
             for segments, closed, seam in self._pen_figures(path.flattened()):

@@ -1689,11 +1689,12 @@ class RasterContext(ExecutionContext[DrawingState]):
                         (a["end_x"], a["end_y"]),
                         closure="open" if name == "arc" else name,
                     )
-            if covered:
+            if self._state.recording_path:
+                # A path keeps the box an inside-frame pen would fill.
+                self._record_figure(path if name == "arc" else replace(path, closed=True))
+            elif covered:
                 for x, y in painter.contour_pixels((path.vertices,)):
                     painter.pen_pixel(x, y)
-            elif self._state.recording_path:
-                self._record_figure(path if name == "arc" else replace(path, closed=True))
             elif name == "arc":
                 painter.stroke_path(path)
             else:
@@ -1977,6 +1978,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             return
         figures = self._path_figures(close=True)
         self._state.path = None
+        if not figures:
+            return  # A path without figures makes no region; the clip is kept.
         spans = self._painter().contour_spans(
             tuple(figure.flattened().vertices for figure in figures), fill_mode=self._state.polygon_fill_mode
         )

@@ -31,12 +31,13 @@ from math import ceil, cos, floor, radians, sin
 
 from ..bitmap import read_dib
 from ..constants import GM_ADVANCED, GM_COMPATIBLE, MM_TEXT, PS_INSIDEFRAME, PS_NULL
-from ..ellipse import arc_figure
+from ..ellipse import arc_figure, inside_frame_bounds
 from ..gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from ..geometry import DevicePath, coverage_spans
 from ..limits import DEFAULT_LIMITS
 from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice
 from ..objects import FontRequest, RegionGeometry
+from ..stroke import realize_pen
 from ..trace import TraceContext
 from . import bitmaps, fixed, variable
 from .file import Metafile
@@ -273,6 +274,7 @@ class _State:
     # A raster DC building the same path, for figures the recorder does not
     # trace; None once it cannot follow the path.
     shadow: object | None = None
+    shadow_pen: _Object | None = None
     widened: bool = False
     fill_mode: int = 1
     miter_limit: float = 10.0
@@ -741,7 +743,8 @@ class Recorder(TraceContext):
     def _record_box(self, a, state, records, record_type, *extra):
         left, top = a["left"], a["top"]
         right, bottom = self._inclusive(state, a["right"], a["bottom"])
-        if record_type is fixed.Rectangle and state.recording_path:
+        if record_type is fixed.Rectangle and state.recording_path and state.pen.style != PS_INSIDEFRAME:
+            # Inside-frame pens inset the box; the shadow DC follows that.
             box = self._device_rect(state, left, top, a["right"], a["bottom"])
             corners = ((box[2], box[1]), (box[0], box[1]), (box[0], box[3]), (box[2], box[3]))
             if state.figures is not None:
@@ -803,10 +806,11 @@ class Recorder(TraceContext):
     def _record_pie(self, a, state, records):
         self._radial(a, state, records, fixed.Pie)
 
-    def _arc_path(self, state, box, start, end, *, direction, radial_box=None):
+    def _arc_path(self, state, box, start, end, *, direction, radial_box=None, inside_frame=False):
         """The GM_ADVANCED arc a metafile DC strokes for ArcTo and AngleArc.
 
         ``radial_box`` normalizes the radials when it differs from the drawn box.
+        With ``inside_frame``, a wide inside-frame pen insets the box, as for Arc.
         """
         left, right = sorted(box[0::2])
         top, bottom = sorted(box[1::2])
@@ -818,15 +822,29 @@ class Recorder(TraceContext):
             mirror = radial_top + radial_bottom
             start, end = (start[0], mirror - start[1]), (end[0], mirror - end[1])
         ceil_box = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
+        drawing_bounds, advanced = (x0, y0, x1, y1), True
+        pen = state.pen
+        if inside_frame and pen.style == PS_INSIDEFRAME:
+            geometric = pen.realize is not None and pen.realize[0] == "ext_create_pen"
+            if not realize_pen(pen.width, *state.mapping.linear_scale, geometric=geometric).cosmetic:
+                _, inset = inside_frame_bounds(
+                    (left, top, right, bottom),
+                    (ceil_box[0], ceil_box[1], ceil_box[2] + 1, ceil_box[3] + 1),
+                    pen.width,
+                    state.mapping.linear_scale,
+                )
+                if direction == 2:
+                    inset = (inset[0], inset[3], inset[2], inset[1])
+                drawing_bounds, advanced = inset, False
         return arc_figure(
             *ceil_box[:2],
             ceil_box[2] + 1,
             ceil_box[3] + 1,
             start,
             end,
-            drawing_bounds=(x0, y0, x1, y1),
+            drawing_bounds=drawing_bounds,
             radial_bounds=(radial_left, radial_top, radial_right, radial_bottom),
-            advanced=True,
+            advanced=advanced,
         )
 
     @staticmethod
@@ -869,6 +887,7 @@ class Recorder(TraceContext):
             end,
             direction=state.arc_direction,
             radial_box=(left, top, a["right"], a["bottom"]),
+            inside_frame=True,
         )
         # The current position is the arc's 28.4 end, floored to a logical point.
         self._stroke_from_position(state, path, self._floor_logical(state, path.commands[-1][-1]))
@@ -1012,8 +1031,24 @@ class Recorder(TraceContext):
         records.append(fixed.BeginPath())
         state.recording_path, state.path = True, None
         state.figures, state.widened = [], False
-        state.shadow = RasterContext(1, 1, trace_calls=False)
+        state.shadow, state.shadow_pen = RasterContext(1, 1, trace_calls=False), None
         state.shadow.begin_path()
+
+    def _shadow_pen(self, state: _State) -> None:
+        """Select the recording DC's pen into the shadow DC.
+
+        Inside-frame pens inset the shapes a path is built from.
+        """
+        shadow, pen = state.shadow, state.pen
+        if state.shadow_pen is pen:
+            return
+        if pen.realize is not None:
+            name, arguments = pen.realize
+            handle = shadow.invoke(Call.make(name, **arguments))
+        else:
+            handle = shadow.get_stock_object(pen.stock if pen.stock is not None else BLACK_PEN)
+        shadow.select_object(handle)
+        state.shadow_pen = pen
 
     def _follow_path(self, call: Call, state: _State) -> None:
         """Replay a path-building call on the shadow DC from the current state.
@@ -1034,6 +1069,7 @@ class Recorder(TraceContext):
                 (a["end_x"], a["end_y"]),
                 direction=state.arc_direction,
                 radial_box=(a["left"], a["top"], a["right"], a["bottom"]),
+                inside_frame=True,
             )
             try:
                 if not shadow._state.path:
@@ -1046,6 +1082,7 @@ class Recorder(TraceContext):
         if call.name == "angle_arc" and graphics_mode != GM_ADVANCED:
             graphics_mode = GM_ADVANCED
         try:
+            self._shadow_pen(state)
             shadow.mapping = deepcopy(state.mapping)
             shadow.mapping.graphics_mode = graphics_mode
             if not shadow._state.path:
@@ -1073,13 +1110,7 @@ class Recorder(TraceContext):
             return
         try:
             # The shadow DC widens the path with the selected pen, as natively.
-            pen = state.pen
-            if pen.realize is not None:
-                name, arguments = pen.realize
-                handle = shadow.invoke(Call.make(name, **arguments))
-            else:
-                handle = shadow.get_stock_object(pen.stock if pen.stock is not None else BLACK_PEN)
-            shadow.select_object(handle)
+            self._shadow_pen(state)
             shadow.mapping = deepcopy(state.mapping)
             shadow.mapping.graphics_mode = state.graphics_mode
             shadow.set_miter_limit(state.miter_limit)
@@ -1087,36 +1118,39 @@ class Recorder(TraceContext):
         except (UnsupportedOperation, InvalidOperation):
             state.shadow = None
 
-    def _clip_path_box(self, state) -> Rect:
+    def _clip_path_box(self, state) -> Rect | None:
         """The bounding box of the region SelectClipPath makes from the path.
 
         A path is filled by the polygon fill mode; a widened one covers its
-        pen's stroke footprint.
+        pen's stroke footprint. None for a path without figures, which makes
+        no region and keeps the clip.
         """
         figures = state.figures
         if figures is None and not state.widened and state.shadow is not None:
             # Shapes and arcs: the shadow DC's flattened figures, closed.
             figures = [(list(path.flattened().vertices), True) for path in state.shadow._path_figures(close=True)]
-        if state.widened and (figures is None or state.pen.realize and state.pen.realize[0] == "ext_create_pen"):
-            # Shapes, arcs and extended pens: the shadow DC's widened outlines,
-            # filled with the DC's polygon fill mode, as any clip path.
+        extended = state.pen.realize is not None and state.pen.realize[0] == "ext_create_pen"
+        if state.widened and (figures is None or extended or state.pen.style == PS_INSIDEFRAME):
+            # Shapes, arcs, extended and inside-frame pens: the shadow DC's
+            # widened outlines, filled with the DC's polygon fill mode, as
+            # any clip path.
             if state.shadow is None:
                 raise UnsupportedOperation("SelectClipPath of this widened path is not recorded")
             contours = tuple(
                 list(path.flattened().vertices) for path in state.shadow._path_figures(close=True) if path.vertices
             )
             if not contours:
-                return (0, 0, -1, -1)
+                return None
             xs = [x for points in contours for x, _ in points]
             ys = [y for points in contours for _, y in points]
             left, top, right, bottom = min(xs) // 16 - 1, min(ys) // 16 - 1, max(xs) // 16 + 2, max(ys) // 16 + 2
             spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
             return _box(point for y, start, end in spans for point in ((start, y), (end - 1, y))) or (0, 0, -1, -1)
-        if figures is None or state.pen.miter or state.pen.style == PS_INSIDEFRAME:
-            raise UnsupportedOperation("SelectClipPath of widened inside-frame paths is not yet recorded")
+        if figures is None:
+            raise UnsupportedOperation("SelectClipPath of this path is not recorded")
         figures = [(points, closed) for points, closed in figures if points]
         if not figures:
-            return (0, 0, -1, -1)
+            return None
         xs = [x for points, _ in figures for x, _ in points]
         ys = [y for points, _ in figures for _, y in points]
         margin = 16 * (abs(state.pen.width) * max(1, max(abs(v) for v in state.mapping.linear_scale)) + 4)
@@ -1172,7 +1206,8 @@ class Recorder(TraceContext):
     def _record_select_clip_path(self, a, state, records):
         box = self._clip_path_box(state)
         records.append(fixed.SelectClipPath(a["mode"]))
-        self._combine_clip(state, box, a["mode"])
+        if box is not None:
+            self._combine_clip(state, box, a["mode"])
         state.path, state.figures, state.shadow = None, [], None
 
     # Regions and clipping
