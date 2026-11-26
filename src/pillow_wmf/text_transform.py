@@ -214,9 +214,20 @@ class TransformedFont:
         return self._advance(index, self._device_matrix() if self.advance_matrix is None else self.advance_matrix)
 
     def glyph_advance(self, index: int) -> tuple[int, tuple[int, int]]:
-        """The whole-pixel advance length and 28.4 vector along the glyph's own baseline."""
+        """The driver's 28.4 advance length (fxD) and vector (ptqD) along the glyph's own baseline.
+
+        A scale-only realization rounds the advance to whole pixels; others
+        scale the notional width without rounding.
+        """
         matrix = self._device_matrix()
-        return self._advance_pixels(index, matrix), tuple(value >> 32 for value in self._advance(index, matrix))
+        a, b, c, _ = matrix
+        if not b and not c:
+            return 16 * self._advance_pixels(index, matrix), tuple(v >> 32 for v in self._advance(index, matrix))
+        units = self.design_advances.get(index, 0)
+        length = float32(sqrt(float(a) ** 2 + float(c) ** 2) * 16)
+        width = _round_half_away(float32(units * length))
+        vector = tuple(int(Fraction(units) * Fraction(float32(16 * value))) for value in (a, c))
+        return width, vector
 
     def _advance(self, index, matrix):
         a, b, c, _ = matrix
@@ -265,9 +276,9 @@ class TransformedFont:
             glyph = self.glyph(index, 1 << 30)
             top = -glyph.bearing[1] if d < 0 else glyph.bearing[1] + glyph.size[1]
             return top * 16, (top - glyph.size[1]) * 16
-        length = sqrt(float(b) ** 2 + float(d) ** 2) * 16
+        length = float32(sqrt(float(b) ** 2 + float(d) ** 2) * 16)
         low, high = span
-        return -(-int(high * length) // 16) * 16 if high > 0 else 0, (int(low * length) // 16) * 16 if low < 0 else 0
+        return (_round_half_away(float32(high * length)) + 15) & ~15, _round_half_away(float32(low * length)) & ~15
 
     def frame(self) -> "Frame":
         """The realized font's unit vectors, cell extents and alignment vectors."""
@@ -506,8 +517,7 @@ def _escapement_positions(font, indices, advances, baseline, extra, break_extra,
     beta = float32((bx * uy - by * ux) / cross)
     positions, carry, logical = [], 0, 0
     for number, index in enumerate(indices):
-        pixels, (dx, dy) = font.glyph_advance(index)
-        width = 16 * pixels
+        width, (dx, dy) = font.glyph_advance(index)
         top, bottom = font.ink_extent(index)
         back, forward = _gen_widths(alpha, beta, width, top, bottom, frame.ascent)
         centre = carry + back
