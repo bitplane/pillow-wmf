@@ -110,13 +110,19 @@ Text records play through the font collection's faces:
   outline through the full notional-to-device matrix by the TrueType rules
   (26.6 products, dropout control). The cell spans the head table's bounds
   widened by 1/64 em, rounded out to pixels along the ascender; opaque cells,
-  underline and strikeout are parallelograms along the baseline. Advances
-  without explicit spacing are the design widths through the matrix in 32.32.
+  underline and strikeout are parallelograms along the baseline. Without
+  explicit spacing, glyphs are placed by their logical extents (cumulative
+  design widths at the logical em, rounded half up) laid along the baseline.
 - Current-position text continues from the 28.4 device point the previous run
   left. An opaque cell widens over ink protruding past the advances, and, with
   explicit advances, to the left of the origin.
-- A missing weight or slant is simulated from the family's nearest face
-  (bold widens ink and advances by a pixel, italic shears by 0x5700/65536).
+- A missing weight or slant is simulated from the family's nearest face.
+  Italic shears the outline by 0x5700/65536. Bold adds a device pixel to each
+  advance (and its logical equivalent to each logical extent); under rotating
+  or shearing transforms the outline is emboldened as the TrueType scaler
+  does it ([`embolden.py`](../src/pillow_wmf/embolden.py)): upright at the
+  whole-pixel em, right-facing edges moved a pixel right, before the rest of
+  the transform.
 - Stock fonts select their logical fonts (mostly raster faces, so
   font-limited). Charset 254 decodes UTF-8.
 

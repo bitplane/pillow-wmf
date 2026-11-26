@@ -26,6 +26,7 @@ from threading import Lock
 import freetype as ft
 
 from .binary import ResourceLimitError
+from .embolden import embolden
 from .font import _FREETYPE, Glyph, _Face, _unpack_bitmap
 from .gdi import UnsupportedOperation
 from .numeric import float32
@@ -155,14 +156,40 @@ class TransformedFont:
                 _round_half_away(64 * c * u) + _round_half_away(64 * d * v),
             )
 
-        contours = [[device(point) for point in contour] for contour in _contours(outline)]
         # A mirroring transform reverses the outline's orientation.
         closed = Fraction(a) * Fraction(d) - Fraction(b) * Fraction(c) < 0
-        pixels = scan_outline(contours, closed=closed)
         if self.embolden:
-            ux, uy = self.frame().base
-            step = (1 if ux >= 0.5 else -1 if ux <= -0.5 else 0, 1 if uy >= 0.5 else -1 if uy <= -0.5 else 0)
-            pixels |= {(x + step[0], y + step[1]) for x, y in pixels}
+            # The scaler emboldens the outline upright at the whole pixel em
+            # height, y up, then applies the rest of the matrix to the moved
+            # points and flattens the arcs in device space.
+            ppem = int(sqrt(float(b) ** 2 + float(d) ** 2) * self.units_per_em + 0.5)
+            k = Fraction(ppem, self.units_per_em)
+            upright = [
+                [(_round_half_away(64 * k * u), _round_half_away(64 * k * v), on) for (u, v), on in contour]
+                for contour in _raw_contours(outline)
+            ]
+            moved = embolden(upright, (EMBOLDEN_PER_MILLE * ppem - 10) // 1000 + 1, grid_fitted=True)
+            pa, pb, pc, pd = (Fraction(value) / k for value in (a, b, c, d))
+            flat = (
+                _flatten(
+                    [
+                        (
+                            (
+                                _round_half_away(pa * x) + _round_half_away(pb * y),
+                                _round_half_away(pc * x) + _round_half_away(pd * y),
+                            ),
+                            on,
+                        )
+                        for x, y, on in contour
+                    ],
+                    half=lambda value: Fraction(value, 2),
+                )
+                for contour in moved
+            )
+            contours = [contour for contour in flat if contour is not None]
+        else:
+            contours = [[device(point) for point in contour] for contour in _contours(outline)]
+        pixels = scan_outline(contours, closed=closed)
         if not pixels:
             return Glyph((0, 0), (0, 0), b"", 0, index, 1)
         xs, ys = [x for x, _ in pixels], [y for _, y in pixels]
@@ -279,6 +306,9 @@ def _y_scale(d) -> int:
 
 # The driver's simulated italic shears x by this much of y (0x5700 in 16.16).
 OBLIQUE = Fraction(0x5700, 0x10000)
+# The horizontal emboldening strength, per mille of the em: a whole pixel
+# up to 50 pixels per em.
+EMBOLDEN_PER_MILLE = 20
 
 
 def _unit(x, y):
@@ -484,36 +514,48 @@ def baseline_vector(matrix, world_baseline):
     return ux, uy, scale
 
 
-def _contours(outline):
-    """Contours of notional points, with quadratic arcs approximated by eight lines each."""
+def _raw_contours(outline):
+    """Contours of notional (point, on-curve) pairs as the font stores them."""
     points, tags, ends = outline.points, outline.tags, outline.contours
     start = 0
     for end in ends:
         raw = [(points[i], tags[i] & 1) for i in range(start, end + 1)]
         start = end + 1
-        if not raw:
+        if raw:
+            yield raw
+
+
+def _flatten(raw, half=lambda value: value / 2):
+    """A contour of (point, on-curve) pairs with quadratic arcs approximated by eight lines each."""
+    # Begin at an on-curve point, inserting implied midpoints between offs.
+    expanded = []
+    for i, (point, on) in enumerate(raw):
+        previous, previous_on = raw[i - 1]
+        if not on and not previous_on:
+            expanded.append(((half(point[0] + previous[0]), half(point[1] + previous[1])), 1))
+        expanded.append((point, on))
+    first = next((i for i, (_, on) in enumerate(expanded) if on), None)
+    if first is None:
+        return None
+    expanded = expanded[first:] + expanded[:first]
+    contour = []
+    for i, (point, on) in enumerate(expanded):
+        if on:
+            contour.append(point)
             continue
-        # Begin at an on-curve point, inserting implied midpoints between offs.
-        expanded = []
-        for i, (point, on) in enumerate(raw):
-            previous, previous_on = raw[i - 1]
-            if not on and not previous_on:
-                expanded.append((((point[0] + previous[0]) / 2, (point[1] + previous[1]) / 2), 1))
-            expanded.append((point, on))
-        first = next((i for i, (_, on) in enumerate(expanded) if on), None)
-        if first is None:
-            continue
-        expanded = expanded[first:] + expanded[:first]
-        contour = []
-        for i, (point, on) in enumerate(expanded):
-            if on:
-                contour.append(point)
-                continue
-            p0, p2 = expanded[i - 1][0], expanded[(i + 1) % len(expanded)][0]
-            for step in range(1, 8):
-                t = step / 8
-                contour.append(tuple((1 - t) ** 2 * p0[k] + 2 * (1 - t) * t * point[k] + t * t * p2[k] for k in (0, 1)))
-        yield contour
+        p0, p2 = expanded[i - 1][0], expanded[(i + 1) % len(expanded)][0]
+        for step in range(1, 8):
+            t = Fraction(step, 8)
+            contour.append(tuple((1 - t) ** 2 * p0[k] + 2 * (1 - t) * t * point[k] + t * t * p2[k] for k in (0, 1)))
+    return contour
+
+
+def _contours(outline):
+    """Contours of notional points, with quadratic arcs approximated by eight lines each."""
+    for raw in _raw_contours(outline):
+        contour = _flatten(raw)
+        if contour is not None:
+            yield contour
 
 
 def _on_segment(p, q, x, y):

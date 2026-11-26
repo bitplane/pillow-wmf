@@ -1957,10 +1957,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         if not advances and rotating:
             # Rotated or sheared glyphs take their logical extents: the design
             # widths at the logical em, accumulated and rounded half up.
-            design, logical, previous = 0, [], 0
+            design, logical, previous, bold = 0, [], 0, 0
             for index in indices:
                 design += face.design_advances.get(index, 0)
-                position = _round_half_away(Fraction(design) * em_width / upem)
+                bold += 1 if font.embolden and face.design_advances.get(index, 0) else 0
+                position = _round_half_away(Fraction(design) * em_width / upem + 16 * bold / Fraction(scale))
                 logical.append(position - previous)
                 previous = position
             advances = tuple(logical)
