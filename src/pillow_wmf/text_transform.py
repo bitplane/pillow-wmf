@@ -545,12 +545,12 @@ def _round_product(value, factor) -> int:
     return _round_half_away(float32(float32(value) * factor))
 
 
-def opaque_area(font: TransformedFont, run: TransformedRun, indices):
+def opaque_area(font: TransformedFont, run: TransformedRun, indices, *, explicit=False):
     """The 28.4 corners of the cell parallelogram an opaque run fills.
 
-    Along the baseline the cell spans from the origin, or the earliest ink,
-    to the run's length plus any ink protruding past its advance; across it,
-    the cell ascent and descent.
+    Along the baseline the cell spans from the origin (or, with explicit
+    advances, the earliest ink) to the run's length plus any ink protruding
+    past its advance; across it, the cell ascent and descent.
     """
     frame = font.frame()
     position = left = right = 0
@@ -567,7 +567,7 @@ def opaque_area(font: TransformedFont, run: TransformedRun, indices):
         )
     )
     length = _round_half_away(float32(length * 16))
-    left, right = min(left, position), length + max(0, right - position)
+    left, right = min(left, position) if explicit else 0, length + max(0, right - position)
     top, bottom = frame.ascent, -frame.descent
     bx, by = frame.base
     sx, sy = frame.side

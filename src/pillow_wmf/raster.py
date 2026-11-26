@@ -1861,6 +1861,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         See ``text_transform``.
         """
         text_state = self._state.text_state
+        explicit_advances = bool(advances)
         compatible = self._font_xform is not None or self.mapping.graphics_mode != GM_ADVANCED
         upem = face.units_per_em
         m11, m12, m21, m22 = (Fraction(value) for value in self._linear_transform())
@@ -2019,7 +2020,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         def pixels(points):
             return tuple((Fraction(x, 16), Fraction(y, 16)) for x, y in points)
 
-        background = pixels(opaque_area(font, run, indices)) if self._state.background_mode == OPAQUE else None
+        background = (
+            pixels(opaque_area(font, run, indices, explicit=bool(explicit_advances)))
+            if self._state.background_mode == OPAQUE
+            else None
+        )
         metrics = [
             m
             for m, on in ((face.underline_metrics, request.underline), (face.strikeout_metrics, request.strikeout))
