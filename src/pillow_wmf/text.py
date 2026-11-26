@@ -29,7 +29,11 @@ from .wingdings import decode_wingdings
 
 
 class FontCollection:
-    """Supplied faces and explicit aliases; never discover or silently replace."""
+    """Supplied faces and explicit aliases; never discover or substitute faces.
+
+    A character the selected face lacks draws its glyph 0 (``.notdef``), as
+    native GDI does; ``missing_glyph="error"`` refuses such text instead.
+    """
 
     def __init__(
         self,
@@ -40,7 +44,7 @@ class FontCollection:
         mac_codepage=None,
         aliases=None,
         fallbacks=None,
-        missing_glyph="error",
+        missing_glyph="notdef",
         synthesize_styles=True,
         wingdings_fallback=False,
         symbol_fallback=False,

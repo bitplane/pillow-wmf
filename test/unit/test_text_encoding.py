@@ -65,8 +65,8 @@ def test_ansi_request_does_not_force_an_arbitrary_symbol_face():
 
 
 def test_missing_glyph_policy_is_explicit_and_cache_isolation_is_preserved(face):
-    strict = face.realize(REQUEST, (1, 1))
-    permissive = face.realize(REQUEST, (1, 1), missing_glyph="notdef")
+    strict = face.realize(REQUEST, (1, 1), missing_glyph="error")
+    permissive = face.realize(REQUEST, (1, 1))
     assert permissive.glyph("C", 10000).index == 0
     assert permissive.glyph("C", 10000).advance == 12
     with pytest.raises(UnsupportedOperation, match="Missing glyph"):
@@ -185,7 +185,7 @@ def test_fallback_fills_only_missing_glyphs_and_preserves_base_metrics(face):
     assert run.glyph("\xe9", 10000) is face.realize(request, (1, 1)).glyph("\xe9", 10000)
     assert (run.ascent, run.descent, run.break_character) == (22, 7, 32)
     with pytest.raises(UnsupportedOperation, match="Missing glyph"):
-        FontCollection([base, face]).realize(request, base, (1, 1)).glyph("\xe9", 10000)
+        FontCollection([base, face], missing_glyph="error").realize(request, base, (1, 1)).glyph("\xe9", 10000)
     with pytest.raises(ResourceLimitError, match="pixel limit"):
         run.glyph("\xe9", 1)
 

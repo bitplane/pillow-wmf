@@ -96,11 +96,20 @@ def test_unimplemented_realization_fails_before_painting_or_committing(dc, chang
 
 
 @pytest.mark.parametrize("text", [b"\x80", b"\0", b"C"])
-def test_unsupported_encoding_and_missing_glyph_do_not_silently_replace(dc, text):
+def test_strict_missing_glyph_policy_fails_atomically(face, text):
+    dc = RasterContext(80, 60, fonts=FontCollection([face], missing_glyph="error"))
+    dc.select_object(dc.create_font(REQUEST))
     before = dc.image.tobytes(), list(dc.calls)
     with pytest.raises(UnsupportedOperation):
         dc.text_out(10, 20, text)
     assert (dc.image.tobytes(), dc.calls) == before
+
+
+def test_missing_glyphs_draw_notdef_by_default(dc):
+    # As natively, a character the font lacks draws the font's glyph 0.
+    dc.text_out(10, 20, b"C")
+    assert dc._state.text_state.font is not None
+    assert any(pixel != (255, 255, 255) for pixel in dc.image.get_flattened_data())
 
 
 @pytest.mark.parametrize("cached", [False, True])

@@ -151,6 +151,8 @@ Text records play through the font collection's faces:
   advances span the run's notional width through the x column of the
   glyph matrix (each component rounded to 28.4), measured and rounded to
   whole logical units.
+- A character the face lacks draws the face's glyph 0 (`.notdef`), as
+  natively; `FontCollection(missing_glyph="error")` refuses such text.
 - A missing weight or slant is simulated from the family's nearest face.
   Italic shears the outline by 0x5700/65536. Bold adds a device pixel to each
   advance (and its logical equivalent to each logical extent); under rotating
