@@ -543,6 +543,11 @@ source pixel. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
+- Device coordinates at or beyond 2^27 pixels, where 28.4 values wrap:
+  native primitives then fail, draw part of their figure or draw wrapped
+  geometry, each in its own way
+  ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
+  records the native results).
 - Under rotating or shearing transforms: text is refused.
 - EMF+ (GDI+) drawing.
 - Text in `GM_ADVANCED`, Unicode text and stock fonts. Text output is
