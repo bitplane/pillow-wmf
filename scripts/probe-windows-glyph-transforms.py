@@ -15,6 +15,7 @@ with baseline alignment:
 
 import ctypes
 import platform
+import struct
 from ctypes import wintypes
 
 from test_font import FAMILY, FONT_PATH
@@ -71,6 +72,21 @@ class LogFont(ctypes.Structure):
         ("pitch_family", wintypes.BYTE),
         ("face", ctypes.c_wchar * 32),
     ]
+
+
+def print_native(data):
+    """TTPOLYGONHEADER contours of 16.16 device points (y up), one line each."""
+    position = 0
+    while position < len(data):
+        size, _kind = struct.unpack_from("<II", data, position)
+        points = [struct.unpack_from("<ii", data, position + 8)]
+        cursor = position + 16
+        while cursor < position + size:
+            kind, count = struct.unpack_from("<HH", data, cursor)
+            points += [struct.unpack_from("<ii", data, cursor + 4 + 8 * i) for i in range(count)]
+            cursor += 4 + 8 * count
+        print("native " + " ".join(f"{x},{y}" for x, y in points))
+        position += size
 
 
 def cases():
@@ -130,6 +146,11 @@ def main():
                     f"glyph {character!r} box={metrics.width},{metrics.height} "
                     f"origin={metrics.origin.x},{metrics.origin.y} cell={metrics.cell_x},{metrics.cell_y}"
                 )
+                native = outline(dc, ord(character), 2, ctypes.byref(metrics), 0, None, ctypes.byref(identity))
+                if native not in (0, 0xFFFFFFFF):
+                    data = ctypes.create_string_buffer(native)
+                    outline(dc, ord(character), 2, ctypes.byref(metrics), native, data, ctypes.byref(identity))
+                    print_native(data.raw)
                 if size not in (0, 0xFFFFFFFF) and metrics.width:
                     stride = (metrics.width + 31) // 32 * 4
                     for row in range(metrics.height):
