@@ -165,8 +165,13 @@ class TransformedFont:
                 [(_round_half_away(64 * sx * u), _round_half_away(64 * sy * v), on) for (u, v), on in contour]
                 for contour in _raw_contours(outline)
             ]
-            ppem = int(sy * self.units_per_em + Fraction(1, 2))
-            moved = embolden(stage, (EMBOLDEN_PER_MILLE * ppem - 10) // 1000 + 1, grid_fitted=True)
+            # The driver asks for 20 per mille on both axes: the horizontal
+            # strength keeps a minimum pixel, the vertical one does not.
+            # The strength follows the unsheared y column's length in pixels.
+            _, rb, _, rd = self._device_matrix()
+            strength_ppem = int(sqrt(float(rb) ** 2 + float(rd) ** 2) * self.units_per_em + 0.5)
+            strength = (EMBOLDEN_PER_MILLE * strength_ppem - 10) // 1000
+            moved = embolden(stage, strength + 1, max(0, strength), grid_fitted=True)
             qa, qb, qc, qd = (
                 _round_half_away(Fraction(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
             )
