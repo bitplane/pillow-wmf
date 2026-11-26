@@ -82,6 +82,15 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   device space. `AD_CLOCKWISE` reverses GM_COMPATIBLE arcs, chords and pies
   in device space
   ([`test_compatible_arcs.py`](../test/unit/test_compatible_arcs.py)).
+- Device coordinates are 28.4 values in 32 bits, which wrap. A figure whose
+  28.4 extent overflows 32 bits is not drawn, and `LineTo` fails once its end
+  point's next 28.4 pixel overflows. A rectangle's outline runs through the
+  wrapped box (GM_COMPATIBLE: inclusive far edges): it is drawn where it
+  wraps to, or, when it overflows or turns over, dropped, leaving the
+  interior inside it filled from the true box. Curved GM_COMPATIBLE shapes
+  are built from the wrapped inclusive box. `PatBlt`'s far edges are 32-bit
+  sums. A unit page scale maps integers exactly
+  ([`test_coordinate_limits.py`](../test/unit/test_coordinate_limits.py)).
 - Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
   `PlgBlt`, `AlphaBlend`, `TransparentBlt`) map their logical source
   rectangle through the recorded source transform, rounding each edge half
@@ -665,9 +674,10 @@ source pixel. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
-- Device coordinates at or beyond 2^27 pixels, where 28.4 values wrap:
-  native primitives then fail, draw part of their figure or draw wrapped
-  geometry, each in its own way
+- Past 2^27 device pixels most drawing follows the native rules below; a
+  polyline whose 28.4 coordinates wrap without overflowing, an ellipse whose
+  box wraps over itself, and a rectangle under a page scale that carries it
+  past the range still differ
   ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
   records the native results).
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.

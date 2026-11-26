@@ -1675,38 +1675,23 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if covered and name in {"arc", "chord", "pie"}:
                     return
             rectangle = name == "rectangle"
-            if rectangle and advanced_bounds is None and not self._state.recording_path:
-                # The outline runs through the 32-bit 28.4 box, which wraps;
+            if rectangle and not corners and not self._state.recording_path:
+                # The outline runs through the 32-bit 28.4 box, which wraps:
                 # when that overflows or turns the box over, only the
-                # interior inside the outline is filled.
-                edges = [_int32(value * 16) for value in (left, top, right - 1, bottom - 1)]
-                if (
-                    edges[2] - edges[0] > 0x7FFFFFFF
-                    or edges[3] - edges[1] > 0x7FFFFFFF
-                    or edges[0] > edges[2]
-                    or edges[1] > edges[3]
-                ):
+                # interior inside the outline is filled; when it merely
+                # wraps, the outline is drawn where it wrapped to.
+                exact = advanced_bounds or tuple(value * 16 for value in (left, top, right - 1, bottom - 1))
+                edges = [_int32(value) for value in exact]
+                overflows = edges[2] - edges[0] > 0x7FFFFFFF or edges[3] - edges[1] > 0x7FFFFFFF
+                if overflows or edges[0] > edges[2] or edges[1] > edges[3] or list(exact) != edges:
                     if self._state.brush.style != BS_NULL and right - left > 2 and bottom - top > 2:
-                        interior = DevicePath.polyline(
-                            box_corners(((left + 1) * 16, (top + 1) * 16, (right - 1) * 16, (bottom - 1) * 16)),
-                            closed=True,
-                        )
+                        interior = ((left + 1) * 16, (top + 1) * 16, (right - 1) * 16, (bottom - 1) * 16)
                         no_pen = replace(self._state, pen=replace(self._state.pen, style=PS_NULL))
-                        RasterPainter(self.surface, no_pen).paint_polygons((interior,), brush=self._state.brush)
-                    return
-                if (edges[0] >> 4, edges[1] >> 4) != (left, top) or (edges[2] >> 4, edges[3] >> 4) != (
-                    right - 1,
-                    bottom - 1,
-                ):
-                    # A wrapped outline is drawn where it wrapped to, over the true fill.
-                    if self._state.brush.style != BS_NULL:
-                        interior = DevicePath.polyline(
-                            box_corners(((left + 1) * 16, (top + 1) * 16, (right - 1) * 16, (bottom - 1) * 16)),
-                            closed=True,
+                        RasterPainter(self.surface, no_pen).paint_polygons(
+                            (DevicePath.polyline(box_corners(interior), closed=True),), brush=self._state.brush
                         )
-                        no_pen = replace(self._state, pen=replace(self._state.pen, style=PS_NULL))
-                        RasterPainter(self.surface, no_pen).paint_polygons((interior,), brush=self._state.brush)
-                    painter.stroke_path(DevicePath.polyline(box_corners(tuple(edges)), closed=True))
+                    if not (overflows or edges[0] > edges[2] or edges[1] > edges[3]):
+                        painter.stroke_path(DevicePath.polyline(box_corners(tuple(edges)), closed=True))
                     return
             if name == "rectangle":
                 bounds = (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
@@ -1791,6 +1776,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             if self._state.recording_path:
                 # A path keeps the box an inside-frame pen would fill.
                 self._record_figure(path if name == "arc" else replace(path, closed=True))
+            elif _overflows((path,)):
+                return
             elif covered:
                 for x, y in painter.contour_pixels((path.vertices,)):
                     painter.pen_pixel(x, y)
