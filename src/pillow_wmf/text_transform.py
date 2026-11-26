@@ -152,8 +152,11 @@ class TransformedFont:
         ma, _, _, md = self.matrix
         exact_x = Fraction(ma) > 0 > Fraction(md) and Fraction(ma) == -Fraction(md)
 
+        # The italic shear is added exactly to the driver's 16.16 world matrix.
+        world = self._device_matrix() if self.oblique else None
+
         def device(point):
-            return _device_rule(a, b, c, d, *point, exact_x=exact_x)
+            return _device_rule(a, b, c, d, *point, exact_x=exact_x, world=world)
 
         # A mirroring transform reverses the outline's orientation.
         closed = Fraction(a) * Fraction(d) - Fraction(b) * Fraction(c) < 0
@@ -578,14 +581,15 @@ def _q16(value) -> Fraction:
     return Fraction(_round_half_away(Fraction(value) * 65536), 65536)
 
 
-def _device_rule(a, b, c, d, u, v, *, exact_x=False):
+def _device_rule(a, b, c, d, u, v, *, exact_x=False, world=None):
     """A notional point (u, v) as 26.6 device coordinates, as the scaler maps it.
 
     A rotating or shearing matrix is applied in two stages: each axis first
     scales by the larger component of its matrix column, held in 16.16 per
     notional unit, and rounds; the remaining matrix (the driver's 16.16
     matrix divided by those scales, rounded to 16.16) then maps the scaled
-    point with each product rounded. A scale-only matrix holds its x scale in
+    point with each product rounded; ``world``, given for italic, is that
+    matrix before the exact italic shear joins it. A scale-only matrix holds its x scale in
     16.16, except an unmirrored uniform one (``exact_x``), whose products
     round from the exact scale.
     """
@@ -593,9 +597,11 @@ def _device_rule(a, b, c, d, u, v, *, exact_x=False):
         sx = _q16(max(abs(Fraction(a)), abs(Fraction(c))))
         sy = _q16(max(abs(Fraction(b)), abs(Fraction(d))))
         x, y = _round_half_away(64 * sx * u), _round_half_away(64 * sy * v)
-        qa, qb, qc, qd = (
-            _round_half_away(_q16(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
-        )
+        ma, mb, mc, md = (_q16(m) for m in (a, b, c, d))
+        if world is not None:
+            ma, mb, mc, md = (_q16(m) for m in world)
+            mb, md = mb + OBLIQUE * ma, md + OBLIQUE * mc
+        qa, qb, qc, qd = (_round_half_away(m / scale * 65536) for m, scale in ((ma, sx), (mb, sy), (mc, sx), (md, sy)))
         return (
             ((x * qa + 0x8000) >> 16) + ((y * qb + 0x8000) >> 16),
             ((x * qc + 0x8000) >> 16) + ((y * qd + 0x8000) >> 16),
