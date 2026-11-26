@@ -11,6 +11,13 @@ with baseline alignment:
     bits ROW MASK              (# marks a set bit)
     text LABEL [align=A]       (baseline alignment unless given)
     row Y X0 MASK              (one per changed row)
+
+Then three sweeps: ``box`` lines give the bounds GetBoundsRect accumulates
+for runs of a rotated font (identity world, so device pixels), without and
+with explicit advances; ``sweep`` blocks draw upright glyphs along a
+differing escapement at sixteen sub-pixel offsets per axis; ``outline``
+blocks give GGO_NATIVE points across sizes, transforms and simulated bold
+italic.
 """
 
 import ctypes
@@ -200,6 +207,132 @@ def main():
                         print(f"row {y} {first} " + "".join("#" if value else "." for value in row[first : last + 1]))
             select(dc, previous)
             delete(font)
+
+        def make_font(height, escapement, orientation, weight=400, italic=0):
+            logfont = LogFont(height, 0, escapement, orientation, weight, italic, 0, 0, 0, 0, 0, 3, 0, FAMILY)
+            return check(create_font(ctypes.byref(logfont)), "CreateFontIndirectW")
+
+        def print_rows(label):
+            print(label)
+            for y in range(SIZE):
+                row = [pixels[y * SIZE + x] & 0xFFFFFF != 0xFFFFFF for x in range(SIZE)]
+                if any(row):
+                    first = row.index(True)
+                    last = SIZE - 1 - row[::-1].index(True)
+                    print(f"row {y} {first} " + "".join("#" if value else "." for value in row[first : last + 1]))
+
+        # Accumulated bounds of single runs under a rotated font and an identity
+        # world (device = logical), without and with explicit advances.
+        set_bounds = bind(gdi, "SetBoundsRect", wintypes.UINT, ptr, ptr, wintypes.UINT)
+        get_bounds = bind(gdi, "GetBoundsRect", wintypes.UINT, ptr, ctypes.POINTER(wintypes.RECT), wintypes.UINT)
+        extent = bind(
+            gdi,
+            "GetTextExtentExPointW",
+            wintypes.BOOL,
+            ptr,
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ptr,
+            ctypes.POINTER(ctypes.c_int),
+            ptr,
+        )
+        check(set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))), "SetWorldTransform")
+        strings = (
+            "A",
+            "B",
+            " ",
+            "AA",
+            "AB",
+            "BA",
+            "BB",
+            "A B",
+            "B A",
+            "AB A",
+            "ABA",
+            "BAB",
+            "AAB",
+            "ABB",
+            "BBA",
+            "AAAA",
+        )
+        for height, angle in ((-10, 240), (-10, 300), (-10, 1200), (-25, 240)):
+            font = make_font(height, angle, angle)
+            previous = select(dc, font)
+            print(f"bounds height={height} escapement={angle}")
+            for text in strings:
+                partial = (ctypes.c_int * len(text))()
+                extent(dc, text, len(text), 0, None, partial, None)
+                dx = [partial[0]] + [partial[i] - partial[i - 1] for i in range(1, len(text))]
+                for mode in (1, 2):
+                    set_bk(dc, mode)
+                    for advances in (None, dx):
+                        array = (ctypes.c_int * len(text))(*advances) if advances else None
+                        set_bounds(dc, None, 1 | 4)  # DCB_RESET | DCB_ENABLE
+                        set_align(dc, 0)
+                        text_out(dc, 40, 40, 0, None, text, len(text), array)
+                        rect = wintypes.RECT()
+                        get_bounds(dc, ctypes.byref(rect), 0)
+                        label = "dx=" + ",".join(map(str, advances)) if advances else "dx=none"
+                        print(f"box {text!r} mode={mode} {label} -> {rect.left},{rect.top},{rect.right},{rect.bottom}")
+            set_bk(dc, 1)
+            set_bounds(dc, None, 0)
+            select(dc, previous)
+            delete(font)
+
+        # Upright glyphs along a differing escapement, drawn at sixteen sub-pixel
+        # offsets on each axis: where pixels jump pins each glyph's 28.4 position.
+        for name, height, matrix in (
+            ("identity", -25, TRANSFORMS["identity"]),
+            ("rotate", -8, TRANSFORMS["rotate"]),
+            ("mirror-x", -25, TRANSFORMS["mirror-x"]),
+        ):
+            font = make_font(height, 300, 0)
+            check(set_world(dc, ctypes.byref(XForm(*matrix, 0.0, 0.0))), "SetWorldTransform")
+            previous = select(dc, font)
+            for text in ("A", "B", "BA", "AB", "B A", "AB A"):
+                for axis in (0, 1):
+                    for step in range(16):
+                        ctypes.memset(bits, 0xFF, SIZE * SIZE * 4)
+                        set_align(dc, 24)
+                        shift = (step / 16, 0.0) if axis == 0 else (0.0, step / 16)
+                        set_world(dc, ctypes.byref(XForm(*matrix, ORIGIN[0] + shift[0], ORIGIN[1] + shift[1])))
+                        text_out(dc, 0, 0, 0, None, text, len(text), None)
+                        print_rows(
+                            f"sweep upright-{name} height={height} transform={matrix} text {text!r} "
+                            f"shift={shift[0]},{shift[1]}"
+                        )
+            set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
+            select(dc, previous)
+            delete(font)
+
+        # Exact native outlines across sizes, transforms and simulated styles.
+        for name in ("identity", "rotate", "shear", "mirror-x", "scale"):
+            for fractional in (False, True):
+                matrix = tuple(value * (128 / 51 if fractional else 1) for value in TRANSFORMS[name])
+                check(set_world(dc, ctypes.byref(XForm(*matrix, 0.0, 0.0))), "SetWorldTransform")
+                for height in range(-6, -31, -2):
+                    for weight, italic in ((400, 0), (700, 1)):
+                        font = make_font(height, 0, 0, weight, italic)
+                        previous = select(dc, font)
+                        for character in "AB":
+                            metrics = GlyphMetrics()
+                            native = outline(
+                                dc, ord(character), 2, ctypes.byref(metrics), 0, None, ctypes.byref(identity)
+                            )
+                            print(
+                                f"outline {name}{'-fractional' if fractional else ''} height={height} "
+                                f"transform={matrix} weight={weight} italic={italic} glyph {character!r}"
+                            )
+                            if native not in (0, 0xFFFFFFFF):
+                                data = ctypes.create_string_buffer(native)
+                                outline(
+                                    dc, ord(character), 2, ctypes.byref(metrics), native, data, ctypes.byref(identity)
+                                )
+                                print_native(data.raw)
+                        select(dc, previous)
+                        delete(font)
+        check(set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))), "SetWorldTransform")
 
 
 if __name__ == "__main__":
