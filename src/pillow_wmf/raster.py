@@ -1867,6 +1867,20 @@ class RasterContext(ExecutionContext[DrawingState]):
             em_width = em_height * self._font_aspect()
 
         def notional_matrix(angle):
+            if compatible:
+                # A compatible-mode font rotates by its escapement in device
+                # space, after the world transform scales it.
+                # The device angle is the requested one, mirrored or not.
+                mirrored = m11 * m22 - m12 * m21 < 0
+                sine, cosine = (Fraction(value) for value in text_rotation(-angle if mirrored else angle))
+                t11, t12 = m11 * em_width / upem, -m21 * em_height / upem
+                t21, t22 = m12 * em_width / upem, -m22 * em_height / upem
+                return (
+                    cosine * t11 + sine * t21,
+                    cosine * t12 + sine * t22,
+                    cosine * t21 - sine * t11,
+                    cosine * t22 - sine * t12,
+                )
             # Notional (u, v), y up, to logical (x, y), y down, rotated by the angle.
             sine, cosine = text_rotation(angle)
             l11, l12 = em_width / upem * Fraction(cosine), -em_height / upem * Fraction(sine)
@@ -1911,10 +1925,16 @@ class RasterContext(ExecutionContext[DrawingState]):
                 indices.append(index)
         else:
             indices = list(glyph_indices)
-        world_baseline = (
-            float(m11) * float(cosine) - float(m21) * float(sine),
-            float(m12) * float(cosine) - float(m22) * float(sine),
-        )
+        if compatible:
+            world_baseline = (
+                float(cosine) * float(m11) + float(sine) * float(m12),
+                float(cosine) * float(m12) - float(sine) * float(m11),
+            )
+        else:
+            world_baseline = (
+                float(m11) * float(cosine) - float(m21) * float(sine),
+                float(m12) * float(cosine) - float(m22) * float(sine),
+            )
         baseline = baseline_vector(advance_matrix or matrix, world_baseline)
         world_side = (
             -float(m11) * float(sine) - float(m21) * float(cosine),
@@ -1928,6 +1948,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         breaks = tuple(
             number for number, index in enumerate(indices) if index and index == face.cmap.get(face.break_character)
         )
+        if compatible and not advances and m12:
+            # Compatible-mode text under a rotating world transform advances by
+            # whole logical widths at the logical em's 16.16 scale, along the baseline.
+            fixed_scale = Fraction(_round_half_away(em_width * 65536 / upem), 65536)
+            advances = tuple(_round_half_away(face.design_advances.get(i, 0) * fixed_scale) for i in indices)
         run = place_run(
             font,
             indices,

@@ -95,6 +95,10 @@ def cases():
             yield name, height, matrix, 0
     yield "escapement", -10, TRANSFORMS["identity"], 300
     yield "escapement-scale", -10, TRANSFORMS["scale"], 300
+    # A 4-unit em under the EMF fixtures' 128/51 playback scale: fractional
+    # device em sizes.
+    for name, matrix in TRANSFORMS.items():
+        yield f"{name}-fractional", -4, tuple(value * 128 / 51 for value in matrix), 0
 
 
 def main():
