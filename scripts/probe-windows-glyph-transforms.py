@@ -20,7 +20,8 @@ add glyph pairs and explicit advances); ``opaque`` blocks show rotated
 and sheared background cells at sub-pixel origins; ``outline``
 blocks give GGO_NATIVE points across sizes, transforms and simulated bold
 italic; ``big`` blocks pair large simulated styles' outlines with the drawn
-glyphs.
+glyphs; ``rbsweep`` and ``bigsweep`` repeat recorded bounds and large bold
+italic glyphs at sub-pixel origins.
 """
 
 import ctypes
@@ -466,6 +467,30 @@ def main():
                                 print_native(data.raw)
                         select(dc, previous)
                         delete(font)
+        check(set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))), "SetWorldTransform")
+
+        # Recorded bounds of short runs under a rotated font, with the world
+        # origin moved by sixteenths of a pixel.
+        for height, angle in ((-10, 240), (-25, 240)):
+            for step in range(16):
+                print(f"rbsweep height={height} escapement={angle} shift={step / 16}")
+                calls = [(text, 1, None) for text in ("A", "B", " ", "AB", "BA", "BB", "AA")]
+                recorded_boxes((1.0, 0.0, 0.0, 1.0, step / 16, step / 32), height, angle, calls)
+
+        # Bold italic beside upright bold at a large size under the identity,
+        # drawn at sixteen sub-pixel offsets, to pin each edge.
+        set_align(dc, 24)
+        for weight, italic in ((700, 1), (700, 0)):
+            font = make_font(-56, 0, 0, weight, italic)
+            previous = select(dc, font)
+            for character in "AB":
+                for step in range(16):
+                    ctypes.memset(bits, 0xFF, SIZE * SIZE * 4)
+                    set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 36.0 + step / 16, 84.0)))
+                    text_out(dc, 0, 0, 0, None, character, 1, None)
+                    print_rows(f"bigsweep weight={weight} italic={italic} text {character!r} shift={step / 16}")
+            select(dc, previous)
+            delete(font)
         check(set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))), "SetWorldTransform")
 
         # Large simulated styles: the drawn glyph and its native outline, to
