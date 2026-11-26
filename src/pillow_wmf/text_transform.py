@@ -17,7 +17,6 @@ horizontal alignment by the whole or half total advance (halved toward zero),
 and each origin then rounds to a pixel, ``(p + 8) >> 4``.
 """
 
-import struct
 from ctypes import byref
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -30,7 +29,7 @@ from .binary import ResourceLimitError
 from .embolden import embolden
 from .font import _FREETYPE, Glyph, _Face, _unpack_bitmap
 from .gdi import UnsupportedOperation
-from .numeric import float32
+from .numeric import efloat_sqrt, float32
 
 
 def _round_half_away(value) -> int:
@@ -487,30 +486,9 @@ def _gen_widths(alpha, beta, width, top, bottom, height):
 
     def extent(limit):
         ratio = float32(float32(beta) / float32(limit))
-        return _round_half_away(float32(1 / _efloat_sqrt(float32(float32(ratio * ratio) + across))))
+        return _round_half_away(float32(1 / efloat_sqrt(float32(float32(ratio * ratio) + across))))
 
     return extent(low), extent(high)
-
-
-def _efloat_sqrt(value: float) -> float:
-    """GDI's single-precision square root: the mantissa's root truncated to 24 bits."""
-    if value <= 0:
-        return 0.0
-    bits = struct.unpack("<I", struct.pack("<f", value))[0]
-    exponent = bits >> 23 & 0xFF
-    odd = (exponent - 1) & 1
-    mantissa = (bits & 0x7FFFFF | 0x800000) << (8 if odd else 7)
-    exponent = (exponent + 0x7E + (odd ^ 1)) >> 1
-    root = remainder = 0
-    for _ in range(24):
-        remainder = remainder << 2 | mantissa >> 30 & 3
-        mantissa = mantissa << 2 & 0xFFFFFFFF
-        trial = root << 2 | 1
-        root <<= 1
-        if trial <= remainder:
-            root |= 1
-            remainder -= trial
-    return struct.unpack("<f", struct.pack("<I", exponent << 23 | root & 0x7FFFFF))[0]
 
 
 def _escapement_positions(font, indices, advances, baseline, extra, break_extra, breaks):

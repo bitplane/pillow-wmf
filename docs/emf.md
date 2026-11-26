@@ -118,6 +118,8 @@ Text records play through the font collection's faces:
   sum of per-glyph extents: the distance from the centre, along the
   escapement, to an ellipse through the half advance and the whole-pixel ink
   top or bottom widened by a sixteenth of the font's ascent.
+- A zero font height takes the device's default 16 pixel em, converted to a
+  whole number of logical units along the world y axis.
 - Current-position text continues from the 28.4 device point the previous run
   left. An opaque cell widens over ink protruding past the advances, and, with
   explicit advances, to the left of the origin.

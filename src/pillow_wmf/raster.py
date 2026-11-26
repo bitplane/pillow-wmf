@@ -65,7 +65,7 @@ from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, P
 from .gradient import mesh_triangles
 from .limits import DEFAULT_LIMITS
 from .mapping import IDENTITY_TRANSFORM, Mapping
-from .numeric import float32
+from .numeric import efloat_sqrt, float32
 from .objects import EncodedText, FontRequest, GlyphIndices, UnicodeText
 from .paint import pattern_rop2
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
@@ -80,7 +80,13 @@ from .surface import Surface
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
 from .text_math import text_rotation
-from .text_transform import TransformedFont, baseline_vector, decoration_areas, opaque_area, place_run
+from .text_transform import (
+    TransformedFont,
+    baseline_vector,
+    decoration_areas,
+    opaque_area,
+    place_run,
+)
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
@@ -1860,8 +1866,11 @@ class RasterContext(ExecutionContext[DrawingState]):
             em_height = Fraction(request.height * upem, face.ascent + face.descent)
             em_height = Fraction(int(em_height * 65536), 65536)
         else:
-            # The default height is a 16 pixel em on the device's y axis.
-            em_height = Fraction(16) / Fraction(math.sqrt(float(m21 * m21 + m22 * m22)))
+            # The default height is a 16 pixel em on the device's y axis,
+            # rounded to whole logical units.
+            a, b = float32(16 * m21), float32(16 * m22)
+            length = efloat_sqrt(float32(float32(a * a) + float32(b * b)))
+            em_height = Fraction(_round_half_away(float32(float32(1 / length) * 256)) or 24)
         if request.width:
             em_width = Fraction(abs(request.width) * upem, face.average_width)
         else:
