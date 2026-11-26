@@ -40,7 +40,7 @@ class FontCollection:
         aliases=None,
         fallbacks=None,
         missing_glyph="error",
-        synthesize_styles=False,
+        synthesize_styles=True,
         wingdings_fallback=False,
         symbol_fallback=False,
         default_font: FontRequest | None = None,
@@ -160,9 +160,16 @@ class FontCollection:
         self._lock = Lock()
 
     def _select_face(self, key):
+        """The exact face, else, as GDI's mapper does, the family's nearest
+        face: the requested slant first, then the closest weight. Realization
+        simulates the missing bold or italic."""
         face = self._faces.get(key)
-        if face is None and self.synthesize_styles and key[1] in (400, 700):
-            face = self._faces.get((key[0], 400, False))
+        if face is None and self.synthesize_styles:
+            family, weight, italic = key
+            candidates = [k for k in self._faces if k[0] == family]
+            if candidates:
+                best = min(candidates, key=lambda k: (k[2] != italic, abs(k[1] - weight), k[1] > weight))
+                face = self._faces[best]
         return face
 
     def _charset(self, request):

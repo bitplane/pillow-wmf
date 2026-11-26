@@ -28,8 +28,10 @@ def test_resolution_is_explicit_and_case_insensitive(face):
     assert fonts.resolve(replace(REQUEST, face_name=b"pillow wmf TEST", weight=0)) is face
     with pytest.raises(UnsupportedOperation, match="unavailable"):
         fonts.resolve(replace(REQUEST, face_name=b"Arial"))
+    # Missing styles are simulated from the family's nearest face unless disabled.
+    assert fonts.resolve(replace(REQUEST, weight=700)) is face
     with pytest.raises(UnsupportedOperation, match="unavailable"):
-        fonts.resolve(replace(REQUEST, weight=700))
+        FontCollection([face], synthesize_styles=False).resolve(replace(REQUEST, weight=700))
     with pytest.raises(UnsupportedOperation, match="Default font"):
         fonts.resolve(None)
     with pytest.raises(ValueError, match="Ambiguous"):

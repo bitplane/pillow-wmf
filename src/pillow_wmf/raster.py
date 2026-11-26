@@ -1860,39 +1860,41 @@ class RasterContext(ExecutionContext[DrawingState]):
 
         See ``text_transform``.
         """
-        if vertical_advances or options & ETO_PDY:
-            raise UnsupportedOperation("Paired advances under a general text transform")
         text_state = self._state.text_state
-        if text_state.character_extra or text_state.justification[0]:
-            raise UnsupportedOperation("Text spacing under a general text transform")
-        if request.weight >= 700 > face.weight or (request.italic and not face.italic):
-            raise UnsupportedOperation("Synthetic styles under a general text transform")
         compatible = self._font_xform is not None
-        if not compatible and request.orientation != request.escapement:
-            raise UnsupportedOperation("Escapement apart from orientation under a general text transform")
         upem = face.units_per_em
+        m11, m12, m21, m22 = (Fraction(value) for value in self._linear_transform())
         if request.height < 0:
             em_height = Fraction(-request.height)
         elif request.height > 0:
             em_height = Fraction(request.height * upem, face.ascent + face.descent)
             em_height = Fraction(int(em_height * 65536), 65536)
         else:
-            raise UnsupportedOperation("Default font height under a general text transform")
+            # The default height is a 16 pixel em on the device's y axis.
+            em_height = Fraction(16) / Fraction(math.sqrt(float(m21 * m21 + m22 * m22)))
         if request.width:
             em_width = Fraction(abs(request.width) * upem, face.average_width)
         else:
             em_width = em_height * self._font_aspect()
+
+        def notional_matrix(angle):
+            # Notional (u, v), y up, to logical (x, y), y down, rotated by the angle.
+            sine, cosine = text_rotation(angle)
+            l11, l12 = em_width / upem * Fraction(cosine), -em_height / upem * Fraction(sine)
+            l21, l22 = -em_width / upem * Fraction(sine), -em_height / upem * Fraction(cosine)
+            return (
+                m11 * l11 + m21 * l21,
+                m11 * l12 + m21 * l22,
+                m12 * l11 + m22 * l21,
+                m12 * l12 + m22 * l22,
+            )
+
+        # GM_ADVANCED rotates glyphs by the orientation and lays the baseline
+        # along the escapement; compatible records use the escapement for both.
+        orientation = request.escapement if compatible else request.orientation
+        matrix = notional_matrix(orientation)
+        advance_matrix = notional_matrix(request.escapement) if orientation != request.escapement else None
         sine, cosine = text_rotation(request.escapement)
-        # Notional (u, v), y up, to logical (x, y), y down, rotated by the escapement.
-        l11, l12 = em_width / upem * Fraction(cosine), -em_height / upem * Fraction(sine)
-        l21, l22 = -em_width / upem * Fraction(sine), -em_height / upem * Fraction(cosine)
-        m11, m12, m21, m22 = (Fraction(value) for value in self._linear_transform())
-        matrix = (
-            m11 * l11 + m21 * l21,
-            m11 * l12 + m21 * l22,
-            m12 * l11 + m22 * l21,
-            m12 * l12 + m22 * l22,
-        )
         font = TransformedFont(
             face.data,
             face.index,
@@ -1904,6 +1906,9 @@ class RasterContext(ExecutionContext[DrawingState]):
             face.design_advances,
             quality=request.quality,
             ink_spans=face.ink_spans,
+            advance_matrix=advance_matrix,
+            oblique=bool(request.italic) and not face.italic,
+            embolden=request.weight >= 700 > face.weight,
         )
         if glyph_indices is None:
             indices = []
@@ -1921,13 +1926,31 @@ class RasterContext(ExecutionContext[DrawingState]):
             float(m11) * float(cosine) - float(m21) * float(sine),
             float(m12) * float(cosine) - float(m22) * float(sine),
         )
+        baseline = baseline_vector(advance_matrix or matrix, world_baseline)
+        world_side = (
+            -float(m11) * float(sine) - float(m21) * float(cosine),
+            -float(m12) * float(sine) - float(m22) * float(cosine),
+        )
+        side = baseline_vector((matrix[1], 0, matrix[3], 0), world_side)
+        scale = baseline[2]
+        extra = _round_half_away(float32(text_state.character_extra * scale))
+        break_count, break_total = text_state.justification
+        break_extra = int(_round_half_away(float32(break_total * scale)) / break_count) if break_count > 0 else 0
+        breaks = tuple(
+            number for number, index in enumerate(indices) if index and index == face.cmap.get(face.break_character)
+        )
         run = place_run(
             font,
             indices,
             fixed_origin,
             alignment,
             advances=advances,
-            baseline=baseline_vector(matrix, world_baseline) if advances else None,
+            vertical_advances=vertical_advances,
+            baseline=baseline,
+            side=side,
+            extra=extra,
+            break_extra=break_extra,
+            breaks=breaks,
             max_pixels=self.max_bitmap_pixels,
         )
 

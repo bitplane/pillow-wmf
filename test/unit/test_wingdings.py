@@ -40,8 +40,8 @@ def test_fallback_is_opt_in_and_retains_physical_identity():
     for family in (b"Wingdings 2", b"Wingdings 3", b"Webdings"):
         with pytest.raises(UnsupportedOperation, match="unavailable"):
             fonts.resolve(replace(REQUEST, face_name=family))
-    with pytest.raises(UnsupportedOperation, match="unavailable"):
-        fonts.resolve(replace(REQUEST, weight=700))
+    # Bold simulates from the fallback face.
+    assert fonts.resolve(replace(REQUEST, weight=700)) is face
 
 
 def test_supplied_symbol_face_wins_without_recoding():

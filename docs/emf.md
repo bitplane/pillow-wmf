@@ -132,7 +132,7 @@ the codec and reference columns against the code and fixtures.
 | `SCALEWINDOWEXTEX` | typed | full | no | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
-| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing except text; see below. |
+| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing, text included; see below. |
 | `MODIFYWORLDTRANSFORM` | typed | partial | yes | As SETWORLDTRANSFORM. |
 | `SELECTOBJECT` | typed | partial | yes | Stock brushes, pens and palette; stock fonts need the font work. |
 | `CREATEPEN` | typed | full | yes |  |
@@ -563,7 +563,6 @@ source pixel. A mask bit of 1 copies the source pixel.
   geometry, each in its own way
   ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
   records the native results).
-- Under rotating or shearing transforms: text is refused.
 - EMF+ (GDI+) drawing.
-- Text in `GM_ADVANCED`, Unicode text and stock fonts. Text output is
-  font-limited and reported separately from exact comparisons.
+- Stock fonts. Text output with real fonts is font-limited and reported
+  separately from exact comparisons.

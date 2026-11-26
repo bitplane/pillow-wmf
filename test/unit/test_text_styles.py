@@ -17,8 +17,8 @@ REQUEST = Font(height=-24, weight=400, quality=3, face_name=b"Pillow WMF Test")
 def test_synthetic_glyph_matches_native_controlled_rows(face, bold, italic):
     request = replace(REQUEST, weight=700 if bold else 400, italic=int(italic))
     with pytest.raises(UnsupportedOperation, match="unavailable"):
-        FontCollection([face]).resolve(request)
-    fonts = FontCollection([face], synthesize_styles=True)
+        FontCollection([face], synthesize_styles=False).resolve(request)
+    fonts = FontCollection([face])
     glyph = fonts.realize(request, fonts.resolve(request), (1, 1)).glyph("A", 10000)
     # Windows monochrome scanlines for the original L-shaped test glyph.
     lefts = (7, 6, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1) if italic else (1,) * 17

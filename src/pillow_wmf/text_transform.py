@@ -7,7 +7,7 @@ placed in 28.4 device units as native general-transform placement does:
 
 - without explicit advances, each glyph's advance vector is the notional
   advance through the matrix, in 32.32 fixed point; the vectors accumulate
-  from one half, and each origin takes the accumulator's whole part;
+  and each origin takes the accumulator's whole part;
 - with explicit advances, the running logical sum is scaled to 28.4 along
   the baseline in single precision and rounded, then multiplied by the
   unit baseline vector and rounded again, both half away from zero.
@@ -54,6 +54,13 @@ class TransformedFont:
     quality: int = 3
     # Notional black-box start and end along the baseline, by glyph.
     ink_spans: dict = field(default_factory=dict)
+    # The matrix advances follow when the baseline (escapement) differs from
+    # the glyph orientation; None when they agree.
+    advance_matrix: tuple | None = None
+    # Simulated styles: italic shears the notional outline; bold widens the
+    # ink by a pixel along the baseline and adds a pixel to each advance.
+    oblique: bool = False
+    embolden: bool = False
     _frame: object = field(default=None, repr=False)
     _glyphs: dict = field(default_factory=dict, repr=False)
     _lock: Lock = field(default_factory=Lock, repr=False, compare=False)
@@ -97,9 +104,13 @@ class TransformedFont:
             face.load_glyph(index, ft.FT_LOAD_NO_SCALE | ft.FT_LOAD_NO_BITMAP)
             slot = face.glyph
             a, b, c, d = self.matrix
+            if self.oblique:
+                b, d = b + OBLIQUE * a, d + OBLIQUE * c
             # Notional units become 26.6 device units; FreeType's y is up.
             matrix = ft.Matrix(*(_round_half_away(Fraction(value) * 64 * 65536) for value in (a, b, -c, -d)))
             ft.FT_Outline_Transform(byref(slot.outline._FT_Outline), byref(matrix))
+            if self.embolden:
+                ft.FT_Outline_EmboldenXY(byref(slot.outline._FT_Outline), 64, 0)
             bounds = slot.get_glyph().get_cbox(ft.FT_GLYPH_BBOX_PIXELS)
             padding = 0 if self.quality in (3, 4) else 2
             if (max(1, bounds.xMax - bounds.xMin) + padding) * max(1, bounds.yMax - bounds.yMin) > max_pixels:
@@ -132,6 +143,8 @@ class TransformedFont:
             raise UnsupportedOperation(f"Cannot realize glyph {index}: {error}") from error
         outline = face.glyph.outline
         a, b, c, d = self._device_matrix()
+        if self.oblique:
+            b, d = b + OBLIQUE * a, d + OBLIQUE * c
 
         def device(point):
             # Each product is rounded to 26.6 before the sum, as fixed-point
@@ -146,6 +159,10 @@ class TransformedFont:
         # A mirroring transform reverses the outline's orientation.
         closed = Fraction(a) * Fraction(d) - Fraction(b) * Fraction(c) < 0
         pixels = scan_outline(contours, closed=closed)
+        if self.embolden:
+            ux, uy = self.frame().base
+            step = (1 if ux >= 0.5 else -1 if ux <= -0.5 else 0, 1 if uy >= 0.5 else -1 if uy <= -0.5 else 0)
+            pixels |= {(x + step[0], y + step[1]) for x, y in pixels}
         if not pixels:
             return Glyph((0, 0), (0, 0), b"", 0, index, 1)
         xs, ys = [x for x, _ in pixels], [y for _, y in pixels]
@@ -160,21 +177,25 @@ class TransformedFont:
     def advance(self, index: int) -> tuple[int, int]:
         """The glyph's device advance vector in 28.4 units scaled by 2^32.
 
-        Advances are whole pixels. A scale-only transform scales the design
-        width by its 16.16 pixels per unit and rounds; others round the width
-        at the whole pixels per em of the transformed x axis, half up, and
-        lay it along that axis.
+        A scale-only transform scales the design width by its 16.16 pixels
+        per unit and rounds to whole pixels; others lay the unrounded design
+        width along the transformed x axis.
         """
-        a, b, c, d = self._device_matrix()
+        a, b, c, d = self._device_matrix() if self.advance_matrix is None else self.advance_matrix
         units = self.design_advances.get(index, 0)
         if not b and not c:
             scale = Fraction(_round_half_away(abs(Fraction(a)) * 65536), 65536)
-            pixels = _round_half_away(units * scale)
+            pixels = _round_half_away(units * scale) + (1 if self.embolden and units else 0)
             return ((pixels if a >= 0 else -pixels) * 16 << 32, 0)
-        length = sqrt(float(a) ** 2 + float(c) ** 2)
-        em = int(length * self.units_per_em + 0.5)
-        pixels = int(Fraction(units * em, self.units_per_em) + Fraction(1, 2))
-        return tuple(_round_half_away(Fraction(pixels * value / length) * 16 * (1 << 32)) for value in (a, c))
+        # The design width times the 28.4 image of the notional x axis, in
+        # single precision, taken exactly into 32.32.
+        vector = tuple(int(float32(units * float32(16 * float32(value))) * (1 << 32)) for value in (a, c))
+        if self.embolden and units:
+            vector = tuple(
+                value + int(float32(16 * unit) * (1 << 32))
+                for value, unit in zip(vector, self.frame().base, strict=True)
+            )
+        return vector
 
     def vertical(self, units: int) -> tuple[int, int]:
         """A notional vertical offset as a 28.4 device vector.
@@ -212,6 +233,8 @@ class TransformedFont:
         # The driver bounds the em box by the head table's yMax and yMin, each
         # widened by 1/64 em, and rounds each extent out to whole pixels along
         # the side vector.
+        if self.advance_matrix is not None:
+            a, c = float32(self.advance_matrix[0]), float32(self.advance_matrix[2])
         base_length, base = _unit(a * 16, c * 16)
         side_length, side = _unit(b * 16, d * 16)
         margin = self.units_per_em >> 6
@@ -230,14 +253,34 @@ class TransformedFont:
 
     def offset(self, units: int) -> tuple[int, int]:
         """A notional vertical offset (y up) as whole device pixels, as the driver places decorations."""
-        _, b, _, d = (float32(value) for value in self._device_matrix())
+        _, b, c, d = (float32(value) for value in self._device_matrix())
+        if not b and not c:
+            return (0, -((_y_scale(d) * units >> 15) + 1 >> 1))
         return tuple(((_round_half_away(16 * float32(units * value)) >> 3) + 1) >> 1 for value in (b, d))
+
+    def thickness(self, units: int) -> tuple[int, int]:
+        """A decoration's thickness vector; a scale-only cell keeps at least one pixel."""
+        _, b, c, d = (float32(value) for value in self._device_matrix())
+        if not b and not c:
+            scale = _y_scale(d)
+            pixels = (scale * units >> 15) + 1 >> 1
+            return (0, pixels or (1 if scale >= 1 else -1))
+        return self.offset(-units)
 
     def ink(self, index: int) -> tuple[int, int]:
         """The glyph's black-box start and end along the baseline, 28.4."""
         left, right = self.ink_spans.get(index, (0, 0))
         length = self.frame().base_length
         return _round_half_away(float32(left * length)), _round_half_away(float32(right * length))
+
+
+def _y_scale(d) -> int:
+    """The driver's 16.16 notional-to-device y scale, notional y pointing down."""
+    return _round_half_away(-Fraction(d) * 65536)
+
+
+# The driver's simulated italic shears x by this much of y (0x5700 in 16.16).
+OBLIQUE = Fraction(0x5700, 0x10000)
 
 
 def _unit(x, y):
@@ -273,11 +316,27 @@ class TransformedRun:
     offsets: tuple = ()
 
 
-def place_run(font: TransformedFont, indices, origin, alignment, *, advances=(), baseline=None, max_pixels):
+def place_run(
+    font: TransformedFont,
+    indices,
+    origin,
+    alignment,
+    *,
+    advances=(),
+    vertical_advances=(),
+    baseline=None,
+    side=None,
+    extra=0,
+    break_extra=0,
+    breaks=(),
+    max_pixels,
+):
     """Place glyphs by native general-transform placement; ``origin`` is 28.4.
 
-    ``baseline`` gives, for explicit advances, the unit baseline vector and
-    the logical-to-28.4 scale along it.
+    ``baseline`` gives the unit baseline vector and the logical-to-28.4 scale
+    along it; ``side`` the same across it, for paired (ETO_PDY) advances.
+    ``extra`` and ``break_extra`` are 28.4 spacing along the baseline after
+    every glyph and after each glyph whose position is in ``breaks``.
     """
     horizontal, vertical = alignment & 6, alignment & 24
     origin_x, origin_y = origin
@@ -291,18 +350,30 @@ def place_run(font: TransformedFont, indices, origin, alignment, *, advances=(),
     positions = [(0, 0)]
     if advances:
         ux, uy, scale = baseline
-        total = 0
-        for value in advances:
+        total = rise = 0
+        for number, value in enumerate(advances):
             total += value
             along = _round_half_away(float32(float32(total) * float32(scale)))
-            positions.append(
-                (_round_half_away(float32(ux * float32(along))), _round_half_away(float32(uy * float32(along))))
-            )
+            along += extra * (number + 1) + break_extra * sum(1 for b in breaks if b <= number)
+            x = _round_half_away(float32(ux * float32(along)))
+            y = _round_half_away(float32(uy * float32(along)))
+            if vertical_advances:
+                vx, vy, side_scale = side
+                rise += vertical_advances[number]
+                up = _round_half_away(float32(float32(rise) * float32(side_scale)))
+                x += _round_half_away(float32(vx * float32(up)))
+                y += _round_half_away(float32(vy * float32(up)))
+            positions.append((x, y))
     else:
         sx = sy = 0
-        for index in indices:
+        base = font.frame().base
+        unit = tuple(int(value * (1 << 32)) for value in base)
+        for number, index in enumerate(indices):
             dx, dy = font.advance(index)
             sx, sy = sx + dx, sy + dy
+            spacing = extra + (break_extra if number in breaks else 0)
+            if spacing:
+                sx, sy = sx + unit[0] * spacing, sy + unit[1] * spacing
             positions.append((sx >> 32, sy >> 32))
     total = positions.pop()
     if horizontal == 2:
@@ -351,6 +422,34 @@ def opaque_area(font: TransformedFont, run: TransformedRun, indices):
     bx, by = frame.base
     sx, sy = frame.side
     ox, oy = run.origin
+    if not by and not sx or not bx and not sy:
+        # An axis-aligned cell is a pixel rectangle, one pixel wider along x.
+        cx, cy = (ox + 8) >> 4, (oy + 8) >> 4
+        if not by:
+            x0, x1 = (
+                (cx + (left >> 4), cx + ((right + 15) >> 4))
+                if bx >= 0
+                else (cx - ((right + 15) >> 4), cx - (left >> 4))
+            )
+            y0, y1 = (
+                (cy + (bottom >> 4), cy + ((top + 15) >> 4))
+                if sy >= 0
+                else (cy - ((top + 15) >> 4), cy - (bottom >> 4))
+            )
+            x1 += 1
+        else:
+            x0, x1 = (
+                (cx + (bottom >> 4), cx + ((top + 15) >> 4))
+                if sx >= 0
+                else (cx - ((top + 15) >> 4), cx - (bottom >> 4))
+            )
+            y0, y1 = (
+                (cy + (left >> 4), cy + ((right + 15) >> 4))
+                if by >= 0
+                else (cy - ((right + 15) >> 4), cy - (left >> 4))
+            )
+            y1 += 1
+        return ((x0 * 16, y0 * 16), (x1 * 16, y0 * 16), (x1 * 16, y1 * 16), (x0 * 16, y1 * 16))
     ax, ay = _round_product(left, bx), _round_product(left, by)
     cx, cy = _round_product(right, bx), _round_product(right, by)
     ex, ey = _round_product(top, sx), _round_product(top, sy)
@@ -370,7 +469,7 @@ def decoration_areas(font: TransformedFont, run: TransformedRun, metrics):
     areas = []
     for position, thickness in metrics:
         px, py = font.offset(position)
-        tx, ty = font.offset(-thickness)
+        tx, ty = font.thickness(thickness)
         x, y = ox + px * 16, oy + py * 16
         tx, ty = tx * 16, ty * 16
         areas.append(((x, y), (x + ax, y + ay), (x + ax + tx, y + ay + ty), (x + tx, y + ty)))
