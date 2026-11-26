@@ -221,6 +221,11 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
 )
 
 
+def _round_half_away(value) -> int:
+    magnitude = math.floor(abs(value) + 0.5)
+    return magnitude if value >= 0 else -magnitude
+
+
 def div255(value: int) -> int:
     """GDI's rounded division by 255."""
     return (value + 128 + ((value + 128) >> 8)) >> 8
@@ -317,13 +322,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         """Preparation lives beside its handler; simple state calls need none."""
         if self.mapping.graphics_mode == GM_ADVANCED and call.name in UNVERIFIED_IN_ADVANCED_MODE:
             raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
-        if self.mapping.rotated and (
-            call.name in AXIS_ALIGNED_ONLY
-            or (
-                call.name in {"rectangle", "ellipse", "round_rect", "arc", "chord", "pie"}
-                and self._state.pen.style == PS_INSIDEFRAME
-            )
-        ):
+        if self.mapping.rotated and call.name in AXIS_ALIGNED_ONLY:
             raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
@@ -1559,6 +1558,10 @@ class RasterContext(ExecutionContext[DrawingState]):
                 self.mapping.fixed_point(logical_right, logical_top),
                 self.mapping.fixed_point(logical_left, logical_bottom),
             )
+            if self.mapping.rotated and self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
+                lt, rt, lb = self._inside_frame_corners(
+                    lt, rt, lb, self._state.pen.width, logical_right - logical_left, logical_bottom - logical_top
+                )
             rb = (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1])
             corners = (lt, rt, rb, lb) if self.mapping.rotated else None
             (x0, y0), (x1, y1) = lt, rb
@@ -1583,12 +1586,15 @@ class RasterContext(ExecutionContext[DrawingState]):
             drawing_bounds = advanced_bounds
             covered = False
             if self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
-                covered, drawing_bounds = inside_frame_bounds(
+                covered, inset_bounds = inside_frame_bounds(
                     (a["left"], a["top"], a["right"], a["bottom"]),
                     (left, top, right, bottom),
                     self._state.pen.width,
                     self.mapping.linear_scale,
                 )
+                if not corners:
+                    # Rotated boxes were inset at their transformed corners.
+                    drawing_bounds = inset_bounds
                 if covered and name in {"arc", "chord", "pie"}:
                     return
             rectangle = name == "rectangle"
@@ -1685,6 +1691,30 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if rectangle and brush.style == BS_HATCHED and self._state.rop2 in (R2_BLACK, R2_NOT, R2_NOP, R2_WHITE):
                     brush = replace(brush, style=0)
                 painter.paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
+
+    def _inside_frame_corners(self, lt, rt, lb, width, box_width, box_height):
+        """Inset a transformed box for an inside-frame pen, as native EBOX does.
+
+        The vectors (-width, width) and (width, width) are mapped to 28.4 and
+        halved, rounding up; the upper-right corner moves by the first, the
+        upper-left by the second and the lower-left back by the first. A box
+        narrower than the pen keeps its corners: the pen fills it.
+        """
+        if width > min(box_width, box_height):
+            return lt, rt, lb
+        m11, m12, m21, m22 = self.mapping.world[:4]
+        f = float32
+
+        def vector(x, y):
+            return tuple(_round_half_away(16 * f(f(y * b) + f(x * a))) for a, b in ((m11, m21), (m12, m22)))
+
+        first = tuple((value + 1) >> 1 for value in vector(-width, width))
+        second = tuple((value + 1) >> 1 for value in vector(width, width))
+        return (
+            (lt[0] + second[0], lt[1] + second[1]),
+            (rt[0] + first[0], rt[1] + first[1]),
+            (lb[0] - first[0], lb[1] - first[1]),
+        )
 
     _apply_ellipse = _apply_rectangle
     _apply_arc = _apply_rectangle

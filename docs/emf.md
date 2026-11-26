@@ -483,6 +483,12 @@ products plus the 28.4 translation.
   used by geometric pens, one per box axis, taken from the two edges that
   leave the left-top corner and shared by both parallel edges. Other figures
   keep the support-vertex bodies of wide `CreatePen` strokes.
+- A wide `PS_INSIDEFRAME` pen insets the box at its transformed corners: the
+  vectors (-width, width) and (width, width) are mapped to 28.4 and halved,
+  rounding up; the right-top corner moves by the first, the left-top by the
+  second and the left-bottom back by the first. A box narrower than the pen
+  on either axis is filled with the pen instead, and arcs, chords and pies
+  in it draw nothing.
 - Geometric pens use the caps, joins and styles above with the realized pen.
 - `PatBlt` and the DIB transfers (`BitBlt`, `StretchBlt`, `StretchDIBits`
   and `MaskBlt` records, any ROP3) cover the polygon fill of their
