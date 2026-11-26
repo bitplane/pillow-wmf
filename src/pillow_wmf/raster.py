@@ -49,6 +49,7 @@ from .constants import (
     WINDING,
 )
 from .ellipse import (
+    advanced_arc,
     advanced_ellipse_cubics,
     arc_figure,
     box_corners,
@@ -437,40 +438,25 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_arc_direction(self, call, prepared, result):
         self._state.arc_direction = call.kwargs["direction"]
 
-    def _advanced_arc(self, box, start, end, closure="open", angles=None):
-        """A GM_ADVANCED arc figure in world orientation.
+    def _advanced_arc(self, box, start, end, closure="open", angles=None, *, inside_frame=False):
+        """A GM_ADVANCED arc figure in world orientation; see ``advanced_arc``.
 
-        A clockwise arc is the y-mirror image of a counterclockwise one,
-        as a mirroring transform gives. ``angles`` gives the arc's directions
-        in degrees in place of the radial points.
+        With ``inside_frame``, a wide inside-frame pen insets the box, and a
+        box narrower than the pen gives None.
         """
-        left, right = sorted(box[0::2])
-        top, bottom = sorted(box[1::2])
-        (x0, y0), (x1, y1) = self.mapping.fixed_point(left, top), self.mapping.fixed_point(right, bottom)
-        if self._state.arc_direction == 2:
-            y0, y1 = y1, y0
-            start, end = (start[0], top + bottom - start[1]), (end[0], top + bottom - end[1])
-            angles = angles and tuple(-value for value in angles)
-        ceil = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
-        corners = None
-        if self.mapping.rotated:
-            # The mirror image swaps the box's top and bottom corners.
-            near, far = (bottom, top) if self._state.arc_direction == 2 else (top, bottom)
-            lt, rt, lb = (self.mapping.fixed_point(*point) for point in ((left, near), (right, near), (left, far)))
-            corners = (lt, rt, (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1]), lb)
-        return arc_figure(
-            *ceil[:2],
-            ceil[2] + 1,
-            ceil[3] + 1,
+        width = 0
+        if inside_frame and self._state.pen.style == PS_INSIDEFRAME and not self._painter().realized_pen.cosmetic:
+            width = self._state.pen.width
+        return advanced_arc(
+            self.mapping,
+            box,
             start,
             end,
+            direction=self._state.arc_direction,
             closure=closure,
             null_pen=self._state.pen.style == PS_NULL,
-            drawing_bounds=(x0, y0, x1, y1),
-            radial_bounds=(left, top, right, bottom),
-            advanced=True,
-            corners=corners,
             angles=angles,
+            inside_frame=width,
         )
 
     def _stroke_from_position(self, path, end):
@@ -498,7 +484,9 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         box = (a["left"], a["top"], a["right"], a["bottom"])
         end = (a["end_x"], a["end_y"])
-        path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end)
+        path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end, inside_frame=True)
+        if path is None:
+            return  # A box narrower than an inside-frame pen: nothing happens.
         # The current position is the arc's 28.4 end, floored to a logical point.
         self._stroke_from_position(path, self._floor_logical(path.commands[-1][-1]))
 
@@ -1571,10 +1559,10 @@ class RasterContext(ExecutionContext[DrawingState]):
                 self.mapping.fixed_point(logical_right, logical_top),
                 self.mapping.fixed_point(logical_left, logical_bottom),
             )
-            if self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
-                lt, rt, lb = self._inside_frame_corners(
-                    lt, rt, lb, self._state.pen.width, logical_right - logical_left, logical_bottom - logical_top
-                )
+            width = self._state.pen.width
+            covered = width > min(logical_right - logical_left, logical_bottom - logical_top)
+            if self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic and not covered:
+                lt, rt, lb = self.mapping.inside_frame_corners(lt, rt, lb, width)
             rb = (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1])
             corners = (lt, rt, rb, lb) if self.mapping.rotated else None
             (x0, y0), (x1, y1) = lt, rb
@@ -1688,6 +1676,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                         (a["start_x"], a["start_y"]),
                         (a["end_x"], a["end_y"]),
                         closure="open" if name == "arc" else name,
+                        inside_frame=True,
                     )
             if self._state.recording_path:
                 # A path keeps the box an inside-frame pen would fill.
@@ -1705,30 +1694,6 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if rectangle and brush.style == BS_HATCHED and self._state.rop2 in (R2_BLACK, R2_NOT, R2_NOP, R2_WHITE):
                     brush = replace(brush, style=0)
                 painter.paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
-
-    def _inside_frame_corners(self, lt, rt, lb, width, box_width, box_height):
-        """Inset a transformed box for an inside-frame pen, as native EBOX does.
-
-        The vectors (-width, width) and (width, width) are mapped to 28.4 and
-        halved, rounding up; the upper-right corner moves by the first, the
-        upper-left by the second and the lower-left back by the first. A box
-        narrower than the pen keeps its corners: the pen fills it.
-        """
-        if width > min(box_width, box_height):
-            return lt, rt, lb
-        m11, m12, m21, m22 = self.mapping.world[:4]
-        f = float32
-
-        def vector(x, y):
-            return tuple(_round_half_away(16 * f(f(y * b) + f(x * a))) for a, b in ((m11, m21), (m12, m22)))
-
-        first = tuple((value + 1) >> 1 for value in vector(-width, width))
-        second = tuple((value + 1) >> 1 for value in vector(width, width))
-        return (
-            (lt[0] + second[0], lt[1] + second[1]),
-            (rt[0] + first[0], rt[1] + first[1]),
-            (lb[0] - first[0], lb[1] - first[1]),
-        )
 
     _apply_ellipse = _apply_rectangle
     _apply_arc = _apply_rectangle

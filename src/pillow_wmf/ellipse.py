@@ -442,3 +442,61 @@ def arc_figure(
     else:
         raise ValueError(f"Unknown arc closure: {closure}")
     return DevicePath((*curves, *closing), closed=True)
+
+
+def advanced_arc(
+    mapping,
+    box,
+    start,
+    end,
+    *,
+    direction=1,
+    closure="open",
+    null_pen=False,
+    angles=None,
+    inside_frame=0,
+    radial_box=None,
+):
+    """A GM_ADVANCED arc figure in world orientation, from a logical box.
+
+    A clockwise arc is the y-mirror image of a counterclockwise one, as a
+    mirroring transform gives. ``angles`` gives the arc's directions in
+    degrees in place of the radial points. ``inside_frame`` is the width of
+    a wide inside-frame pen, which insets the box at its corners; a box
+    narrower than the pen gives None, as the native call then does nothing.
+    ``radial_box`` normalizes the radials when it differs from the drawn box.
+    """
+    left, right = sorted(box[0::2])
+    top, bottom = sorted(box[1::2])
+    radial_left, radial_right = sorted((radial_box or box)[0::2])
+    radial_top, radial_bottom = sorted((radial_box or box)[1::2])
+    if inside_frame and inside_frame > min(right - left, bottom - top):
+        return None
+    lt, rt, lb = (mapping.fixed_point(*point) for point in ((left, top), (right, top), (left, bottom)))
+    if inside_frame:
+        lt, rt, lb = mapping.inside_frame_corners(lt, rt, lb, inside_frame)
+    rb = (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1])
+    if direction == 2:
+        # The mirror image swaps the box's top and bottom corners.
+        lt, rt, lb, rb = lb, rb, lt, rt
+        mirror = radial_top + radial_bottom
+        start, end = (start[0], mirror - start[1]), (end[0], mirror - end[1])
+        angles = angles and tuple(-value for value in angles)
+    corners = (lt, rt, rb, lb) if mapping.rotated else None
+    (x0, y0), (x1, y1) = lt, rb
+    xs, ys = (lt[0], rt[0], rb[0], lb[0]), (lt[1], rt[1], rb[1], lb[1])
+    ceil = [(value + 15) // 16 for value in (min(xs), min(ys), max(xs), max(ys))]
+    return arc_figure(
+        *ceil[:2],
+        ceil[2] + 1,
+        ceil[3] + 1,
+        start,
+        end,
+        closure=closure,
+        null_pen=null_pen,
+        drawing_bounds=(x0, y0, x1, y1),
+        radial_bounds=(radial_left, radial_top, radial_right, radial_bottom),
+        advanced=True,
+        corners=corners,
+        angles=angles,
+    )

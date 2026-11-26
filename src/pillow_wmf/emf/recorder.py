@@ -27,15 +27,17 @@ import struct
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from math import ceil, cos, floor, radians, sin
+from math import cos, floor, radians, sin
 
 from ..bitmap import read_dib
 from ..constants import GM_ADVANCED, GM_COMPATIBLE, MM_TEXT, PS_INSIDEFRAME, PS_NULL
-from ..ellipse import arc_figure, inside_frame_bounds
+from ..ellipse import advanced_arc, arc_figure
 from ..gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from ..geometry import DevicePath, coverage_spans
 from ..limits import DEFAULT_LIMITS
-from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice
+from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice, _round_half_away
+from ..mapping import fixed as to_fixed
+from ..numeric import float32
 from ..objects import FontRequest, RegionGeometry
 from ..stroke import realize_pen
 from ..trace import TraceContext
@@ -250,6 +252,7 @@ class _Object:
     width: int = 0
     style: int = 0
     miter: bool = False
+    square: bool = False
     # Pens: the creating call's name and arguments, to realize it for WidenPath.
     realize: tuple | None = None
     # A creation that fails natively: selecting it records nothing.
@@ -265,6 +268,9 @@ class _State:
     capacity: int = 1
     pen: _Object = field(default_factory=lambda: _Object("pen"))
     position: tuple[int, int] = (0, 0)
+    # The exact 28.4 device point an arc left the current position at, which
+    # the next *To call starts from; None once a logical point sets it.
+    fixed_position: tuple[int, int] | None = None
     bounds: Rect | None = None
     path: Rect | None = None
     recording_path: bool = False
@@ -387,29 +393,66 @@ class Recorder(TraceContext):
         steps = (Fraction(w, v) for w, v in zip(mapping.window_extent, mapping.viewport_extent, strict=True))
         return tuple(round(edge - step) for edge, step in zip((right, bottom), steps, strict=True))
 
-    def _inflation(self, state: _State, *, frame: bool = False) -> int:
-        """How far a stroke reaches past its figure's device bounds.
+    def _extent(self, state: _State, *, frame: bool = False) -> tuple[int, int]:
+        """How far a wide stroke reaches past its figure, per axis in 28.4.
 
-        Mitred strokes (Rectangle frames, and geometric pens with miter
-        joins) reach the miter limit times the half width plus one; others
-        reach the half width, rounded up, plus one. One-pixel pens add
-        nothing.
+        The pen width's (w, w) and (w, -w) vectors are mapped to the device;
+        each axis takes the larger magnitude, halved, plus one pixel. Square
+        caps add half of that again; mitred strokes (Rectangle frames, and
+        geometric pens with miter joins) take it times the miter limit. Null
+        and one-pixel pens reach nothing.
         """
         pen = state.pen
-        if pen.style == PS_NULL:
-            return 0
-        width = abs(pen.width * state.mapping.linear_scale[0])
-        if width <= 1:
-            return 0
+        if pen.style == PS_NULL or abs(pen.width * state.mapping.linear_scale[0]) <= 1:
+            return (0, 0)
+        mapping, width = state.mapping, pen.width
+        if mapping.rotated:
+            m11, m12, m21, m22 = mapping.world[:4]
+        else:
+            (m11, _), (m22, _) = mapping._transform()
+            m12 = m21 = 0.0
+        vectors = [
+            tuple(to_fixed(float32(float32(x * a) + float32(y * b))) for a, b in ((m11, m21), (m12, m22)))
+            for x, y in ((width, width), (width, -width))
+        ]
+        extent = [(max(abs(vector[axis]) for vector in vectors) >> 1) + 16 for axis in (0, 1)]
+        if pen.square:
+            extent = [value + (value >> 1) for value in extent]
         if frame or pen.miter:
-            return floor(state.miter_limit * (width / 2 + 1))
-        return ceil(width / 2) + 1
+            extent = [_round_half_away(float32(float32(value) * float32(state.miter_limit))) for value in extent]
+        return extent[0], extent[1]
 
-    def _stroked(self, state: _State, box: Rect | None, *, frame: bool = False) -> Rect | None:
-        if box is None or state.recording_path:
+    def _stroked(self, state: _State, box: Rect | None, *, frame: bool = False, fixed_points=()) -> Rect | None:
+        """A figure's device box, as a stroke reaches past it.
+
+        A wide stroke reaches its 28.4 extent past the figure, here the device
+        box with any exact 28.4 points; the low edges round down and the high
+        edges up.
+        """
+        if box is None and not fixed_points:
+            return None
+        if state.recording_path:
             return box  # Path figures are measured unstroked.
-        grow = self._inflation(state, frame=frame)
-        return (box[0] - grow, box[1] - grow, box[2] + grow, box[3] + grow)
+        ex, ey = self._extent(state, frame=frame)
+        corners = [*(point for point in fixed_points)]
+        if box is not None:
+            corners += [(box[0] * 16, box[1] * 16), (box[2] * 16, box[3] * 16)]
+        if not (ex or ey):
+            if not fixed_points:
+                return box
+            return _union(box, _box((x >> 4, y >> 4) for x, y in fixed_points))
+        xs, ys = [x for x, _ in corners], [y for _, y in corners]
+        return ((min(xs) - ex) >> 4, (min(ys) - ey) >> 4, -((-(max(xs) + ex)) >> 4), -((-(max(ys) + ey)) >> 4))
+
+    def _start(self, state: _State) -> tuple[tuple, tuple]:
+        """The current position for a *To call's bounds: logical points, then exact 28.4 points.
+
+        After an arc a wide pen starts from the exact 28.4 point; one-pixel
+        pens from its floored logical point.
+        """
+        if state.fixed_position is not None and self._extent(state) != (0, 0):
+            return (), (state.fixed_position,)
+        return (state.position,), ()
 
     def _clipped(self, state: _State, box: Rect | None) -> Rect | None:
         """Record bounds are clipped like the header's, outside path brackets."""
@@ -530,6 +573,7 @@ class Recorder(TraceContext):
                 width=width if geometric else 0,
                 style=style & 15,
                 miter=geometric and style & 0x0000F000 == 0x00002000,
+                square=geometric and style & 0x00000F00 == 0x00000100,
                 realize=("ext_create_pen", dict(a)),
             ),
         )
@@ -810,41 +854,16 @@ class Recorder(TraceContext):
         """The GM_ADVANCED arc a metafile DC strokes for ArcTo and AngleArc.
 
         ``radial_box`` normalizes the radials when it differs from the drawn box.
-        With ``inside_frame``, a wide inside-frame pen insets the box, as for Arc.
+        With ``inside_frame``, a wide inside-frame pen insets the radial box at
+        its corners, and a box narrower than the pen gives None.
         """
-        left, right = sorted(box[0::2])
-        top, bottom = sorted(box[1::2])
-        radial_left, radial_right = sorted((radial_box or box)[0::2])
-        radial_top, radial_bottom = sorted((radial_box or box)[1::2])
-        (x0, y0), (x1, y1) = state.mapping.fixed_point(left, top), state.mapping.fixed_point(right, bottom)
-        if direction == 2:
-            y0, y1 = y1, y0
-            mirror = radial_top + radial_bottom
-            start, end = (start[0], mirror - start[1]), (end[0], mirror - end[1])
-        ceil_box = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
-        drawing_bounds, advanced = (x0, y0, x1, y1), True
-        pen = state.pen
+        width, pen = 0, state.pen
         if inside_frame and pen.style == PS_INSIDEFRAME:
             geometric = pen.realize is not None and pen.realize[0] == "ext_create_pen"
             if not realize_pen(pen.width, *state.mapping.linear_scale, geometric=geometric).cosmetic:
-                _, inset = inside_frame_bounds(
-                    (left, top, right, bottom),
-                    (ceil_box[0], ceil_box[1], ceil_box[2] + 1, ceil_box[3] + 1),
-                    pen.width,
-                    state.mapping.linear_scale,
-                )
-                if direction == 2:
-                    inset = (inset[0], inset[3], inset[2], inset[1])
-                drawing_bounds, advanced = inset, False
-        return arc_figure(
-            *ceil_box[:2],
-            ceil_box[2] + 1,
-            ceil_box[3] + 1,
-            start,
-            end,
-            drawing_bounds=drawing_bounds,
-            radial_bounds=(radial_left, radial_top, radial_right, radial_bottom),
-            advanced=advanced,
+                width, box = pen.width, radial_box or box
+        return advanced_arc(
+            state.mapping, box, start, end, direction=direction, inside_frame=width, radial_box=radial_box
         )
 
     @staticmethod
@@ -867,10 +886,15 @@ class Recorder(TraceContext):
         The current position is the exact logical end point, floored.
         """
         points = [point for command in path.commands for point in command]
-        box = _box(((x + 15) // 16, (y + 15) // 16) for x, y in points)
-        box = _union(box, self._device_box(state, (state.position,)))
-        self._draw(state, self._stroked(state, box))
+        logical, exact = self._start(state)
+        if self._extent(state) != (0, 0):
+            box = self._stroked(state, self._device_box(state, logical), fixed_points=(*exact, *points))
+        else:
+            box = _box(((x + 15) // 16, (y + 15) // 16) for x, y in points)
+            box = self._stroked(state, _union(box, self._device_box(state, logical)), fixed_points=exact)
+        self._draw(state, box)
         state.position = (floor(end[0]), floor(end[1]))
+        state.fixed_position = path.commands[-1][-1]
 
     def _record_arc_to(self, a, state, records):
         self._untraced(state)
@@ -889,19 +913,23 @@ class Recorder(TraceContext):
             radial_box=(left, top, a["right"], a["bottom"]),
             inside_frame=True,
         )
+        if path is None:
+            return  # A box narrower than an inside-frame pen: the call does nothing.
         # The current position is the arc's 28.4 end, floored to a logical point.
         self._stroke_from_position(state, path, self._floor_logical(state, path.commands[-1][-1]))
 
     def _record_move_to(self, a, state, records):
         records.append(fixed.MoveToEx(a["x"], a["y"]))
-        state.position = (a["x"], a["y"])
+        state.position, state.fixed_position = (a["x"], a["y"]), None
         self._trace(state, ((a["x"], a["y"]),))
 
     def _record_line_to(self, a, state, records):
         records.append(fixed.LineTo(a["x"], a["y"]))
         self._trace(state, (state.position, (a["x"], a["y"])), extend=True)
-        self._draw(state, self._stroked(state, self._device_box(state, (state.position, (a["x"], a["y"])))))
-        state.position = (a["x"], a["y"])
+        logical, exact = self._start(state)
+        box = self._device_box(state, (*logical, (a["x"], a["y"])))
+        self._draw(state, self._stroked(state, box, fixed_points=exact))
+        state.position, state.fixed_position = (a["x"], a["y"]), None
 
     def _points(self, a, state, records, wide, narrow, *, key="points", to=False):
         points = tuple(tuple(point) for point in a[key])
@@ -915,8 +943,9 @@ class Recorder(TraceContext):
         # The *To forms start from the current position, unless PolyDraw
         # opens with a move.
         moves = "types" in a and a["types"][:1] == bytes((PT_MOVETO,))
-        reached = (state.position, *points) if to and not moves else points
-        bounds = self._clipped(state, self._stroked(state, self._device_box(state, reached)))
+        logical, exact = self._start(state) if to and not moves else ((), ())
+        box = self._device_box(state, (*logical, *points))
+        bounds = self._clipped(state, self._stroked(state, box, fixed_points=exact))
         record_type = narrow if _fits16(points) else wide
         extra = (a["types"],) if "types" in a else ()
         # Inside a path bracket the record's own bounds are empty.
@@ -924,7 +953,7 @@ class Recorder(TraceContext):
         records.append(record_type(written or (0, 0, -1, -1), points, *extra))
         self._draw(state, bounds)
         if to and points:
-            state.position = points[-1]
+            state.position, state.fixed_position = points[-1], None
 
     def _record_polyline(self, a, state, records):
         self._points(a, state, records, variable.Polyline, variable.Polyline16)
@@ -1071,9 +1100,12 @@ class Recorder(TraceContext):
                 radial_box=(a["left"], a["top"], a["right"], a["bottom"]),
                 inside_frame=True,
             )
+            if path is None:
+                return
             try:
                 if not shadow._state.path:
                     shadow._state.position = state.position
+                    shadow._state.fixed_position = state.fixed_position
                 shadow.mapping = deepcopy(state.mapping)
                 shadow._stroke_from_position(path, self._floor_logical(state, path.commands[-1][-1]))
             except (UnsupportedOperation, InvalidOperation):
@@ -1089,6 +1121,7 @@ class Recorder(TraceContext):
                 # The path starts at the DC's current position; afterwards the
                 # shadow keeps its own, so figures continue across curves.
                 shadow._state.position = state.position
+                shadow._state.fixed_position = state.fixed_position
             shadow._state.arc_direction = state.arc_direction
             shadow.invoke(call)
         except (UnsupportedOperation, InvalidOperation):
@@ -1499,6 +1532,7 @@ _SAVED = (
     "graphics_mode",
     "pen",
     "position",
+    "fixed_position",
     "clip",
     "miter_limit",
     "brush_null",

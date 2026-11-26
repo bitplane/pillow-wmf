@@ -28,6 +28,11 @@ def fixed(value: float) -> int:
     return -magnitude if value < 0 else magnitude
 
 
+def _round_half_away(value) -> int:
+    magnitude = floor(abs(value) + 0.5)
+    return magnitude if value >= 0 else -magnitude
+
+
 def _int32(value: int) -> int:
     return (value + 2**31) % 2**32 - 2**31
 
@@ -263,6 +268,32 @@ class Mapping:
             coordinate = fixed(product) + fixed(origin)
             result.append(coordinate)
         return tuple(result)
+
+    def inside_frame_corners(self, lt, rt, lb, width):
+        """Inset a box's 28.4 corners for an inside-frame pen, as native EBOX does.
+
+        The vectors (-width, width) and (width, width) are mapped through the
+        linear world-to-device transform to 28.4 and halved, rounding up; the
+        upper-right corner moves by the first, the upper-left by the second and
+        the lower-left back by the first.
+        """
+        if self.rotated:
+            m11, m12, m21, m22 = self.world[:4]
+        else:
+            (m11, _), (m22, _) = self._transform()
+            m12 = m21 = 0.0
+        f = float32
+
+        def vector(x, y):
+            return tuple(_round_half_away(16 * f(f(y * b) + f(x * a))) for a, b in ((m11, m21), (m12, m22)))
+
+        first = tuple((value + 1) >> 1 for value in vector(-width, width))
+        second = tuple((value + 1) >> 1 for value in vector(width, width))
+        return (
+            (lt[0] + second[0], lt[1] + second[1]),
+            (rt[0] + first[0], rt[1] + first[1]),
+            (lb[0] - first[0], lb[1] - first[1]),
+        )
 
     def rotated_logical_point(self, x, y) -> tuple[int, int]:
         """The nearest logical point to a 28.4 device point under a rotating transform."""
