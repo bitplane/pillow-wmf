@@ -121,9 +121,11 @@ def embolden(contours, x_strength: int, y_strength: int = 0, *, grid_fitted: boo
     puts a strength's odd pixel on the right and top; otherwise each side
     takes half.
     """
+    # ``top`` offsets edges facing up and ``bottom`` edges facing down, and the
+    # outline then moves up by ``bottom``: the odd pixel goes to the lower half.
     if grid_fitted:
-        left, bottom = (x_strength >> 1) << 6, (y_strength >> 1) << 6
-        right, top = (x_strength - (x_strength >> 1)) * 64, (y_strength - (y_strength >> 1)) * 64
+        left, top = (x_strength >> 1) << 6, (y_strength >> 1) << 6
+        right, bottom = (x_strength - (x_strength >> 1)) * 64, (y_strength - (y_strength >> 1)) * 64
     else:
         left = right = x_strength << 5
         bottom = top = y_strength << 5
@@ -180,5 +182,5 @@ def _embolden_point(previous, current, following, simple, left, right, bottom, t
         if dy < -bottom:
             y = current[1] - bottom
         if top < dy:
-            y = current[1] + bottom
+            y = current[1] + bottom  # (sic) the rasterizer clamps upward moves by the lower half
     return x + left, y + bottom

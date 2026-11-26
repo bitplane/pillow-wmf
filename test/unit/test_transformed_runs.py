@@ -1,7 +1,7 @@
 """Native ExtTextOutW runs of the controlled font under GM_ADVANCED world transforms.
 
 ``transformed_runs.json`` holds the pixels the ``glyph-transforms`` probe read
-back for each run: text drawn at the device point (40, 48) with the given
+back for each run: text drawn at the device point (40, 48), or ``origin``, with the given
 world transform, font height, escapement (and orientation, when it differs),
 simulated style, explicit advances and alignment. Opaque runs draw white
 text on a black background at a sub-pixel ``shift``, so only the cell shows.
@@ -37,7 +37,8 @@ def test_runs_match_native_pixels(run):
         dc.set_background_color(0)
     dc.set_text_alignment(run["align"])
     shift = run.get("shift", (0.0, 0.0))
-    dc.set_world_transform(*run["transform"], 40.0 + shift[0], 48.0 + shift[1])
+    origin = run.get("origin", (40.0, 48.0))
+    dc.set_world_transform(*run["transform"], origin[0] + shift[0], origin[1] + shift[1])
     escapement = run["escapement"]
     font = FontRequest(
         height=run["height"],

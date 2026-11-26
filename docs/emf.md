@@ -109,8 +109,12 @@ Text records play through the font collection's faces:
 - Under rotating or shearing transforms glyphs are scan-converted from the
   outline through the full notional-to-device matrix by the TrueType rules
   (each axis scaled by its column's larger component in 16.16 per unit, then
-  the remaining 16.16 matrix; dropout control fills the pixel to the left or below,
-  or the other neighbour when that falls outside the outline's pixel bounds). The cell spans the head table's bounds
+  the remaining matrix, the driver's 16.16 matrix divided by those scales;
+  a scale-only matrix holds its x scale in 16.16 unless it is uniform and
+  unmirrored). At 32 pixels per em and below, dropout control fills the
+  pixel to the left or below, or the other neighbour when that falls outside
+  the glyph bitmap (the pixels whose centres lie within the outline's
+  extent). The cell spans the head table's bounds
   widened by 1/64 em, rounded out to pixels along the ascender; opaque cells,
   underline and strikeout are parallelograms along the baseline. A logical
   unit along the baseline spans `1 / |W⁻¹d|` device units, for the world
@@ -142,8 +146,13 @@ Text records play through the font collection's faces:
   or shearing transforms the outline is emboldened as the TrueType scaler
   does it ([`embolden.py`](../src/pillow_wmf/embolden.py)): in the scaler's
   first stage (each axis scaled by its column's larger component, 16.16 per
-  unit), right-facing edges moved a pixel right, before the remaining matrix. Horizontal monochrome text of an
-  unhinted face takes the same TrueType scan rules and emboldening.
+  unit), before the remaining matrix. The strengths are 20 per mille of the
+  pixels per em along the y column, plus one pixel horizontally; a
+  one-pixel strength moves right-facing edges right. Once the vertical scale
+  alone gives a vertical strength, an unrotated outline is first scaled down
+  by that many pixels per em along both axes, leaving the shear terms
+  whole. Horizontal monochrome text of an unhinted face takes the same
+  TrueType scan rules and emboldening.
 - Stock fonts select their logical fonts (mostly raster faces, so
   font-limited). Charset 254 decodes UTF-8.
 
@@ -632,7 +641,7 @@ source pixel. A mask bit of 1 copies the source pixel.
   ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
   records the native results).
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
-- Synthetic bold outlines at larger sizes can differ from native by a pixel,
-  and the recorder's bounds for some rotated runs without explicit advances
+- Synthetic bold italic above 50 pixels per em under an identity transform
+  differs from native along slanted edges, and the recorder's bounds for some rotated runs without explicit advances
   differ by a logical unit.
 - `GM_COMPATIBLE` ArcTo and AngleArc take the `GM_ADVANCED` arc geometry.

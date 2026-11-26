@@ -149,31 +149,45 @@ class TransformedFont:
         if self.oblique:
             b, d = b + OBLIQUE * a, d + OBLIQUE * c
 
+        ma, _, _, md = self.matrix
+        exact_x = Fraction(ma) > 0 > Fraction(md) and Fraction(ma) == -Fraction(md)
+
         def device(point):
-            return _device_rule(a, b, c, d, *point)
+            return _device_rule(a, b, c, d, *point, exact_x=exact_x)
 
         # A mirroring transform reverses the outline's orientation.
         closed = Fraction(a) * Fraction(d) - Fraction(b) * Fraction(c) < 0
         if self.embolden:
             # The scaler's first stage scales each axis by its matrix column's
             # larger component (16.16 per unit), where it emboldens the
-            # points; the remaining 16.16 matrix then maps them and the arcs
+            # points; the remaining 16.16 matrix (the world part rounded to
+            # 16.16, plus the exact italic shear) then maps them and the arcs
             # are flattened in device space.
             sx = _q16(max(abs(Fraction(a)), abs(Fraction(c))))
             sy = _q16(max(abs(Fraction(b)), abs(Fraction(d))))
-            stage = [
-                [(_round_half_away(64 * sx * u), _round_half_away(64 * sy * v), on) for (u, v), on in contour]
-                for contour in _raw_contours(outline)
-            ]
+            wa, wb, wc, wd = self._device_matrix()
             # The driver asks for 20 per mille on both axes: the horizontal
             # strength keeps a minimum pixel, the vertical one does not.
             # The strength follows the unsheared y column's length in pixels.
-            _, rb, _, rd = self._device_matrix()
-            strength_ppem = int(sqrt(float(rb) ** 2 + float(rd) ** 2) * self.units_per_em + 0.5)
-            strength = (EMBOLDEN_PER_MILLE * strength_ppem - 10) // 1000
+            strength = (EMBOLDEN_PER_MILLE * _ppem(wb, wd, self.units_per_em) - 10) // 1000
+            # Once the vertical scale alone asks for a vertical strength, an
+            # unrotated outline is realized that many pixels smaller along
+            # both axes (the shear terms keep their full size).
+            em = _ppem(0, wd, self.units_per_em)
+            reduce = (EMBOLDEN_PER_MILLE * em - 10) // 1000
+            rx, ry = sx, sy
+            if reduce > 0 and not (wb and wc):
+                rx, ry = _q16(sx * Fraction(em - reduce, em)), _q16(sy * Fraction(em - reduce, em))
+            stage = [
+                [(_round_half_away(64 * rx * u), _round_half_away(64 * ry * v), on) for (u, v), on in contour]
+                for contour in _raw_contours(outline)
+            ]
             moved = embolden(stage, strength + 1, max(0, strength), grid_fitted=True)
+            ma, mb, mc, md = (_q16(value) for value in (wa, wb, wc, wd))
+            if self.oblique:
+                mb, md = mb + OBLIQUE * ma, md + OBLIQUE * mc
             qa, qb, qc, qd = (
-                _round_half_away(_q16(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
+                _round_half_away(Fraction(m) / scale * 65536) for m, scale in ((ma, sx), (mb, ry), (mc, rx), (md, sy))
             )
             flat = (
                 _flatten(
@@ -194,7 +208,10 @@ class TransformedFont:
             contours = [contour for contour in flat if contour is not None]
         else:
             contours = [[device(point) for point in contour] for contour in _contours(outline)]
-        pixels = scan_outline(contours, closed=closed)
+        # The rasterizer's default scan control keeps dropout control to 32
+        # pixels per em and below.
+        _, eb, _, ed = self._device_matrix()
+        pixels = scan_outline(contours, closed=closed, dropout=_ppem(eb, ed, self.units_per_em) <= 32)
         return self._mask(pixels, index, max_pixels)
 
     def _mask(self, pixels, index, max_pixels):
@@ -351,6 +368,11 @@ class TransformedFont:
         left, right = self.ink_spans.get(index, (0, 0))
         length = self.frame().base_length
         return _round_half_away(float32(left * length)), _round_half_away(float32(right * length))
+
+
+def _ppem(b, d, units_per_em) -> int:
+    """The whole pixels per em along a matrix column (b, d), as the driver rounds them."""
+    return int(sqrt(float(b) ** 2 + float(d) ** 2) * units_per_em + 0.5)
 
 
 def _y_scale(d) -> int:
@@ -556,15 +578,16 @@ def _q16(value) -> Fraction:
     return Fraction(_round_half_away(Fraction(value) * 65536), 65536)
 
 
-def _device_rule(a, b, c, d, u, v):
+def _device_rule(a, b, c, d, u, v, *, exact_x=False):
     """A notional point (u, v) as 26.6 device coordinates, as the scaler maps it.
 
     A rotating or shearing matrix is applied in two stages: each axis first
     scales by the larger component of its matrix column, held in 16.16 per
     notional unit, and rounds; the remaining matrix (the driver's 16.16
     matrix divided by those scales, rounded to 16.16) then maps the scaled
-    point with each product rounded. A mirroring scale-only matrix
-    holds its x scale in 16.16; others round each product of the exact matrix.
+    point with each product rounded. A scale-only matrix holds its x scale in
+    16.16, except an unmirrored uniform one (``exact_x``), whose products
+    round from the exact scale.
     """
     if b or c:
         sx = _q16(max(abs(Fraction(a)), abs(Fraction(c))))
@@ -577,7 +600,7 @@ def _device_rule(a, b, c, d, u, v):
             ((x * qa + 0x8000) >> 16) + ((y * qb + 0x8000) >> 16),
             ((x * qc + 0x8000) >> 16) + ((y * qd + 0x8000) >> 16),
         )
-    if (Fraction(a) > 0) != (Fraction(d) > 0):  # not mirrored: notional y up maps to device y down
+    if exact_x:
         return _round_half_away(64 * a * u), _round_half_away(64 * d * v)
     sign = 1 if a >= 0 else -1
     return sign * _round_half_away(64 * _q16(abs(Fraction(a))) * u), _round_half_away(64 * d * v)
@@ -771,7 +794,7 @@ def _spans(crossings):
     return out
 
 
-def scan_outline(contours, *, closed):
+def scan_outline(contours, *, closed, dropout=True):
     """Pixels a TrueType outline of 26.6 device points covers, y down.
 
     A pixel is covered when its centre lies inside the outline by the nonzero
@@ -780,7 +803,8 @@ def scan_outline(contours, *, closed):
     control then fills, along every row and column centre line, each stretch
     of interior that holds no pixel centre (including vertices that only
     touch the line): the pixel to the left or below, or the other neighbour
-    when that one lies outside the glyph bitmap.
+    when that one lies outside the glyph bitmap. ``dropout`` false skips that
+    step.
     """
     segments = [(p, q) for contour in contours for p, q in zip(contour, contour[1:] + contour[:1], strict=True)]
     if not segments:
@@ -800,6 +824,8 @@ def scan_outline(contours, *, closed):
                     covered.add((column, row))
             elif sum(direction for position, direction in crossings if position < centre_x):
                 covered.add((column, row))
+    if not dropout:
+        return covered
     # Dropout pixels stay inside the glyph bitmap, whose pixels have centres
     # within the outline's extent (rounded half up in the rasterizer's y-up
     # frame): a choice outside it takes the other neighbour instead.
