@@ -42,9 +42,13 @@ class SourceTransfer:
 def accepts_dib(layout):
     # The native reference surface is a 32-bit RGB DIB. PAL_INDICES avoids
     # colour translation and requires matching source/device pixel depths.
+    # JPEG, PNG, alpha bit fields, CMYK, 2- and 64-bit sources and OS/2
+    # Huffman or RLE24 sources do not draw on it.
     return (
         layout.header_size != 12
         and layout.compression in (0, 1, 2, 3)
+        and layout.depth in (1, 4, 8, 16, 24, 32)
+        and not (layout.header_size == 64 and layout.compression == 3)
         and (layout.color_usage != 2 or layout.depth == 32)
     )
 
