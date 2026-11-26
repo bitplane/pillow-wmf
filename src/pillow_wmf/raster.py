@@ -1950,6 +1950,29 @@ class RasterContext(ExecutionContext[DrawingState]):
         breaks = tuple(
             number for number, index in enumerate(indices) if index and index == face.cmap.get(face.break_character)
         )
+        rotating = bool(matrix[1] or matrix[2] or request.escapement % 3600)
+        if not compatible and not advances and rotating:
+            # Rotated or sheared glyphs take their logical extents: the design
+            # widths at the logical em, accumulated and rounded half up.
+            design, logical, previous = 0, [], 0
+            for index in indices:
+                design += face.design_advances.get(index, 0)
+                position = _round_half_away(Fraction(design) * em_width / upem)
+                logical.append(position - previous)
+                previous = position
+            advances = tuple(logical)
+        if not compatible and not advances and not rotating:
+            # A mirroring scale places glyphs as GDI's scale-only path does: the
+            # whole-pixel device advances accumulate and each origin rounds to
+            # a logical unit.
+            device_total, logical, previous = 0, [], 0
+            for index in indices:
+                ax, ay = font.advance(index)
+                device_total += Fraction(round(math.hypot(ax, ay)) >> 32, 16)
+                position = _round_half_away(device_total / Fraction(math.hypot(*world_baseline)))
+                logical.append(position - previous)
+                previous = position
+            advances = tuple(logical)
         if compatible and not advances and m12:
             # Compatible-mode text under a rotating world transform advances by
             # whole logical widths at the logical em's 16.16 scale, along the baseline.
