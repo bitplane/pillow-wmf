@@ -382,19 +382,20 @@ clip region; ROP2 does not apply:
 
 `SetColorAdjustment` changes only scaled `HALFTONE` copies, whether filtered
 or replicated. Each channel maps through its own table
-([`color_adjustment.py`](../src/pillow_wmf/color_adjustment.py)), on the 0..1
-scale:
+([`color_adjustment.py`](../src/pillow_wmf/color_adjustment.py)), built as the
+native table builder does in six-digit fixed point (10^6 is one), in this
+order:
 
-1. reference black and white stretch the value;
-2. the channel's gamma (hundredths of a percent) raises it to a power;
-3. `CA_LOG_FILTER` replaces it with log8(1 + 7v);
-4. contrast multiplies it by exp(0.0148885 * contrast);
+1. the level becomes level / 255, rounded half up;
+2. the channel's gamma (hundredths of a percent) raises it to a power,
+   through GDI's fixed-point logarithm;
+3. reference black and white stretch it;
+4. contrast multiplies it by 1.015^contrast;
 5. brightness adds 0.375 * brightness / 100;
-6. `CA_NEGATIVE` inverts it;
+6. `CA_LOG_FILTER` replaces it with log8(1 + 7v);
+7. it is clamped to 0..1, and `CA_NEGATIVE` inverts it;
 
-then it is clamped and rounded to the nearest 8-bit level. Each step matches
-native output on its own and contrast with brightness or negative together;
-other combinations are unverified.
+then it is rounded to the nearest 8-bit level.
 
 Colourfulness, red-green tint and illuminants other than the default (D65)
 mix channels. Native GDI then maps colours through a colour engine
