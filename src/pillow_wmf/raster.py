@@ -1843,9 +1843,13 @@ class RasterContext(ExecutionContext[DrawingState]):
         return (sx, 0.0, 0.0, sy)
 
     def _general_text(self, request):
-        """GM_ADVANCED text whose font transform is not a positive scale takes general placement."""
+        """GM_ADVANCED text whose font transform is not a positive scale takes general placement.
+
+        So does escaped GM_COMPATIBLE text under a world transform left from
+        GM_ADVANCED, which the mode switch keeps.
+        """
         if self.mapping.graphics_mode != GM_ADVANCED:
-            return False
+            return bool(request.escapement % 3600 and self.mapping.world[:4] != IDENTITY_TRANSFORM[:4])
         m11, m12, m21, m22 = self._linear_transform()
         return bool(m12 or m21 or m11 < 0 or m22 < 0 or request.escapement % 3600)
 
@@ -1857,7 +1861,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         See ``text_transform``.
         """
         text_state = self._state.text_state
-        compatible = self._font_xform is not None
+        compatible = self._font_xform is not None or self.mapping.graphics_mode != GM_ADVANCED
         upem = face.units_per_em
         m11, m12, m21, m22 = (Fraction(value) for value in self._linear_transform())
         if request.height < 0:
@@ -1940,16 +1944,19 @@ class RasterContext(ExecutionContext[DrawingState]):
                 indices.append(index)
         else:
             indices = list(glyph_indices)
-        if compatible:
-            world_baseline = (
-                float(cosine) * float(m11) + float(sine) * float(m12),
-                float(cosine) * float(m12) - float(sine) * float(m11),
+        # The device baseline is the realized font's x axis; a logical unit
+        # along it spans 1 / |W^-1 d| device units for its unit vector d.
+        column_x, column_y = (advance_matrix or matrix)[0], (advance_matrix or matrix)[2]
+        device_em = math.hypot(float(column_x), float(column_y)) * upem
+        determinant = float(m11 * m22 - m12 * m21)
+        if device_em and determinant:
+            dx, dy = float(column_x) * upem / device_em, float(column_y) * upem / device_em
+            logical_length = math.hypot(
+                (float(m22) * dx - float(m21) * dy) / determinant, (float(m11) * dy - float(m12) * dx) / determinant
             )
         else:
-            world_baseline = (
-                float(m11) * float(cosine) - float(m21) * float(sine),
-                float(m12) * float(cosine) - float(m22) * float(sine),
-            )
+            logical_length = 1.0
+        world_baseline = (dx / logical_length, dy / logical_length) if device_em and determinant else (1.0, 0.0)
         baseline = baseline_vector(advance_matrix or matrix, world_baseline)
         world_side = (
             -float(m11) * float(sine) - float(m21) * float(cosine),
@@ -1965,9 +1972,12 @@ class RasterContext(ExecutionContext[DrawingState]):
         )
         rotating = bool(matrix[1] or matrix[2] or request.escapement % 3600)
         # Logical extents take the em width as realized in 28.4 device units
-        # along the world x axis.
-        x_scale = Fraction(math.hypot(float(m11), float(m12)))
-        extent_em = Fraction(_round_half_away(em_width * x_scale * 16), 16) / x_scale if x_scale else em_width
+        # along the device baseline, converted back to logical units.
+        extent_em = (
+            Fraction(_round_half_away(Fraction(device_em) * 16), 16) * Fraction(logical_length)
+            if device_em and determinant
+            else em_width
+        )
         if not advances and rotating and advance_matrix is None:
             # Rotated or sheared glyphs take their logical extents: the design
             # widths at the logical em, accumulated and rounded half up.

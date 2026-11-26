@@ -110,9 +110,13 @@ Text records play through the font collection's faces:
   outline through the full notional-to-device matrix by the TrueType rules
   (26.6 products, dropout control). The cell spans the head table's bounds
   widened by 1/64 em, rounded out to pixels along the ascender; opaque cells,
-  underline and strikeout are parallelograms along the baseline. Without
-  explicit spacing, glyphs are placed by their logical extents (cumulative
-  design widths at the logical em, rounded half up) laid along the baseline.
+  underline and strikeout are parallelograms along the baseline. A logical
+  unit along the baseline spans `1 / |W⁻¹d|` device units, for the world
+  transform `W` and the font's unit device baseline `d`. Without explicit
+  spacing, glyphs are placed by their logical extents: cumulative design
+  widths at the device em (in 28.4 along the baseline) converted back to
+  logical units, rounded half up. Escaped GM_COMPATIBLE text under a world
+  transform kept from GM_ADVANCED rotates in device space the same way.
   When a GM_ADVANCED escapement differs from the orientation, each glyph's
   centre (origin plus half its advance) sits on the escapement at the running
   sum of per-glyph extents: the distance from the centre, along the
