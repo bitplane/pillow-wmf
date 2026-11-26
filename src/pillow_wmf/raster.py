@@ -2022,7 +2022,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             return tuple((Fraction(x, 16), Fraction(y, 16)) for x, y in points)
 
         background = (
-            pixels(opaque_area(font, run, indices, explicit=bool(explicit_advances)))
+            pixels(opaque_area(font, run, indices, explicit=bool(explicit_advances) and not self._measuring))
             if self._state.background_mode == OPAQUE
             else None
         )

@@ -349,7 +349,9 @@ as `EMR_EXTTEXTOUTW`: ANSI text through the font's code page, advances from
 GetTextExtentExPoint-style logical extents unless given (character extra and
 justification included; neither has a record), GM_COMPATIBLE font scales of
 0.01 mm per logical unit from the page transform, and bounds from the text
-cell, opaque and clip rectangles. GDI leaves an odd-length string's padding
+cell, opaque and clip rectangles (a rotated cell does not widen over leading
+ink, even with explicit advances;
+[`test_recorded_text_bounds.py`](../test/unit/emf/test_recorded_text_bounds.py)). GDI leaves an odd-length string's padding
 uninitialized; the recorder writes zeros. Recording text needs the selected
 face, from the recorder's `fonts`. Null object and palette selections fail
 without a record, as natively; so do pattern brushes from device bitmaps other
