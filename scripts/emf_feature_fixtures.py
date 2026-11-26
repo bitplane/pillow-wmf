@@ -1122,6 +1122,34 @@ def color_adjustment_combos(d):
         d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *fields, 32, 32, info + bits))
 
 
+def background_mode_values(d):
+    """Raw SetBkMode values with each primitive that draws a background.
+
+    Rows set 0, 1, 2, 3, 0x101 and 0xFFFF; columns draw a hatched PatBlt, a
+    hatched Rectangle, a hatched Polygon, a hatched FillRgn, a hatched
+    PATCOPY BitBlt and a dashed cosmetic line.
+    """
+    d.pen(PS_NULL, 0, 0)
+    d.brush(BS_SOLID, 0x30A0E0)
+    d.add(fixed.Rectangle(0, 0, d.extent + 1, d.extent + 1))
+    d.add(fixed.SetBkColor(0x00FFFF))
+    hatch = d.brush(BS_HATCHED, 0x800080, HS_DIAGCROSS)
+    blit = dict.fromkeys(bitmaps.BitBlt.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0, "data": b""}
+    for row, value in enumerate((0, 1, 2, 3, 0x101, 0xFFFF)):
+        top = 2 + 21 * row
+        d.add(fixed.SetBkMode(value))
+        d.add(bitmaps.BitBlt(**blit | {"x": 2, "y": top, "width": 18, "height": 18, "rop": PATCOPY}))
+        d.add(fixed.Rectangle(23, top, 41, top + 18))
+        d.add(variable.Polygon((0, 0, 0, 0), ((44, top), (62, top), (53, top + 18))))
+        region = region_data(((65, top, 83, top + 18),))
+        d.add(variable.FillRgn(bounds=(0, 0, 0, 0), brush=hatch, region=region))
+        d.add(bitmaps.BitBlt(**blit | {"x": 86, "y": top, "width": 18, "height": 18, "rop": 0x005A0049}))  # PATINVERT
+        d.add(fixed.SelectObject(STOCK | 7))
+        dash = d.pen(PS_DASH, 0, 0x000000)
+        d.add(fixed.MoveToEx(107, top + 4), fixed.LineTo(126, top + 4), fixed.MoveToEx(107, top + 12))
+        d.add(fixed.LineTo(126, top + 12), fixed.SelectObject(STOCK | 8), fixed.DeleteObject(dash))
+
+
 def state_record(*records):
     """Records that should not change a bitmap DC's output, followed by drawing."""
 
@@ -1209,6 +1237,7 @@ FEATURES = (
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),
     ("color-adjustment-combos", color_adjustment_combos, (128,)),
+    ("background-mode-values", background_mode_values, (128,)),
     *((f"state-{name}", state_record(*records), (128,)) for name, records in STATE_RECORDS.items()),
 )
 SCALE_NAMES = {128: "unit", 51: "up-2-5"}
