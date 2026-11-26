@@ -842,6 +842,47 @@ def gap_scenarios():
 
     yield "odd-arc-to", None, odd_arc_to
 
+    def path_readback(dc):
+        # GetPath after building and widening the ArcTo figure, and the
+        # current position after each odd ArcTo, written into GDI comments.
+        api("GdiComment", boolean, ptr, wintypes.UINT, ctypes.c_char_p)
+        api("GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+        api("GetCurrentPositionEx", boolean, ptr, ctypes.POINTER(wintypes.POINT))
+
+        def comment_path():
+            count = gdi.GetPath(dc, None, None, 0)
+            pts, kinds = (wintypes.POINT * max(count, 1))(), (ctypes.c_ubyte * max(count, 1))()
+            gdi.GetPath(dc, pts, kinds, count)
+            data = b"PATH" + b"".join(
+                struct.pack("<iiB", p.x, p.y, k) for p, k in zip(pts[:count], kinds[:count], strict=True)
+            )
+            gdi.GdiComment(dc, len(data), data)
+
+        select(dc, create_pen(0, 80, 0))  # Five device pixels once mapped.
+        set_map_mode(dc, 8)  # Read the path back in sixteenths of a pixel.
+        set_window_ext(dc, 16, 16)
+        set_viewport_ext(dc, 1, 1)
+        begin_path(dc)
+        move_to(dc, 32, 32, None)
+        arc_to(dc, 160, 160, 800, 560, 800, 320, 160, 192)
+        line_to(dc, 32, 32)
+        end_path(dc)
+        comment_path()
+        widen_path(dc)
+        comment_path()
+        abort_path(dc)
+        set_map_mode(dc, 1)
+        set_arc_direction(dc, 2)
+        for box, radials in (((10, 10, 41, 31), (40, 10, 10, 30)), ((10, 10, 41, 31), (10, 30, 40, 10))):
+            move_to(dc, 0, 0, None)
+            arc_to(dc, *box, *radials)
+            point = wintypes.POINT()
+            gdi.GetCurrentPositionEx(dc, ctypes.byref(point))
+            data = b"CPOS" + struct.pack("<ii", point.x, point.y)
+            gdi.GdiComment(dc, len(data), data)
+
+    yield "path-readback", None, path_readback
+
 
 def records(data):
     position = 0
