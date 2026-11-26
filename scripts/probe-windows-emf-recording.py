@@ -832,6 +832,63 @@ def gap_scenarios():
 
     yield "clip-path-widened-shapes", None, clip_path_widened_shapes
 
+    def clip_path_inside_frame(dc):
+        # SelectClipPath of paths built and widened with inside-frame pens,
+        # and of unwidened paths built with inside-frame and mitred pens.
+        frame = points((-60, -60), (120, -60), (120, 120), (-60, 120), (-60, -60))
+        brush = LogBrush(0, 0, 0)
+        pens = (
+            lambda: create_pen(6, 7, 0),
+            lambda: ext_create_pen(0x00010000 | 0x2000 | 6, 7, ctypes.byref(brush), 0, None),
+        )
+        shapes = (
+            lambda: (move_to(dc, 10, 10, None), line_to(dc, 40, 15), line_to(dc, 20, 35)),
+            lambda: (move_to(dc, 10, 10, None), line_to(dc, 40, 15), line_to(dc, 20, 35), close_figure(dc)),
+            lambda: rectangle(dc, 8, 8, 40, 30),
+            lambda: ellipse(dc, 5, 5, 40, 30),
+            lambda: round_rect(dc, 6, 4, 41, 33, 12, 9),
+            lambda: pie(dc, 5, 5, 41, 31, 40, 5, 5, 6),
+            lambda: rectangle(dc, 8, 8, 13, 30),
+        )
+
+        def clipped(shape, widen=True):
+            save_dc(dc)
+            begin_path(dc)
+            shape()
+            end_path(dc)
+            if widen:
+                widen_path(dc)
+            select_clip_path(dc, 5)
+            polyline(dc, *frame)
+            restore_dc(dc, -1)
+
+        for pen in pens:
+            select(dc, pen())
+            for shape in shapes:
+                clipped(shape)
+            clipped(shapes[0], widen=False)
+            clipped(shapes[2], widen=False)
+            select(dc, stock(7))
+        select(dc, ext_create_pen(0x00010000 | 0x2000, 7, ctypes.byref(brush), 0, None))
+        clipped(shapes[0], widen=False)
+        select(dc, stock(7))
+        # Scaled, then rotated, inside-frame pens.
+        select(dc, create_pen(6, 5, 0))
+        save_dc(dc)
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 10, 10, None)
+        set_viewport_ext(dc, 15, 20, None)
+        clipped(shapes[2])
+        clipped(shapes[3])
+        restore_dc(dc, -1)
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(0.9, 0.4, -0.4, 0.9, 20, 0)))
+        clipped(shapes[2])
+        clipped(shapes[3])
+        clipped(shapes[0])
+
+    yield "clip-path-inside-frame", None, clip_path_inside_frame
+
     def odd_arc_to(dc):
         # The clockwise ArcTo on an odd-sized box, then its current position.
         set_arc_direction(dc, 2)
