@@ -455,8 +455,6 @@ def _ext_create_pen(record):
 
 
 def _ext_text_out(record):
-    if record.graphics_mode != GM_COMPATIBLE:
-        raise Unsupported("Advanced graphics-mode text is not yet supported")
     options = record.options & ~ETO_NO_RECT
     if isinstance(record, text.ExtTextOutW):
         if not options & ETO_GLYPH_INDEX:

@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 
 from pillow_wmf import GDI, InvalidOperation, RasterContext, UnsupportedOperation, render
-from pillow_wmf.emf import Metafile, fixed, loader, text
+from pillow_wmf.emf import Metafile, fixed, loader
 from pillow_wmf.plugin import WmfImageFile
 
 UNIT_FRAME = (0, 0, 3388, 3383)  # 128 reference pixels square.
@@ -46,11 +46,6 @@ def test_pillow_opens_and_sizes_emf():
 
 
 def test_pillow_reports_unrenderable_emf_as_oserror():
-    # Text is not yet drawn during EMF playback.
-    records = [text.ExtTextOutA((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, b"a\0\0\0")]
-    data = Metafile.build(records, frame=UNIT_FRAME).to_bytes()
-    with Image.open(BytesIO(data)) as image, pytest.raises(OSError, match="GM_ADVANCED"):
-        image.load()
     with Image.open(BytesIO(drawing(frame=(10, 10, 0, 0)))) as image, pytest.raises(OSError, match="reversed"):
         image.load()
 
@@ -72,7 +67,8 @@ def test_raster_world_transform_contract():
     assert context.mapping.device_point(2, 2) == (5, 7)
     with pytest.raises(InvalidOperation, match="identity"):
         context.set_graphics_mode(1)
-    with pytest.raises(UnsupportedOperation, match="not yet verified"):
+    # Scaled text draws in GM_ADVANCED; without a selected font it is refused.
+    with pytest.raises(UnsupportedOperation, match="[Ff]ont"):
         context.ext_text_out(0, 0, b"x")
     with pytest.raises(InvalidOperation, match="Graphics mode"):
         context.set_graphics_mode(3)

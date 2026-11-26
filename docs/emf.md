@@ -119,7 +119,7 @@ the codec and reference columns against the code and fixtures.
 | `SETPOLYFILLMODE` | typed | full | yes | Values other than WINDING fill as ALTERNATE. |
 | `SETROP2` | typed | full | yes | The low byte b selects mix ((b - 1) & 15) + 1, so 0 is R2_WHITE. |
 | `SETSTRETCHBLTMODE` | typed | full | yes | Values outside 1-4 stretch as WHITEONBLACK. |
-| `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
+| `SETTEXTALIGN` | typed | full | yes |  |
 | `SETCOLORADJUSTMENT` | typed | full | yes | Scaled HALFTONE copies; transfers under rotating transforms sample without it. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
@@ -178,9 +178,9 @@ the codec and reference columns against the code and fixtures.
 | `PLGBLT` | typed | full | yes | A masked transfer keeps an identity source transform. |
 | `SETDIBITSTODEVICE` | typed | full | yes | Scaled with the playback transform, partial and compressed bands included. |
 | `STRETCHDIBITS` | typed | full | yes |  |
-| `EXTCREATEFONTINDIRECTW` | typed | full | no | Text is font-limited. |
-| `EXTTEXTOUTA` | typed | partial | no | Not yet drawn in GM_ADVANCED; font-limited. |
-| `EXTTEXTOUTW` | typed | partial | no | Glyph indices only; not yet drawn in GM_ADVANCED; font-limited. |
+| `EXTCREATEFONTINDIRECTW` | typed | full | yes | Faces outside the supplied fonts are font-limited. |
+| `EXTTEXTOUTA` | typed | partial | yes | Refused under rotating or shearing transforms. |
+| `EXTTEXTOUTW` | typed | partial | no | Glyph indices only; refused under rotating or shearing transforms. |
 | `POLYBEZIER16` | typed | full | yes |  |
 | `POLYGON16` | typed | full | yes |  |
 | `POLYLINE16` | typed | full | yes |  |

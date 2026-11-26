@@ -480,11 +480,9 @@ def test_text():
         Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"ab"), options=0, rectangle=None, advances=(5, 6)),
         Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"a"), options=2, rectangle=(1, 2, 3, 4), advances=(0,)),
         Call.make("ext_text_out", x=3, y=4, text=GlyphIndices((7, 8)), options=0x10, rectangle=None, advances=()),
+        Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"a"), options=0, rectangle=None, advances=()),
     ]
-    assert [o.reason for o in omissions] == [
-        "Unicode text is not yet supported",
-        "Advanced graphics-mode text is not yet supported",
-    ]
+    assert [o.reason for o in omissions] == ["Unicode text is not yet supported"]
 
 
 def test_clip_regions_are_combined_from_device_rectangles():

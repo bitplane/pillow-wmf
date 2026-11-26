@@ -206,8 +206,6 @@ PEN_STROKES = frozenset(
 
 UNVERIFIED_IN_ADVANCED_MODE = frozenset(
     {
-        "text_out",
-        "ext_text_out",
         "set_map_mode",
         "set_window_origin",
         "set_window_extent",
@@ -1788,7 +1786,13 @@ class RasterContext(ExecutionContext[DrawingState]):
         decoded = self.fonts.decode_run(request, face, data) if glyph_indices is None else None
         characters = decoded.text if decoded is not None else None
         layout = layout_text(
-            self.fonts.layout_font(request, face, (abs(sx), abs(sy)), characters=characters),
+            self.fonts.layout_font(
+                request,
+                face,
+                (abs(sx), abs(sy)),
+                characters=characters,
+                advanced=self.mapping.graphics_mode == GM_ADVANCED,
+            ),
             data,
             *origin,
             alignment,
