@@ -10,7 +10,6 @@ import struct
 
 from pillow_wmf.emf import Metafile, bitmaps, fixed, system, text, variable
 from pillow_wmf.emf.objects import LogFont
-from pillow_wmf.emf.text import ETO_NO_RECT
 from pillow_wmf.mapping import ReferenceDevice
 
 PS_SOLID, PS_DASH, PS_DOT, PS_USERSTYLE, PS_ALTERNATE, PS_NULL = 0, 1, 2, 7, 8, 5
@@ -1094,9 +1093,12 @@ def text_font(d, height, **fields):
 
 
 def ext_text_a(d, x, y, data, *, options=0, rectangle=None, advances=(), mode=1, scales=TEXT_SCALES):
-    """An EMR_EXTTEXTOUTA record: bytes, then advances, after the fixed fields."""
-    options = options if rectangle is not None else options | ETO_NO_RECT
-    start = 8 + 52 + (16 if rectangle is not None else 0)
+    """An EMR_EXTTEXTOUTA record: bytes, then advances, after the fixed fields.
+
+    Native playback always reads the rectangle field, so it is always written.
+    """
+    rectangle = rectangle if rectangle is not None else (0, 0, -1, -1)
+    start = 8 + 52 + 16
     padded = data + bytes(-len(data) % 4)
     dx_offset = start + len(padded) if advances else 0
     blob = padded + b"".join(struct.pack("<i", value) for value in advances)
