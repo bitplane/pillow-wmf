@@ -183,7 +183,7 @@ class TransformedFont:
             def reduced(scale, vertical):
                 em = _ppem(0, vertical, self.units_per_em)
                 pixels = (EMBOLDEN_PER_MILLE * em - 10) // 1000
-                return _q16(scale * Fraction(em - pixels, em)) if pixels > 0 else scale
+                return scale * Fraction(em - pixels, em) if pixels > 0 else scale
 
             rx = reduced(sx, wd)
             ry = reduced(sy, Fraction(wd) + (OBLIQUE * Fraction(wc) if self.oblique else 0))
