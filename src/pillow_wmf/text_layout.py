@@ -166,6 +166,10 @@ def layout_text(
     )
     if position is not None:
         position = project(*position, snap=False)
+    if device_run and not advances and precise_origin is not None and horizontal == 0:
+        # Each glyph rounds from the precise reference point.
+        start = precise_origin[0]
+        offsets = [rounded(start + mapped) - rounded(start) for mapped in mapped_offsets]
     positioned = []
     for glyph, offset, dy in zip(glyphs, offsets[:-1], vertical_offsets[:-1], strict=True):
         gx, gy = project(origin_x + offset, baseline + rounded(dy))
