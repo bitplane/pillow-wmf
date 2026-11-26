@@ -508,12 +508,19 @@ def _ext_text_out(record):
     return "ext_text_out", _text_arguments(record.x, record.y, value, options, record.rectangle, advances)
 
 
+# Options GDI neither interprets nor ignores fail text output; ExtTextOut
+# records pass ETO_NO_RECT through without failing, but PolyTextOut entries do not.
+POLY_TEXT_FAILING_OPTIONS = ~(ETO_OPAQUE | ETO_CLIPPED | 0x3C90) & 0xFFFFFFFF
+
+
 def _poly_text_out(record):
     """PolyTextOut draws each entry as ExtTextOut, always with its advances."""
     if not record.playable():
         raise Stop(f"{record_name(record_type(record))} fails native record validation")
     calls = []
     for index, entry in enumerate(record.texts):
+        if entry.options & POLY_TEXT_FAILING_OPTIONS:
+            break  # GDI rejects the entry and draws none after it.
         data = record.text(index) if entry.chars else b""
         if isinstance(record, text.PolyTextOutW):
             if entry.options & ETO_GLYPH_INDEX:

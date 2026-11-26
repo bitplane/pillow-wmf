@@ -59,14 +59,15 @@ class MetricFont:
 
 @pytest.mark.parametrize("horizontal,origin_x", [(0, 30), (2, 11), (6, 20)])
 @pytest.mark.parametrize("vertical,baseline", [(0, 39), (8, 27), (24, 30)])
-def test_alignment_and_explicit_advances_use_metrics_not_ink_bounds(horizontal, origin_x, vertical, baseline):
+def test_alignment_and_explicit_advances_use_metrics_and_protruding_ink(horizontal, origin_x, vertical, baseline):
     result = layout_text(MetricFont(), b"A B", 30, 30, horizontal | vertical, (9, 3, 7), opaque=True, max_pixels=10)
     assert [(x, y) for x, y, _ in result.glyphs] == [(origin_x + n - 1, baseline - 7) for n in (0, 9, 12)]
+    # The cell spans the advances and widens over ink protruding past them.
     assert result.background == (
-        (origin_x, baseline - 9),
+        (origin_x - 1, baseline - 9),
         (origin_x + 19, baseline - 9),
         (origin_x + 19, baseline + 3),
-        (origin_x, baseline + 3),
+        (origin_x - 1, baseline + 3),
     )
     assert result.position is None
 

@@ -499,8 +499,11 @@ def test_text():
 
 def test_poly_and_small_text():
     entries = (
-        text.EmrText(1, 2, 2, 120, 0x100, (0, 0, 0, 0), 124),
+        text.EmrText(1, 2, 2, 200, 0, (0, 0, 0, 0), 204),
         text.EmrText(5, 6, 0, 0, 2, (1, 2, 3, 4), 0),
+        # GDI fails an entry with ETO_NO_RECT, and the entries after it.
+        text.EmrText(1, 2, 2, 200, 0x100, (0, 0, 0, 0), 204),
+        text.EmrText(1, 2, 2, 200, 0, (0, 0, 0, 0), 204),
     )
     poly = text.PolyTextOutW((0, 0, 0, 0), 2, 0.0, 0.0, entries, "hi".encode("utf-16-le") + struct.pack("<2i", 7, 8))
     small = text.SmallTextOut(1, 2, 0x302, 2, 0.0, 0.0, None, b"\xe9a")

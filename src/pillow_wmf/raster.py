@@ -1758,10 +1758,17 @@ class RasterContext(ExecutionContext[DrawingState]):
             request = replace(request, escapement=-request.escapement)
         # Mapper flags constrain physical-font selection, not drawing with an
         # already explicitly supplied TrueType face. Retain them in DC state.
-        origin = self._state.position if self._state.text_state.alignment & TA_UPDATECP else (args["x"], args["y"])
+        update = self._state.text_state.alignment & TA_UPDATECP
+        origin = self._state.position if update else (args["x"], args["y"])
         origin_xy = origin
-        precise_origin = tuple(Fraction(value, 16) for value in self.mapping.fixed_point(*origin))
-        origin = self._point(*origin)
+        continued = self._state.text_position
+        if update and continued is not None and continued[0] == self._state.position:
+            fixed_origin = continued[1]
+            origin = tuple((value + 8) >> 4 for value in fixed_origin)
+        else:
+            fixed_origin = self.mapping.fixed_point(*origin)
+            origin = self._point(*origin)
+        precise_origin = tuple(Fraction(value, 16) for value in fixed_origin)
         alignment = self._state.text_state.alignment
         # RTL layout swaps reference edges, not glyph masks or byte order.
         if self.mapping.rtl and alignment & 6 != 6:
@@ -1826,6 +1833,10 @@ class RasterContext(ExecutionContext[DrawingState]):
             layout = replace(
                 layout,
                 position=self.mapping.advance_logical_position(self._state.position, origin, layout.position),
+                fixed_position=tuple(
+                    start + math.floor((end - pixel) * 16)
+                    for start, end, pixel in zip(fixed_origin, layout.position, origin, strict=True)
+                ),
             )
         return layout, rectangle
 
@@ -1943,6 +1954,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         painter.text(layout, rectangle, options)
         if layout.position is not None:
             self._state.position = layout.position
+            self._state.text_position = (layout.position, layout.fixed_position)
         painter.decorations(layout, rectangle, options)
 
     def _pixel(self, x, y, color, *, operation=None):

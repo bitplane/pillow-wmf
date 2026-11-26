@@ -68,6 +68,10 @@ class DrawingState:
     # The exact 28.4 current point after ArcTo or AngleArc, which the next
     # LineTo, PolylineTo or PolyBezierTo starts from; None otherwise.
     fixed_position: tuple[int, int] | None = None
+    # (logical position, 28.4 device position) after current-position text:
+    # the next such run continues from the device point while the logical
+    # position is unchanged.
+    text_position: tuple[tuple, tuple[int, int]] | None = None
     clip: ClipRegion = field(default_factory=ClipRegion)
     polygon_fill_mode: int = ALTERNATE
     rop2: int = R2_COPYPEN

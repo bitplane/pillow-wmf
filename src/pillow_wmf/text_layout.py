@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from fractions import Fraction
-from math import ceil
+from math import ceil, floor
 
 from .constants import TA_RTLREADING
 from .dbcs import collapse_advances
@@ -20,6 +20,8 @@ class TextLayout:
     background: tuple[tuple[int | Fraction, int | Fraction], ...] | None = None
     position: tuple[int | Fraction | float, int | Fraction | float] | None = None
     decorations: tuple[tuple[tuple[int, int], ...], ...] = ()
+    # The 28.4 device current position a TA_UPDATECP run leaves.
+    fixed_position: tuple[int, int] | None = None
 
 
 def _horizontal_script_offsets(characters, glyphs, offsets):
@@ -159,8 +161,8 @@ def layout_text(
         gx, gy = project(origin_x + offset, baseline + rounded(dy))
         positioned.append((gx + glyph.bearing[0], gy + glyph.bearing[1], glyph))
     background_width = ceil(total * scale) if advances else ceil((Fraction(total, 65536) // scale) * scale)
-    # An opaque run must also cover protruding ink, even with negative spacing
-    # or a final explicit advance smaller than the glyph's black box.
+    # An opaque run must also cover protruding ink on either side, even with
+    # negative spacing or a final explicit advance smaller than the black box.
     right = max(
         [origin_x + background_width]
         + [
@@ -168,7 +170,13 @@ def layout_text(
             for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
         ]
     )
-    left = origin_x
+    left = min(
+        [origin_x]
+        + [
+            floor(origin_x + offset + glyph.bearing[0])
+            for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
+        ]
+    )
     top, bottom = baseline - font.ascent, baseline + font.descent
     if vertical_advances:
         # PDY uses the positioned glyph bounds rather than one horizontal
