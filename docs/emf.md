@@ -139,7 +139,10 @@ Text records play through the font collection's faces:
   left. An opaque cell widens over ink protruding past the advances, and, with
   explicit advances, to the left of the origin. Under rotation or shear the
   drawn cell also reaches each glyph's ink end rounded up to a whole pixel;
-  a metafile's recorded bounds keep the unrounded cell.
+  a metafile's recorded bounds keep the unrounded cell, and without explicit
+  advances span the run's notional width through the x column of the
+  glyph matrix (each component rounded to 28.4), measured and rounded to
+  whole logical units.
 - A missing weight or slant is simulated from the family's nearest face.
   Italic shears the outline by 0x5700/65536. Bold adds a device pixel to each
   advance (and its logical equivalent to each logical extent); under rotating
@@ -642,7 +645,5 @@ source pixel. A mask bit of 1 copies the source pixel.
   records the native results).
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
-  differs from native along slanted edges, and the recorder's bounds for rotated runs without explicit advances whose
-  device advances total an odd number of half pixels can differ by a
-  logical unit.
+  differs from native along slanted edges.
 - `GM_COMPATIBLE` ArcTo and AngleArc take the `GM_ADVANCED` arc geometry.

@@ -2030,6 +2030,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                     indices,
                     explicit=bool(explicit_advances) and not self._measuring,
                     drawn=not self._measuring,
+                    recorded_scale=scale if self._measuring and not explicit_advances and rotating else None,
                 )
             )
             if self._state.background_mode == OPAQUE

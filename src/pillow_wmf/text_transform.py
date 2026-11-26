@@ -623,12 +623,15 @@ def _round_product(value, factor) -> int:
     return _round_half_away(float32(float32(value) * factor))
 
 
-def opaque_area(font: TransformedFont, run: TransformedRun, indices, *, explicit=False, drawn=False):
+def opaque_area(
+    font: TransformedFont, run: TransformedRun, indices, *, explicit=False, drawn=False, recorded_scale=None
+):
     """The 28.4 corners of the cell parallelogram an opaque run fills.
 
     Along the baseline the cell spans from the origin (or, with explicit
     advances, the earliest ink) to the run's length plus any ink protruding
-    past its advance; across it, the cell ascent and descent. A ``drawn``
+    past its advance; across it, the cell ascent and descent. A recorded
+    run without explicit advances passes ``recorded_scale``. A ``drawn``
     cell also reaches each glyph's ink end rounded up to a whole pixel, as
     the glyph bitmaps cover; a metafile's recorded bounds do not.
     """
@@ -652,6 +655,16 @@ def opaque_area(font: TransformedFont, run: TransformedRun, indices, *, explicit
         return _round_half_away(float32(length * 16))
 
     length = along(run.advance)
+    if recorded_scale:
+        # A recorded run without explicit advances spans its whole logical
+        # length: the run's notional width through the matrix's x column,
+        # each component rounded to 28.4, measured, and rounded to logical
+        # units of ``recorded_scale`` (28.4 per logical unit).
+        a, _, c, _ = font._device_matrix()
+        units = sum(font.design_advances.get(index, 0) for index in indices)
+        vector = tuple(_round_half_away(Fraction(units) * Fraction(float32(16 * value))) for value in (a, c))
+        logical = _round_half_away(Fraction(along(vector)) / Fraction(recorded_scale))
+        length = _round_half_away(float32(logical * recorded_scale))
     if drawn and run.offsets:
         length = max(
             length, *(along(o) + ((font.ink(i)[1] + 15) & ~15) for o, i in zip(run.offsets, indices, strict=True))
