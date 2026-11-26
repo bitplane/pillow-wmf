@@ -16,8 +16,8 @@ header summarizes the drawing.
   bounds. Regions are written inline as region data, never as objects.
 
 The recording DC starts in MM_TEXT and GM_COMPATIBLE on ``device``. Text
-output waits for the font work and is refused, as are the few cases
-``docs/emf.md`` lists.
+records as EMR_EXTTEXTOUTW, measured with the recorder's fonts; see
+``docs/emf.md``.
 """
 
 from __future__ import annotations

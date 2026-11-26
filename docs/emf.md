@@ -84,10 +84,44 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   colour table indexes the default palette, whatever palette the metafile
   selected, with indexes wrapping modulo its 20 entries.
 
-The raster refuses operations whose `GM_ADVANCED` output has no native
-references yet (`UNVERIFIED_IN_ADVANCED_MODE` in `raster.py`), and the player
-reports records it cannot translate as omissions. `render()` and the Pillow
-plugin raise on either rather than return partial art.
+Calls and records that fail natively (invalid modes, unrealizable objects,
+malformed bitmaps, masks that are not 1-bpp) fail without effect here too, and
+a created object that fails leaves its slot empty; record types playback does
+not know are ignored, as natively. The player reports malformed records of
+known types, EMF+ drawing without a GDI fallback, and text in a face the font
+collection cannot provide (font-limited) as omissions. `render()` and the
+Pillow plugin raise on these rather than return partial art.
+
+## Text
+
+Text records play through the font collection's faces:
+
+- `EMR_EXTTEXTOUTA/W` always read the fixed layout, rectangle included,
+  whatever `ETO_NO_RECT` says; a record native validation rejects ends
+  playback. Unicode text has one advance per UTF-16 code unit.
+- `EMR_POLYTEXTOUTA/W` play each entry as ExtTextOut, always with its
+  rectangle and advances (a zero advance offset addresses the record's own
+  header); an entry with options GDI rejects ends the record's output.
+- `EMR_SMALLTEXTOUT` widens 8-bit characters to code units without a code
+  page and draws without advances.
+- A GM_COMPATIBLE record plays with GM_COMPATIBLE text rules and its font
+  transform scales, which size the font in place of the page scale.
+- Under rotating or shearing transforms glyphs are scan-converted from the
+  outline through the full notional-to-device matrix by the TrueType rules
+  (26.6 products, dropout control). The cell spans the head table's bounds
+  widened by 1/64 em, rounded out to pixels along the ascender; opaque cells,
+  underline and strikeout are parallelograms along the baseline. Advances
+  without explicit spacing are the design widths through the matrix in 32.32.
+- Current-position text continues from the 28.4 device point the previous run
+  left. An opaque cell widens over ink protruding past the advances, and, with
+  explicit advances, to the left of the origin.
+- A missing weight or slant is simulated from the family's nearest face
+  (bold widens ink and advances by a pixel, italic shears by 0x5700/65536).
+- Stock fonts select their logical fonts (mostly raster faces, so
+  font-limited). Charset 254 decodes UTF-8.
+
+Exact comparisons use the controlled fonts in `test/fonts`; real fonts are
+font-limited and reported separately.
 
 ## Records
 
@@ -287,13 +321,18 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   display's size at 96 DPI.
 
 Recordings of the covered calls are byte-identical to native ones
-([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Text output
-waits for the font work. Refused: pattern brushes from device bitmaps other
-than 1- and 32-bpp (native `CreateBitmap` cannot make them), compressed
-transfer sources (a recorded transfer carries uncompressed samples, which
-cannot keep an RLE source's unwritten pixels). Null object and palette selections fail without
-a record, as natively; so do DIB pattern brushes from RLE DIBs, whose
-creation fails, and source-less `MaskBlt`, which records nothing.
+([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Text records
+as `EMR_EXTTEXTOUTW`: ANSI text through the font's code page, advances from
+GetTextExtentExPoint-style logical extents unless given (character extra and
+justification included; neither has a record), GM_COMPATIBLE font scales of
+0.01 mm per logical unit from the page transform, and bounds from the text
+cell, opaque and clip rectangles. GDI leaves an odd-length string's padding
+uninitialized; the recorder writes zeros. Recording text needs the selected
+face, from the recorder's `fonts`. Null object and palette selections fail
+without a record, as natively; so do pattern brushes from device bitmaps other
+than 1- and 32-bpp, DIB pattern brushes and pens from RLE DIBs, transfers with
+masks that are not 1-bpp, and source-less `MaskBlt`. Compressed or truncated
+transfer sources record their decoded bitmap.
 
 ## Geometric pens
 
@@ -563,6 +602,7 @@ source pixel. A mask bit of 1 copies the source pixel.
   geometry, each in its own way
   ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
   records the native results).
-- EMF+ (GDI+) drawing.
-- Stock fonts. Text output with real fonts is font-limited and reported
-  separately from exact comparisons.
+- EMF+ (GDI+) drawing, which native GDI playback does not draw either.
+- Text under rotation and shear: some alignment and escapement placements
+  and two glyph masks with vertices on pixel boundaries differ by a pixel;
+  `GM_COMPATIBLE` ArcTo and AngleArc take the `GM_ADVANCED` arc geometry.
