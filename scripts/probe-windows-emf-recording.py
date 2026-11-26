@@ -1139,7 +1139,9 @@ def text_scenarios():
         ext_text_out_a(dc, 10, 40, 0, None, b"BA", 2, None)
         wide(dc, 10, 60, "AB")
         wide(dc, 60, 60, "A B", dx=(7, 3, 9))
-        wide(dc, 60, 80, (1, 2), glyphs=True, options=0x10)
+        # Glyph indices carry advances: measuring them would read the indices as
+        # characters the controlled face lacks, through font fallback.
+        wide(dc, 60, 80, (2, 3), glyphs=True, options=0x10, dx=(8, 6))
         text_out_a(dc, 0, 0, b"", 0)
 
     yield "text-calls", None, text_calls

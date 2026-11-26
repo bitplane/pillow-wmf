@@ -651,7 +651,7 @@ def text_scenarios():
         r.ext_text_out(10, 40, b"BA")
         r.ext_text_out(10, 60, "AB")
         r.ext_text_out(60, 60, "A B", advances=(7, 3, 9))
-        r.ext_text_out(60, 80, GlyphIndices((1, 2)))
+        r.ext_text_out(60, 80, GlyphIndices((2, 3)), advances=(8, 6))
         r.text_out(0, 0, b"")
 
     yield "text-calls", None, text_calls
