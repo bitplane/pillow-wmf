@@ -10,7 +10,7 @@ from .binary import FormatError, ResourceLimitError
 from .bitmap import DEFAULT_MAX_BITMAP_PIXELS, read_dib
 from .bitmap16 import read_bitmap16
 from .blit import StretchAxis
-from .clip import RegionMask
+from .clip import RegionMask, region_outlines
 from .color_adjustment import ColorAdjustment
 from .constants import (
     ALTERNATE,
@@ -34,15 +34,17 @@ from .constants import (
     HALFTONE,
     MM_ANISOTROPIC,
     MM_TEXT,
+    OPAQUE,
+    PS_ALTERNATE,
     PS_INSIDEFRAME,
     PS_NULL,
     PS_SOLID,
+    PS_USERSTYLE,
     R2_BLACK,
     R2_NOP,
     R2_NOT,
     R2_WHITE,
     TA_UPDATECP,
-    TRANSPARENT,
     WHITEONBLACK,
     WINDING,
 )
@@ -57,7 +59,8 @@ from .ellipse import (
 )
 from .execution import CREATED_KINDS, ExecutionContext
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
-from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon
+from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon, coverage_spans
+from .gradient import mesh_triangles
 from .limits import DEFAULT_LIMITS
 from .mapping import IDENTITY_TRANSFORM, Mapping
 from .numeric import float32
@@ -70,7 +73,7 @@ from .raster_state import DrawingState
 from .raster_state import Pen as Pen
 from .raster_state import SavedDC as SavedDC
 from .raster_state import TextState as TextState
-from .stroke import frame_footprint, realize_pen
+from .stroke import frame_footprint
 from .surface import Surface
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
@@ -85,7 +88,6 @@ def rgb(colorref: int) -> tuple[int, int, int]:
 
 # Geometric predefined styles, in multiples of the pen width.
 GEOMETRIC_DASHES = {1: (3, 1), 2: (1, 1), 3: (3, 1, 1, 1), 4: (3, 1, 1, 1, 1, 1)}
-PS_USERSTYLE, PS_ALTERNATE = 7, 8
 BS_DIBPATTERN, BS_DIBPATTERNPT = 5, 6
 
 
@@ -160,32 +162,20 @@ class ParallelogramTransfer:
     corners: tuple
     rectangle: tuple[int, int, int, int]
     sample: object = None
+    # Set for transfers made under a rotating transform, rather than PlgBlt.
+    rop: int | None = None
+    background_rop: int | None = None
+    # ``blend(sample, destination, x, y)`` replaces the ROP for AlphaBlend and
+    # TransparentBlt; ``x, y`` locate the sample and None leaves the pixel.
+    blend: object = None
 
 
 # Operations whose geometry assumes axis-aligned mapping. A rotating or
 # shearing world transform refuses them rather than drawing them unrotated.
 AXIS_ALIGNED_ONLY = frozenset(
     {
-        "alpha_blend",
-        "angle_arc",
-        "arc_to",
-        "bit_blt",
-        "stretch_blt",
-        "set_dib_to_device",
-        "mask_blt",
-        "transparent_blt",
-        "pat_blt",
-        "gradient_fill",
-        "exclude_clip_rect",
-        "intersect_clip_rect",
-        "offset_clip_region",
-        "fill_region",
-        "frame_region",
-        "invert_region",
-        "paint_region",
         "text_out",
         "ext_text_out",
-        "widen_path",
     }
 )
 
@@ -217,7 +207,6 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
     {
         "text_out",
         "ext_text_out",
-        "set_dib_to_device",
         "set_map_mode",
         "set_window_origin",
         "set_window_extent",
@@ -232,6 +221,11 @@ UNVERIFIED_IN_ADVANCED_MODE = frozenset(
 )
 
 
+def _round_half_away(value) -> int:
+    magnitude = math.floor(abs(value) + 0.5)
+    return magnitude if value >= 0 else -magnitude
+
+
 def div255(value: int) -> int:
     """GDI's rounded division by 255."""
     return (value + 128 + ((value + 128) >> 8)) >> 8
@@ -240,8 +234,9 @@ def div255(value: int) -> int:
 def alpha_channel(source, destination, source_alpha, constant):
     """One channel of AlphaBlend's source-over with premultiplied alpha.
 
-    Constant-alpha blending is referenced; per-pixel alpha is referenced only
-    at full constant alpha, where the rounding of the scaling is moot.
+    The constant scales the source alpha, then both premultiplied terms are
+    rounded separately; this matches native output with and without
+    per-pixel alpha, at full and partial constant alpha.
     """
     if source_alpha is None:
         return div255(source * constant + destination * (255 - constant))
@@ -327,23 +322,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         """Preparation lives beside its handler; simple state calls need none."""
         if self.mapping.graphics_mode == GM_ADVANCED and call.name in UNVERIFIED_IN_ADVANCED_MODE:
             raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
-        if self.mapping.rotated and (
-            call.name in AXIS_ALIGNED_ONLY
-            or (call.name in PEN_STROKES and self._state.pen.geometric)
-            or (
-                call.name in {"rectangle", "ellipse", "round_rect", "arc", "chord", "pie"}
-                and self._state.pen.style == PS_INSIDEFRAME
-            )
-        ):
+        if self.mapping.rotated and call.name in AXIS_ALIGNED_ONLY:
             raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
-        if self.mapping.rotated and call.name in PEN_STROKES and self._state.pen.style != PS_NULL:
-            try:
-                scale = self.mapping.rotated_pen_scale(self._state.pen.width)
-            except ValueError as error:
-                raise UnsupportedOperation(str(error)) from error
-            if realize_pen(self._state.pen.width, *scale).expanded:
-                # Pens beyond the small-pen table are built in world space.
-                raise UnsupportedOperation("Pens wider than the small-pen table under a rotating transform")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
@@ -457,11 +437,12 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_arc_direction(self, call, prepared, result):
         self._state.arc_direction = call.kwargs["direction"]
 
-    def _advanced_arc(self, box, start, end, closure="open"):
+    def _advanced_arc(self, box, start, end, closure="open", angles=None):
         """A GM_ADVANCED arc figure in world orientation.
 
         A clockwise arc is the y-mirror image of a counterclockwise one,
-        as a mirroring transform gives.
+        as a mirroring transform gives. ``angles`` gives the arc's directions
+        in degrees in place of the radial points.
         """
         left, right = sorted(box[0::2])
         top, bottom = sorted(box[1::2])
@@ -469,6 +450,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self._state.arc_direction == 2:
             y0, y1 = y1, y0
             start, end = (start[0], top + bottom - start[1]), (end[0], top + bottom - end[1])
+            angles = angles and tuple(-value for value in angles)
         ceil = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
         corners = None
         if self.mapping.rotated:
@@ -488,6 +470,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             radial_bounds=(left, top, right, bottom),
             advanced=True,
             corners=corners,
+            angles=angles,
         )
 
     def _stroke_from_position(self, path, end):
@@ -496,9 +479,16 @@ class RasterContext(ExecutionContext[DrawingState]):
         The current position is the exact logical end point, floored, as
         native recording reports it after AngleArc and ArcTo.
         """
-        start = self._path_point(*self._state.position)
+        start = self._start_point()
         self._stroke_path(DevicePath(((start, path.commands[0][0]), *path.commands)), extend=True)
         self._state.position = (math.floor(end[0]), math.floor(end[1]))
+        self._state.fixed_position = path.commands[-1][-1]
+
+    def _start_point(self):
+        """The 28.4 point a *To call starts from: the exact point an arc left, else the position."""
+        if self._state.fixed_position is not None:
+            return self._state.fixed_position
+        return self._path_point(*self._state.position)
 
     def _prepare_arc_to(self, a):
         if self.mapping.graphics_mode != GM_ADVANCED:
@@ -509,33 +499,58 @@ class RasterContext(ExecutionContext[DrawingState]):
         box = (a["left"], a["top"], a["right"], a["bottom"])
         end = (a["end_x"], a["end_y"])
         path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end)
-        # The end lies on the box's ellipse along the end radial.
-        left, right = sorted(box[0::2])
-        top, bottom = sorted(box[1::2])
-        cx, cy, rx, ry = (left + right) / 2, (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2
-        angle = math.atan2((end[1] - cy) / ry, (end[0] - cx) / rx) if rx and ry else 0.0
-        self._stroke_from_position(path, (cx + rx * math.cos(angle), cy + ry * math.sin(angle)))
+        # The current position is the arc's 28.4 end, floored to a logical point.
+        self._stroke_from_position(path, self._floor_logical(path.commands[-1][-1]))
+
+    def _floor_logical(self, point):
+        """The logical point at or below a 28.4 device point, as GetCurrentPositionEx reports it."""
+        if self.mapping.rotated:
+            m11, m12, m21, m22, dx, dy = self.mapping.world
+            x, y = point[0] / 16 - dx, point[1] / 16 - dy
+            det = m11 * m22 - m12 * m21
+            return math.floor((x * m22 - y * m21) / det), math.floor((y * m11 - x * m12) / det)
+        return tuple(
+            math.floor((Fraction(value, 16) - Fraction(origin)) / Fraction(scale))
+            for value, (scale, origin) in zip(point, self.mapping._transform(), strict=True)
+        )
 
     def _prepare_angle_arc(self, a):
         if self.mapping.graphics_mode != GM_ADVANCED:
             raise UnsupportedOperation("angle_arc in GM_COMPATIBLE")
-        if a["radius"] < 0 or abs(a["sweep"]) >= 360:
-            raise UnsupportedOperation("angle_arc: negative radii and full turns")
+        if a["radius"] < 0:
+            raise UnsupportedOperation("angle_arc: negative radii")
 
     def _apply_angle_arc(self, call, prepared, result):
         a = call.kwargs
         x, y, radius = a["x"], a["y"], a["radius"]
-        first, last = math.radians(a["start"]), math.radians(a["start"] + a["sweep"])
-        start = (x + radius * math.cos(first), y - radius * math.sin(first))
-        end = (x + radius * math.cos(last), y - radius * math.sin(last))
+        box = (x - radius, y - radius, x + radius, y + radius)
+
+        def point(angle):
+            # Angles reduce to one turn first, as native trigonometry does.
+            angle = math.radians(angle % 360)
+            return (x + radius * math.cos(angle), y - radius * math.sin(angle))
+
+        def arc(start, sweep):
+            """Bezier pieces of one arc; a zero sweep is one zero-length piece."""
+            angles = (start, start + sweep)
+            commands = self._advanced_arc(box, point(start), point(start + sweep), angles=angles).commands
+            return ((commands[0][0],) * 4,) if not sweep else commands
+
+        # A sweep of a turn or more draws the remainder, then each turn as the
+        # arc from the remainder's end round to the start and the remainder again.
+        start, sweep = a["start"], a["sweep"]
+        turns = int(abs(sweep) // 360)
+        remainder = sweep - math.copysign(360 * turns, sweep)
         direction = self._state.arc_direction
         # AngleArc sweeps counterclockwise for positive angles, whatever the arc direction.
-        self._state.arc_direction = 2 if a["sweep"] < 0 else 1
+        self._state.arc_direction = 2 if sweep < 0 else 1
         try:
-            path = self._advanced_arc((x - radius, y - radius, x + radius, y + radius), start, end)
+            commands = arc(start, remainder if turns else sweep)
+            for _ in range(turns):
+                commands += arc(start + remainder, math.copysign(360, sweep) - remainder) + arc(start, remainder)
         finally:
             self._state.arc_direction = direction
-        self._stroke_from_position(path, end)
+        self._stroke_from_position(DevicePath(tuple(commands)), point(start + sweep))
 
     def _prepare_set_miter_limit(self, a):
         if not a["limit"] >= 1:
@@ -574,21 +589,14 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         self.mapping.set_layout(a["layout"])
 
-    def _prepare_set_polygon_fill_mode(self, a):
-        if a["mode"] not in (ALTERNATE, WINDING):
-            raise UnsupportedOperation(f"Polygon fill mode {a['mode']}")
-
     def _apply_set_polygon_fill_mode(self, call, prepared, result):
-        a = call.kwargs
-        self._state.polygon_fill_mode = a["mode"]
-
-    def _prepare_set_rop2(self, a):
-        if a["mode"] not in range(R2_BLACK, R2_WHITE + 1):
-            raise UnsupportedOperation(f"ROP2 mode {a['mode']}")
+        # Any value other than WINDING fills as ALTERNATE.
+        self._state.polygon_fill_mode = WINDING if call.kwargs["mode"] == WINDING else ALTERNATE
 
     def _apply_set_rop2(self, call, prepared, result):
-        a = call.kwargs
-        self._state.rop2 = a["mode"]
+        # GDI keeps the low byte and wraps it into the sixteen mixes, so 0 is
+        # R2_WHITE and 17 is R2_BLACK.
+        self._state.rop2 = (((call.kwargs["mode"] & 0xFF) - 1) & 15) + 1
 
     def _prepare_set_color_adjustment(self, a):
         adjustment = ColorAdjustment(
@@ -615,25 +623,21 @@ class RasterContext(ExecutionContext[DrawingState]):
             and not adjustment.flags & ~3
         ):
             raise InvalidOperation("COLORADJUSTMENT field out of range")
-        reason = adjustment.unsupported()
-        if reason:
-            raise UnsupportedOperation(f"set_color_adjustment: {reason}")
         return adjustment
 
     def _apply_set_color_adjustment(self, call, prepared, result):
         self._state.color_adjustment = prepared
 
-    def _prepare_set_stretch_mode(self, a):
-        if a["mode"] not in (BLACKONWHITE, WHITEONBLACK, COLORONCOLOR, HALFTONE):
-            raise UnsupportedOperation(f"Stretch mode {a['mode']}")
-
     def _apply_set_stretch_mode(self, call, prepared, result):
-        a = call.kwargs
-        self._state.stretch_mode = a["mode"]
+        # Values outside the four modes stretch as WHITEONBLACK.
+        mode = call.kwargs["mode"]
+        self._state.stretch_mode = (
+            mode if mode in (BLACKONWHITE, WHITEONBLACK, COLORONCOLOR, HALFTONE) else WHITEONBLACK
+        )
 
     def _apply_set_background_mode(self, call, prepared, result):
-        a = call.kwargs
-        self._state.background_mode = a["mode"]
+        # The value is kept as given; drawing paints a background only for OPAQUE.
+        self._state.background_mode = call.kwargs["mode"]
 
     def _apply_set_background_color(self, call, prepared, result):
         a = call.kwargs
@@ -736,7 +740,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             # Cosmetic pens are one device pixel wide whatever their width.
             # User style units are three pixels, like the predefined styles.
             pattern = {PS_ALTERNATE: (1, 1), PS_USERSTYLE: tuple(3 * e for e in entries)}.get(line_style, ())
-            return Pen(color, 0, PS_SOLID if pattern else line_style, pattern=pattern)
+            return Pen(color, 0, PS_SOLID if pattern else line_style, pattern=pattern, cosmetic=True)
         if a["width"] <= 0 or line_style == PS_ALTERNATE:
             raise InvalidOperation("Geometric pens need a positive width and no alternate style")
         if line_style == PS_USERSTYLE:
@@ -866,6 +870,26 @@ class RasterContext(ExecutionContext[DrawingState]):
             bounds = (0, 0, self.surface.width, self.surface.height)
             self._state.clip = self._state.clip.combine(mask or RegionMask(), a["mode"], bounds)
 
+    def get_clip_box(self):
+        """GetClipBox: the effective clip's bounding box in logical units, or None when empty.
+
+        A rotating or shearing transform maps the box's four corners back and
+        bounds them; otherwise the two corners map back to their nearest
+        logical points.
+        """
+        region = self._state.clip.within((0, 0, self.surface.width, self.surface.height))
+        if not region.bands:
+            return None
+        left = min(endpoints[0] for _, _, endpoints in region.bands)
+        right = max(endpoints[-1] for _, _, endpoints in region.bands)
+        top, bottom = region.bands[0][0], region.bands[-1][1]
+        if self.mapping.rotated:
+            corners = [self.mapping.rotated_logical_point(x * 16, y * 16) for x in (left, right) for y in (top, bottom)]
+            xs, ys = [x for x, _ in corners], [y for _, y in corners]
+            return min(xs), min(ys), max(xs), max(ys)
+        (left, top), (right, bottom) = self.mapping.logical_point(left, top), self.mapping.logical_point(right, bottom)
+        return min(left, right), min(top, bottom), max(left, right), max(top, bottom)
+
     def _apply_set_meta_region(self, call, prepared, result):
         self._state.clip = self._state.clip.with_meta((0, 0, self.surface.width, self.surface.height))
 
@@ -891,11 +915,14 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_move_to(self, call, prepared, result):
         a = call.kwargs
         self._state.position = a["x"], a["y"]
+        self._state.fixed_position = None
 
     def _apply_line_to(self, call, prepared, result):
         a = call.kwargs
-        self._stroke_path(DevicePath.polyline(self._mapped_path((self._state.position, (a["x"], a["y"])))), extend=True)
+        start = self._start_point()
+        self._stroke_path(DevicePath.polyline((start, self._path_point(a["x"], a["y"]))), extend=True)
         self._state.position = a["x"], a["y"]
+        self._state.fixed_position = None
 
     def _apply_polyline(self, call, prepared, result):
         a = call.kwargs
@@ -915,18 +942,19 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_poly_bezier_to(self, call, prepared, result):
         logical = (self._state.position, *call.kwargs["points"])
-        points = self._mapped_path(logical)
+        points = [self._start_point(), *self._mapped_path(logical[1:])]
         if len(points) > 1:
             self._stroke_path(
                 DevicePath(tuple(tuple(points[i : i + 4]) for i in range(0, len(points) - 1, 3))), extend=True
             )
-        self._state.position = logical[-1]
+            self._state.position, self._state.fixed_position = logical[-1], None
 
     def _apply_polyline_to(self, call, prepared, result):
         logical = (self._state.position, *call.kwargs["points"])
         if len(logical) > 1:
-            self._stroke_path(DevicePath.polyline(self._mapped_path(logical)), extend=True)
-        self._state.position = logical[-1]
+            points = [self._start_point(), *self._mapped_path(logical[1:])]
+            self._stroke_path(DevicePath.polyline(points), extend=True)
+            self._state.position, self._state.fixed_position = logical[-1], None
 
     def _apply_poly_polyline(self, call, prepared, result):
         for polyline in call.kwargs["polylines"]:
@@ -975,6 +1003,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         for commands, closed in figures:
             mapped = tuple(tuple(self._path_point(*point) for point in command) for command in commands)
             self._stroke_path(DevicePath(mapped, closed=closed))
+        if figures or position != self._state.position:
+            self._state.fixed_position = None
         self._state.position = position
 
     def _apply_polygon(self, call, prepared, result):
@@ -997,13 +1027,32 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_pat_blt(self, call, prepared, result):
         a = call.kwargs
+        if prepared is not None:
+            self._painter().transform_pat_blt(prepared, a["rop"])
+            return
         self._pat_blt(a["x"], a["y"], a["width"], a["height"], a["rop"])
 
+    def _rotated_legacy(self, transfer, a):
+        """Under rotation, a destination-DC source fails as native GDI rejects
+        a rotated source DC; pattern operations fill the parallelogram."""
+        if not self.mapping.rotated:
+            return transfer
+        if transfer is TransferAction.PATTERN:
+            return self._prepare_pat_blt(a)
+        return TransferAction.NOOP
+
+    def _prepare_pat_blt(self, a):
+        if self.mapping.rotated:
+            x, y = a["x"], a["y"]
+            points = ((x, y), (x + a["width"], y), (x, y + a["height"]))
+            return tuple(self.mapping.fixed_point(*point) for point in points)
+        return None
+
     def _prepare_bit_blt(self, a):
-        return self._prepare_legacy_transfer("bit_blt", a)
+        return self._rotated_legacy(self._prepare_legacy_transfer("bit_blt", a), a)
 
     def _prepare_stretch_blt(self, a):
-        return self._prepare_legacy_transfer("stretch_blt", a)
+        return self._rotated_legacy(self._prepare_legacy_transfer("stretch_blt", a), a)
 
     def _prepare_dib_bit_blt(self, a):
         if self.mapping.rotated:
@@ -1025,13 +1074,20 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_transparent_blt(self, a):
         # TransparentBlt stretches without combining samples, then skips the key.
+        if self.mapping.rotated:
+            transfer = self._prepare_rotated_transfer("dib_stretch_blt", {**a, "rop": SRCCOPY})
+            key = self._state.palette.colorref(logical_color(a["transparent"]))
+            blend = lambda sample, destination, x, y: None if sample == key else sample  # noqa: E731
+            return replace(transfer, blend=blend), key
         preparation = replace(self._transfer_preparation(), stretch_mode=COLORONCOLOR)
         transfer = preparation.prepare_dib("dib_stretch_blt", {**a, "rop": SRCCOPY})
         return transfer, self._state.palette.colorref(logical_color(a["transparent"]))
 
     def _apply_transparent_blt(self, call, prepared, result):
         transfer, transparent = prepared
-        if isinstance(transfer, SourceTransfer):
+        if isinstance(transfer, ParallelogramTransfer):
+            self._apply_plg_blt(call, transfer, result)
+        elif isinstance(transfer, SourceTransfer):
             self._painter().source_blt(
                 transfer.bitmap,
                 transfer.horizontal,
@@ -1056,13 +1112,26 @@ class RasterContext(ExecutionContext[DrawingState]):
                 for row in range(layout.height)
             ]
             alpha = b"".join(rows if layout.top_down else reversed(rows))
+        if self.mapping.rotated:
+            transfer = self._prepare_rotated_transfer("dib_stretch_blt", {**a, "rop": SRCCOPY})
+            width = transfer.source.width
+
+            def blend(sample, destination, x, y):
+                source_alpha = alpha[y * width + x] if alpha is not None else None
+                return tuple(
+                    alpha_channel(s, d, source_alpha, constant) for s, d in zip(sample, destination, strict=True)
+                )
+
+            return replace(transfer, blend=blend), None, None
         preparation = replace(self._transfer_preparation(), stretch_mode=COLORONCOLOR)
         transfer = preparation.prepare_dib("dib_stretch_blt", {**a, "rop": SRCCOPY})
         return transfer, alpha, constant
 
     def _apply_alpha_blend(self, call, prepared, result):
         transfer, alpha, constant = prepared
-        if isinstance(transfer, SourceTransfer):
+        if isinstance(transfer, ParallelogramTransfer):
+            self._apply_plg_blt(call, transfer, result)
+        elif isinstance(transfer, SourceTransfer):
             self._painter().alpha_blt(
                 transfer.bitmap, alpha, transfer.horizontal, transfer.vertical, constant, alpha_channel
             )
@@ -1082,37 +1151,99 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         vertices = tuple((*self._point(x, y), red, green, blue) for x, y, red, green, blue, _ in a["vertices"])
         painter = self._painter()
+        if a["mode"] == 2 and not self.mapping.rotated:
+            clip = self._state.clip.within((0, 0, self.surface.width, self.surface.height)).rectangles()
+            clip = list(clip)
+            if clip:
+                bounds = (
+                    min(r[0] for r in clip),
+                    min(r[1] for r in clip),
+                    max(r[2] for r in clip),
+                    max(r[3] for r in clip),
+                )
+                for corners in mesh_triangles(vertices, a["meshes"], bounds):
+                    painter.gradient_triangle(corners)
+            return
         for mesh in a["meshes"]:
             corners = tuple(vertices[index] for index in mesh)
-            if a["mode"] == 2:
+            if self.mapping.rotated and a["mode"] != 2:
+                # A rotated rectangle is shaded as two triangles between its
+                # pixel-rounded corners, coloured by the edge each lies on.
+                first, second = (a["vertices"][index] for index in mesh)
+                axis = a["mode"]
+                if first[axis] > second[axis]:
+                    first, second = second, first
+                (left, right), (top, bottom) = sorted((first[0], second[0])), sorted((first[1], second[1]))
+                ends = (first[2:5], second[2:5])
+
+                def corner(x, y, ends=ends, axis=axis, near=(left, top)):
+                    return (*self.mapping.device_point(x, y), *ends[(x, y)[axis] != near[axis]])
+
+                top_left, top_right = corner(left, top), corner(right, top)
+                bottom_right, bottom_left = corner(right, bottom), corner(left, bottom)
+                painter.gradient_triangle((top_left, top_right, bottom_right))
+                painter.gradient_triangle((top_left, bottom_right, bottom_left))
+            elif a["mode"] == 2:
                 painter.gradient_triangle(corners)
             else:
                 painter.gradient_rectangle(corners, vertical=a["mode"] == 1)
 
     def _prepare_plg_blt(self, a):
+        corners = tuple(self.mapping.fixed_point(x, y) for x, y in a["points"])
+        (x0, y0), (x1, y1), (x2, y2) = corners
+        if y1 == y0 and x2 == x0 and not any(value & 15 for value in (x0, y0, x1, x2, y2)):
+            return self._prepare_rectangular_plg_blt(a, x0 >> 4, y0 >> 4, (x1 - x0) >> 4, (y2 - y0) >> 4)
         source = self._parallelogram_source(a["source"])
         rectangle = (a["src_x"], a["src_y"], a["src_width"], a["src_height"])
-        corners = tuple(self.mapping.fixed_point(x, y) for x, y in a["points"])
         sample = None
         if a["mask"] is not None:
-            mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
-            if mask.depth != 1 or not mask.complete:
-                raise UnsupportedOperation("plg_blt: masks are complete 1-bpp DIBs")
-            (x0, y0), (x1, _), (_, y2) = corners
-            # The mask keeps device orientation: a parallelogram mirrored
-            # against the source reads the mask mirrored within the rectangle.
-            flip_x, flip_y = x1 < x0, y2 < y0
+            mask = self._plg_mask(a)
 
             def sample(u, v):
-                u, v = u - a["src_x"], v - a["src_y"]
-                if flip_x:
-                    u = a["src_width"] - 1 - u
-                if flip_y:
-                    v = a["src_height"] - 1 - v
-                mx, my = u + a["mask_x"], v + a["mask_y"]
+                # A sheared or rotated parallelogram reads the mask at the source pixel.
+                mx, my = u - a["src_x"] + a["mask_x"], v - a["src_y"] + a["mask_y"]
                 return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
 
         return ParallelogramTransfer(source, corners, self._source_rectangle(source, rectangle), sample)
+
+    def _plg_mask(self, a):
+        mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
+        if mask.depth != 1 or not mask.complete:
+            raise UnsupportedOperation("plg_blt: masks are complete 1-bpp DIBs")
+        return mask
+
+    def _prepare_rectangular_plg_blt(self, a, x, y, width, height):
+        """A parallelogram that is a whole-pixel device rectangle is a stretch.
+
+        It copies (a BitBlt at equal extents outside HALFTONE) or stretches the
+        source onto the device rectangle in the DC's stretch mode, a negative
+        extent mirroring the source. The mask lies over the destination: a
+        mirrored axis reads it mirrored within the source rectangle.
+        """
+        sw, sh = a["src_width"], a["src_height"]
+        arguments = {key: a[key] for key in ("src_x", "src_y", "source")}
+        arguments |= {"x": x, "y": y, "width": width, "height": height, "rop": SRCCOPY}
+        name = "dib_bit_blt"
+        if (width, height) != (sw, sh) or self._state.stretch_mode == HALFTONE:
+            name = "dib_stretch_blt"
+            arguments |= {"src_width": sw, "src_height": sh}
+        device = Mapping(mode=MM_TEXT, window_extent=(1, 1), viewport_extent=(1, 1), surface_width=self.surface.width)
+        transfer = replace(self._transfer_preparation(), mapping=device).prepare_dib(name, arguments)
+        if not isinstance(transfer, SourceTransfer) or a["mask"] is None:
+            return transfer, None
+        mask = self._plg_mask(a)
+        flip_x, flip_y = width < 0, height < 0
+
+        def sample(u, v):
+            u, v = u - a["src_x"], v - a["src_y"]
+            if flip_x:
+                u = sw - 1 - u
+            if flip_y:
+                v = sh - 1 - v
+            mx, my = u + a["mask_x"], v + a["mask_y"]
+            return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
+
+        return transfer, (sample, 0x00AA0029)
 
     def _parallelogram_source(self, bitmap):
         layout = read_dib(bitmap, max_pixels=self.max_bitmap_pixels)
@@ -1130,10 +1261,10 @@ class RasterContext(ExecutionContext[DrawingState]):
         return rectangle
 
     def _prepare_rotated_transfer(self, name, a):
-        """A rotating or shearing transform maps a SRCCOPY destination
-        rectangle to a parallelogram, transferred as PlgBlt transfers."""
-        if a["rop"] != SRCCOPY or a.get("color_usage", 0) != 0 or a["source"] is None:
-            raise UnsupportedOperation(f"{name}: only SRCCOPY RGB transfers under a rotating transform")
+        """A rotating or shearing transform maps a destination rectangle to a
+        parallelogram; see ``RasterPainter.transform_blt``."""
+        if a.get("color_usage", 0) != 0 or a["source"] is None:
+            raise UnsupportedOperation(f"{name}: only RGB transfers with a source under a rotating transform")
         source = self._parallelogram_source(a["source"])
         width, height = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         top = a["src_y"]
@@ -1144,9 +1275,26 @@ class RasterContext(ExecutionContext[DrawingState]):
         corners = tuple(
             self.mapping.fixed_point(*point) for point in ((x, y), (x + a["width"], y), (x, y + a["height"]))
         )
-        return ParallelogramTransfer(source, corners, self._source_rectangle(source, (a["src_x"], top, width, height)))
+        rectangle = self._source_rectangle(source, (a["src_x"], top, width, height))
+        return ParallelogramTransfer(source, corners, rectangle, rop=a["rop"])
 
     def _apply_plg_blt(self, call, prepared, result):
+        if isinstance(prepared, tuple):
+            transfer, mask = prepared
+            if isinstance(transfer, SourceTransfer):
+                self._painter().source_blt(transfer.bitmap, transfer.horizontal, transfer.vertical, SRCCOPY, mask=mask)
+            return
+        if prepared.rop is not None:
+            self._painter().transform_blt(
+                prepared.source,
+                prepared.corners,
+                prepared.rectangle,
+                prepared.rop,
+                mask=prepared.sample,
+                background_rop=prepared.background_rop,
+                blend=prepared.blend,
+            )
+            return
         self._painter().plg_blt(prepared.source, prepared.corners, prepared.rectangle, prepared.sample)
 
     def _prepare_mask_blt(self, a):
@@ -1154,16 +1302,23 @@ class RasterContext(ExecutionContext[DrawingState]):
         foreground = a["rop"] & 0x00FFFFFF
         background = ((a["rop"] >> 24) & 255) << 16
         arguments = {key: a[key] for key in ("x", "y", "width", "height", "src_x", "src_y", "source")}
+        source_width, source_height = a.get("src_size") or (a["width"], a["height"])
+        name = "dib_bit_blt"
+        if (source_width, source_height) != (a["width"], a["height"]):
+            name = "dib_stretch_blt"
+            arguments |= {"src_width": source_width, "src_height": source_height}
         if a["source"] is None:
             if pattern_rop2(foreground) is None or (a["mask"] is not None and pattern_rop2(background) is None):
                 raise UnsupportedOperation("mask_blt: source-less operation uses its source")
             if a["mask"] is None:
                 return TransferAction.PATTERN, foreground, None
             raise UnsupportedOperation("mask_blt: masked pattern transfers")
+        if self.mapping.rotated:
+            return self._prepare_rotated_mask_blt(a, arguments, foreground, background), foreground, None
         if a["mask"] is None:
-            return self._prepare_transfer("dib_bit_blt", {**arguments, "rop": foreground}), foreground, None
+            return self._prepare_transfer(name, {**arguments, "rop": foreground}), foreground, None
         # Realize the source as for a copy; each pixel's ROP3 is chosen later.
-        transfer = self._prepare_transfer("dib_bit_blt", {**arguments, "rop": SRCCOPY})
+        transfer = self._prepare_transfer(name, {**arguments, "rop": SRCCOPY})
         if not isinstance(transfer, SourceTransfer):
             return transfer, foreground, None
         scaled = any(isinstance(axis, StretchAxis) for axis in (transfer.horizontal, transfer.vertical))
@@ -1179,8 +1334,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         if mask.depth != 1 or not mask.complete:
             raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
         # Source samples are top-down; place the mask's rectangle over the source's.
-        source_top = a["src_y"] if source.top_down else source.height - a["src_y"] - a["height"]
-        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - a["height"]
+        source_top = a["src_y"] if source.top_down else source.height - a["src_y"] - source_height
+        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - source_height
 
         def sample(x, y):
             mx, my = x - a["src_x"] + a["mask_x"], y - source_top + mask_top
@@ -1188,10 +1343,30 @@ class RasterContext(ExecutionContext[DrawingState]):
 
         return transfer, foreground, (sample, background)
 
+    def _prepare_rotated_mask_blt(self, a, arguments, foreground, background):
+        transfer = self._prepare_rotated_transfer("dib_bit_blt", {**arguments, "rop": foreground})
+        if a["mask"] is None:
+            return transfer
+        mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
+        if mask.depth != 1 or not mask.complete:
+            raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
+        mask_top = (
+            a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - arguments.get("src_height", a["height"])
+        )
+        left, top = transfer.rectangle[:2]
+
+        def sample(x, y):
+            mx, my = x - left + a["mask_x"], y - top + mask_top
+            return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
+
+        return replace(transfer, sample=sample, background_rop=background)
+
     def _apply_mask_blt(self, call, prepared, result):
         transfer, foreground, mask = prepared
         a = call.kwargs
-        if isinstance(transfer, SourceTransfer):
+        if isinstance(transfer, ParallelogramTransfer):
+            self._apply_plg_blt(call, transfer, result)
+        elif isinstance(transfer, SourceTransfer):
             self._painter().source_blt(
                 transfer.bitmap,
                 transfer.horizontal,
@@ -1201,11 +1376,16 @@ class RasterContext(ExecutionContext[DrawingState]):
                 pad_bounds=transfer.pad_bounds,
             )
         elif transfer is TransferAction.PATTERN:
+            if self.mapping.rotated:
+                self._painter().transform_pat_blt(self._prepare_pat_blt(a), foreground)
+                return
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], foreground)
 
     def _apply_bit_blt(self, call, prepared, result):
         a = call.kwargs
-        if isinstance(prepared, ParallelogramTransfer):
+        if isinstance(prepared, tuple):  # A rotated pattern parallelogram.
+            self._painter().transform_pat_blt(prepared, a["rop"])
+        elif isinstance(prepared, ParallelogramTransfer):
             self._apply_plg_blt(call, prepared, result)
         elif isinstance(prepared, SourceTransfer):
             self._source_blt(
@@ -1247,9 +1427,38 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     _apply_restore_dc = _apply_save_dc
 
+    def _polygon_mask(self, contours, *, fill_mode=ALTERNATE) -> RegionMask:
+        """The pixels a polygon fill of 28.4 ``contours`` covers, as a region."""
+        contours = tuple(tuple(contour) for contour in contours if contour)
+        if not contours:
+            return RegionMask()
+        xs = [x for contour in contours for x, _ in contour]
+        ys = [y for contour in contours for _, y in contour]
+        bounds = (min(xs) // 16, min(ys) // 16, max(xs) // 16 + 1, max(ys) // 16 + 1)
+        spans = coverage_spans(contours, *bounds, fill_mode=fill_mode)
+        return RegionMask.from_rectangles((start, y, end, y + 1) for y, start, end in spans)
+
     def _apply_intersect_clip_rect(self, call, prepared, result):
         name = call.name
         a = call.kwargs
+        if self.mapping.rotated:
+            # Under rotation the clip rectangle becomes a filled parallelogram:
+            # IntersectClipRect rounds its corners to device pixels first,
+            # ExcludeClipRect keeps them in 28.4.
+            corners = (
+                (a["left"], a["top"]),
+                (a["right"], a["top"]),
+                (a["right"], a["bottom"]),
+                (a["left"], a["bottom"]),
+            )
+            if name == "intersect_clip_rect":
+                polygon = [tuple(16 * value for value in self.mapping.device_point(*point)) for point in corners]
+            else:
+                polygon = [self.mapping.fixed_point(*point) for point in corners]
+            bounds = (0, 0, self.surface.width, self.surface.height)
+            mode = 1 if name == "intersect_clip_rect" else 4
+            self._state.clip = self._state.clip.combine(self._polygon_mask((polygon,)), mode, bounds)
+            return
         left, top = self.mapping.clip_point(a["left"], a["top"])
         right, bottom = self.mapping.clip_point(a["right"], a["bottom"])
         rectangle = (min(left, right), min(top, bottom), max(left, right), max(top, bottom))
@@ -1263,6 +1472,13 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_offset_clip_region(self, call, prepared, result):
         a = call.kwargs
         dx, dy = self.mapping.clip_displacement(a["x"], a["y"])
+        if self.mapping.rotated:
+            # The logical offset is mapped by the transform's linear part and rounded.
+            m11, m12, m21, m22 = self.mapping.world[:4]
+            dx, dy = (
+                (1 if value >= 0 else -1) * math.floor(abs(value) + 0.5)
+                for value in (a["x"] * m11 + a["y"] * m21, a["x"] * m12 + a["y"] * m22)
+            )
         self._state.clip = self._state.clip.offset(dx, dy)
 
     def _apply_fill_region(self, call, prepared, result):
@@ -1270,6 +1486,21 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         painter = self._painter()
         region = self._objects[a["region"]]
+        if region is not None and self.mapping.rotated:
+            # The region's outline is transformed and filled as a polygon.
+            loops = region_outlines(region.rectangles())
+            contours = tuple([self.mapping.fixed_point(*point) for point in loop] for loop in loops)
+            mask = self._polygon_mask(contours)
+            if name == "frame_region":
+                mask = self._rotated_frame(contours, mask, abs(a["width"]), abs(a["height"]))
+            brush = self._objects[a["brush"]] if "brush" in a else self._state.brush
+            for left, top, right, bottom in mask.rectangles():
+                if name == "invert_region":
+                    for y in range(max(0, top), min(self.surface.height, bottom)):
+                        painter.span(y, left, right, (0, 0, 0), operation=R2_NOT)
+                else:
+                    painter.fill_box(left, top, right, bottom, brush)
+            return
         if region is not None:
             if name == "frame_region":
                 region = region.frame(
@@ -1289,6 +1520,31 @@ class RasterContext(ExecutionContext[DrawingState]):
                         painter.span(y, left, right, (0, 0, 0), operation=R2_NOT)
                 else:
                     painter.fill_box(left, top, right, bottom, brush)
+
+    def _rotated_frame(self, contours, mask, width, height) -> RegionMask:
+        """FrameRgn as native GDI draws it: the region's widened outline within the region.
+
+        The outline is widened by a geometric pen with mitred joins and the DC's
+        miter limit, twice the larger frame size wide, whose world transform
+        squeezes the smaller axis by the sizes' ratio: an ellipse of twice
+        the frame sizes in logical units. Its winding fill is intersected with
+        the region.
+        """
+        if width < 1 or height < 1:
+            return RegionMask()
+        m11, m12, m21, m22, dx, dy = self.mapping.world
+        ratio = float32(float32(2 * min(width, height)) / float32(2 * max(width, height)))
+        if 2 * width < 2 * height:
+            m11, m12 = float32(ratio * m11), float32(ratio * m12)
+        else:
+            m21, m22 = float32(ratio * m21), float32(ratio * m22)
+        mapping = replace(self.mapping, world=(m11, m12, m21, m22, dx, dy))
+        pen = Pen((0, 0, 0), 2 * max(width, height), PS_SOLID, geometric=True, cap=0, join=2)
+        painter = RasterPainter(self.surface, replace(self._state, pen=pen, mapping=mapping))
+        figures = tuple(DevicePath.polyline(contour + contour[:1], closed=True) for contour in contours)
+        outlines = tuple(painter.widened_outlines(figures))
+        frame = self._polygon_mask(outlines, fill_mode=WINDING)
+        return frame.intersection(mask)
 
     _apply_paint_region = _apply_fill_region
     _apply_invert_region = _apply_fill_region
@@ -1315,6 +1571,10 @@ class RasterContext(ExecutionContext[DrawingState]):
                 self.mapping.fixed_point(logical_right, logical_top),
                 self.mapping.fixed_point(logical_left, logical_bottom),
             )
+            if self.mapping.rotated and self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
+                lt, rt, lb = self._inside_frame_corners(
+                    lt, rt, lb, self._state.pen.width, logical_right - logical_left, logical_bottom - logical_top
+                )
             rb = (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1])
             corners = (lt, rt, rb, lb) if self.mapping.rotated else None
             (x0, y0), (x1, y1) = lt, rb
@@ -1339,12 +1599,15 @@ class RasterContext(ExecutionContext[DrawingState]):
             drawing_bounds = advanced_bounds
             covered = False
             if self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
-                covered, drawing_bounds = inside_frame_bounds(
+                covered, inset_bounds = inside_frame_bounds(
                     (a["left"], a["top"], a["right"], a["bottom"]),
                     (left, top, right, bottom),
                     self._state.pen.width,
                     self.mapping.linear_scale,
                 )
+                if not corners:
+                    # Rotated boxes were inset at their transformed corners.
+                    drawing_bounds = inset_bounds
                 if covered and name in {"arc", "chord", "pie"}:
                     return
             rectangle = name == "rectangle"
@@ -1441,6 +1704,30 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if rectangle and brush.style == BS_HATCHED and self._state.rop2 in (R2_BLACK, R2_NOT, R2_NOP, R2_WHITE):
                     brush = replace(brush, style=0)
                 painter.paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
+
+    def _inside_frame_corners(self, lt, rt, lb, width, box_width, box_height):
+        """Inset a transformed box for an inside-frame pen, as native EBOX does.
+
+        The vectors (-width, width) and (width, width) are mapped to 28.4 and
+        halved, rounding up; the upper-right corner moves by the first, the
+        upper-left by the second and the lower-left back by the first. A box
+        narrower than the pen keeps its corners: the pen fills it.
+        """
+        if width > min(box_width, box_height):
+            return lt, rt, lb
+        m11, m12, m21, m22 = self.mapping.world[:4]
+        f = float32
+
+        def vector(x, y):
+            return tuple(_round_half_away(16 * f(f(y * b) + f(x * a))) for a, b in ((m11, m21), (m12, m22)))
+
+        first = tuple((value + 1) >> 1 for value in vector(-width, width))
+        second = tuple((value + 1) >> 1 for value in vector(width, width))
+        return (
+            (lt[0] + second[0], lt[1] + second[1]),
+            (rt[0] + first[0], rt[1] + first[1]),
+            (lb[0] - first[0], lb[1] - first[1]),
+        )
 
     _apply_ellipse = _apply_rectangle
     _apply_arc = _apply_rectangle
@@ -1540,7 +1827,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             *origin,
             alignment,
             advances,
-            opaque=self._state.background_mode != TRANSPARENT,
+            opaque=self._state.background_mode == OPAQUE,
             max_pixels=self.max_bitmap_pixels,
             scale=abs(sx),
             extra=self._state.text_state.character_extra,
@@ -1670,12 +1957,10 @@ class RasterContext(ExecutionContext[DrawingState]):
             figures.append((flat.commands, closed))
         self._state.path = tuple(figures)
 
-    def _prepare_widen_path(self, a):
-        if self._completed_path() and self._painter().pen_shape is None:
-            raise UnsupportedOperation("widen_path: only extended geometric pens other than round caps and joins")
-
     def _apply_widen_path(self, call, prepared, result):
-        if not self._completed_path():
+        # A cosmetic ExtCreatePen pen fails, keeping the path. CreatePen
+        # styles are ignored: a styled pen widens as the solid pen does.
+        if not self._completed_path() or self._state.pen.cosmetic:
             return
         # Each figure, flattened, becomes the closed outlines its pen strokes.
         outlines = self._painter().widened_outlines(self._path_figures(close=False))

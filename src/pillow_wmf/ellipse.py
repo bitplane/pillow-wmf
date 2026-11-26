@@ -298,6 +298,7 @@ def arc_cubics(
     clockwise=False,
     advanced=False,
     corners=None,
+    angles=None,
 ) -> tuple[tuple[Point, Point, Point, Point], ...]:
     """Cut an exclusive-bound ellipse at two radial directions.
 
@@ -306,6 +307,8 @@ def arc_cubics(
     points required to lie on the ellipse. ``advanced`` takes the
     GM_ADVANCED ellipse from the inclusive 28.4 ``drawing_bounds``, or from
     the transformed box ``corners`` under a rotating or shearing transform.
+    ``angles`` gives the two directions in degrees instead, as AngleArc
+    does; each then lies in the quadrant of its angle's floor.
     """
     x0, y0, x1, y1 = drawing_bounds or _ellipse_bounds(left, top, right, bottom, null_pen=null_pen)
     if advanced and corners is None:
@@ -330,7 +333,11 @@ def arc_cubics(
         quadrant = (0, 1, 3, 2)[(x < 0) + 2 * (y < 0)]
         return atan2_degrees(y, x), quadrant
 
-    (first, first_quadrant), (last, last_quadrant) = angle(start), angle(end)
+    if angles is None:
+        (first, first_quadrant), (last, last_quadrant) = angle(start), angle(end)
+    else:
+        first, last = (float32(value % 360) for value in angles)
+        first_quadrant, last_quadrant = int(first // 90) % 4, int(last // 90) % 4
     # Choose endpoint precision before unwrapping. Nearly coincident angles
     # that compare equal request a full sweep, not the short-angle mode.
     accurate = 0 < abs(float32(last - first)) < SHORT_ANGLE
@@ -401,6 +408,7 @@ def arc_figure(
     clockwise=False,
     advanced=False,
     corners=None,
+    angles=None,
 ) -> DevicePath:
     """Retain one arc figure, optionally closed directly or through its centre."""
     curves = arc_cubics(
@@ -416,6 +424,7 @@ def arc_figure(
         clockwise=clockwise,
         advanced=advanced,
         corners=corners,
+        angles=angles,
     )
     if closure == "open":
         return DevicePath(curves, closed=start == end)

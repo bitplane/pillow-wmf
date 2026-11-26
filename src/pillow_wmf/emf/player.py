@@ -9,16 +9,28 @@ partial one. Comments never draw; EMF+ drawing is reported only when a file
 has no GDI fallback for it.
 """
 
+import math
 import struct
 from collections.abc import Callable
 
 from ..binary import FormatError, Limits
 from ..bitmap16 import encode_bitmap16
-from ..constants import ETO_CLIPPED, ETO_GLYPH_INDEX, ETO_OPAQUE, GM_ADVANCED
+from ..constants import (
+    ALTERNATE,
+    BLACKONWHITE,
+    ETO_CLIPPED,
+    ETO_GLYPH_INDEX,
+    ETO_OPAQUE,
+    GM_ADVANCED,
+    OPAQUE,
+    R2_COPYPEN,
+)
+from ..dib_rle import truncate_rle
 from ..gdi import GDI, Call, Handle, InvalidOperation, UnsupportedOperation
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
 from ..objects import BitmapData, EncodedText, FontRequest, GlyphIndices, PaletteEntries, PaletteUpdate, RegionGeometry
+from ..palette import DEFAULT_COLORS
 from ..playback import Omission as Omission
 from ..playback import Omissions, PlaybackError, SaveLevels
 from . import bitmaps, fixed, system, text, variable
@@ -32,6 +44,7 @@ STOCK_OBJECT = 0x80000000
 BS_NULL = 1
 BS_DIBPATTERN = 5
 DIB_RGB_COLORS = 0
+DIB_PAL_COLORS = 1
 SRCCOPY = 0x00CC0020
 GM_COMPATIBLE = 1
 ETO_NO_RECT = text.ETO_NO_RECT
@@ -114,47 +127,88 @@ def _source_blit(record):
             "height": record.height,
             "rop": record.rop,
         }
-    source_transform = (record.src_m11, record.src_m12, record.src_m21, record.src_m22, record.src_dx, record.src_dy)
-    if source_transform != IDENTITY:
-        raise Unsupported("Transformed blit sources are not yet supported")
-    if record.usage != DIB_RGB_COLORS:
-        raise Unsupported("Palette-indexed blit sources are not yet supported")
+    stretch = isinstance(record, bitmaps.StretchBlt)
+    width, height = (record.src_width, record.src_height) if stretch else (record.width, record.height)
+    source = _source_rectangle(record, record.src_x, record.src_y, width, height)
+    if source is None:
+        return None, None
     arguments = {
         "x": record.x,
         "y": record.y,
         "width": record.width,
         "height": record.height,
-        "src_x": record.src_x,
-        "src_y": record.src_y,
+        "src_x": source[0],
+        "src_y": source[1],
         "rop": record.rop,
-        "source": _dib(record),
+        "source": _source_dib(record),
     }
-    if isinstance(record, bitmaps.StretchBlt):
-        return "dib_stretch_blt", arguments | {"src_width": record.src_width, "src_height": record.src_height}
+    if stretch or source[2:] != (record.width, record.height):
+        return "dib_stretch_blt", arguments | {"src_width": source[2], "src_height": source[3]}
     return "dib_bit_blt", arguments
 
 
-def _identity_source(record):
-    source_transform = (record.src_m11, record.src_m12, record.src_m21, record.src_m22, record.src_dx, record.src_dy)
-    if source_transform != IDENTITY:
-        raise Unsupported("Transformed blit sources are not yet supported")
-    if record.usage != DIB_RGB_COLORS:
+def _source_rectangle(record, x, y, width, height):
+    """A logical source rectangle mapped through the recorded source transform.
+
+    Playback selects the bitmap into a DC with that world transform. Scales
+    and mirrors give a bitmap-pixel rectangle with each edge rounded half up,
+    stretching the transfer; GDI refuses a rotated or sheared source DC, so
+    the record draws nothing and this returns None.
+    """
+    m11, m12, m21, m22, dx, dy = (getattr(record, name) for name in bitmaps.SOURCE_XFORM)
+    if (m11, m12, m21, m22, dx, dy) == IDENTITY:
+        return x, y, width, height
+    if m12 or m21:
+        return None
+    left, top = _round_half_up(m11 * x + dx), _round_half_up(m22 * y + dy)
+    right, bottom = _round_half_up(m11 * (x + width) + dx), _round_half_up(m22 * (y + height) + dy)
+    return left, top, right - left, bottom - top
+
+
+def _round_half_up(value):
+    return math.floor(value + 0.5)
+
+
+def _source_dib(record) -> BitmapData:
+    """The record's DIB with any palette-index colour table resolved.
+
+    Playback realizes DIB_PAL_COLORS sources in a memory DC holding the
+    default palette, whatever palette the metafile selected; indexes wrap.
+    """
+    if record.usage == DIB_RGB_COLORS:
+        return _dib(record)
+    if record.usage != DIB_PAL_COLORS:
         raise Unsupported("Palette-indexed blit sources are not yet supported")
+    info = record.bitmap_info
+    header_size = struct.unpack_from("<I", info)[0] if len(info) >= 4 else 0
+    if header_size < 40 or len(info) < 16:
+        raise Unsupported("DIB_PAL_COLORS sources need a BITMAPINFOHEADER")
+    depth, used = struct.unpack_from("<H", info, 14)[0], struct.unpack_from("<I", info, 32)[0]
+    if depth > 8:
+        return _dib(record)
+    count = min(used or 1 << depth, 1 << depth)
+    table = info[header_size : header_size + 2 * count]
+    if len(table) < 2 * count:
+        raise Unsupported("Truncated DIB_PAL_COLORS colour table")
+    colors = b"".join(
+        bytes((*reversed(DEFAULT_COLORS[index % len(DEFAULT_COLORS)]), 0))
+        for index in struct.unpack(f"<{count}H", table)
+    )
+    return BitmapData("dib", info[:header_size] + colors + record.bits)
 
 
 def _transparent_blt(record):
-    _identity_source(record)
+    source = _source_rectangle(record, record.src_x, record.src_y, record.src_width, record.src_height)
+    if source is None:
+        return None, None
     return "transparent_blt", {
         "x": record.x,
         "y": record.y,
         "width": record.width,
         "height": record.height,
-        "src_x": record.src_x,
-        "src_y": record.src_y,
-        "src_width": record.src_width,
-        "src_height": record.src_height,
+        **dict(zip(("src_x", "src_y", "src_width", "src_height"), source, strict=True)),
         "transparent": record.transparent,
-        "source": _dib(record),
+        "source": _source_dib(record),
     }
 
 
@@ -165,38 +219,43 @@ def _gradient_fill(record):
 
 
 def _alpha_blend(record):
-    _identity_source(record)
+    source = _source_rectangle(record, record.src_x, record.src_y, record.src_width, record.src_height)
+    if source is None:
+        return None, None
     return "alpha_blend", {
         "x": record.x,
         "y": record.y,
         "width": record.width,
         "height": record.height,
-        "src_x": record.src_x,
-        "src_y": record.src_y,
-        "src_width": record.src_width,
-        "src_height": record.src_height,
+        **dict(zip(("src_x", "src_y", "src_width", "src_height"), source, strict=True)),
         "blend": record.blend,
-        "source": _dib(record),
+        "source": _source_dib(record),
     }
 
 
 def _mask_blt(record):
+    source = (record.src_x, record.src_y, record.width, record.height)
     if record.bitmap_size:
-        _identity_source(record)
+        source = _source_rectangle(record, *source)
+        if source is None:
+            return None, None
+    # The mask covers the mapped source rectangle and stretches with it.
+    sized = {} if source[2:] == (record.width, record.height) else {"src_size": source[2:]}
     mask = BitmapData("dib", record.mask_info + record.mask_bits) if record.mask_size else None
     return "mask_blt", {
         "x": record.x,
         "y": record.y,
         "width": record.width,
         "height": record.height,
-        "src_x": record.src_x,
-        "src_y": record.src_y,
+        "src_x": source[0],
+        "src_y": source[1],
         "rop": record.rop,
-        "source": _dib(record) if record.bitmap_size else None,
+        "source": _source_dib(record) if record.bitmap_size else None,
         "mask": mask,
         "mask_x": record.mask_x,
         "mask_y": record.mask_y,
         "mask_usage": record.mask_usage,
+        **sized,
     }
 
 
@@ -221,15 +280,17 @@ def _color_adjustment(record):
 def _plg_blt(record):
     if not record.bitmap_size:
         raise Unsupported("PlgBlt without a bitmap")
-    _identity_source(record)
+    rectangle = (record.src_x, record.src_y, record.src_width, record.src_height)
+    source = _source_rectangle(record, *rectangle)
+    if source is None:
+        return None, None
+    if record.mask_size and source != rectangle:
+        raise Unsupported("Masked PlgBlt with a scaled or offset source transform")
     mask = BitmapData("dib", record.mask_info + record.mask_bits) if record.mask_size else None
     return "plg_blt", {
         "points": ((record.x0, record.y0), (record.x1, record.y1), (record.x2, record.y2)),
-        "src_x": record.src_x,
-        "src_y": record.src_y,
-        "src_width": record.src_width,
-        "src_height": record.src_height,
-        "source": _dib(record),
+        **dict(zip(("src_x", "src_y", "src_width", "src_height"), source, strict=True)),
+        "source": _source_dib(record),
         "mask": mask,
         "mask_x": record.mask_x,
         "mask_y": record.mask_y,
@@ -262,12 +323,12 @@ def _dib_height(info: bytes) -> int | None:
     return struct.unpack_from("<i", info, 8)[0] if len(info) >= 12 else None
 
 
-def _set_dib_to_device(record, matrix):
+def _set_dib_to_device(record):
     """Native playback scales the transfer with the playback transform.
 
     A record carrying every scan line plays exactly as a SRCCOPY stretch of
-    the whole source rectangle. Partial bands are unverified unless the
-    transform only translates.
+    the whole source rectangle. A partial band carries only its own scan
+    lines; see ``_scan_band``.
     """
     if not record.bitmap_size:
         raise Unsupported("SetDIBitsToDevice without a bitmap")
@@ -286,19 +347,61 @@ def _set_dib_to_device(record, matrix):
             "color_usage": record.usage,
             "source": _dib(record),
         }
-    if (matrix[0], matrix[3]) != (1.0, 1.0):
-        raise Unsupported("Scaled SetDIBitsToDevice bands are not yet supported")
-    return "set_dib_to_device", {
+    return _scan_band(record)
+
+
+def _scan_band(record):
+    """A partial scan band as a stretch of the whole source rectangle.
+
+    The band's lines form a bitmap of their own whose top row is a bottom-up
+    band's last line or a top-down band's first. The source rectangle's top
+    is row ``start + count - src_y - src_height`` of that bitmap, with a
+    bottom-up count limited to the lines the DIB has. The
+    rectangle stretches as a whole; its rows outside the band draw nothing.
+    """
+    info = record.bitmap_info
+    if len(info) < 40 or struct.unpack_from("<I", info)[0] < 40:
+        raise Unsupported("SetDIBitsToDevice bands need a BITMAPINFOHEADER")
+    width, height, _, depth, compression = struct.unpack_from("<iiHHI", info, 4)
+    rle = compression in (1, 2)
+    if not (compression in (0, 3) or (rle and height > 0)) or width <= 0 or height == 0:
+        raise Unsupported("SetDIBitsToDevice bands of top-down compressed or empty DIBs")
+    top_down, lines = height < 0, abs(height)
+    if record.start_scan >= lines or not record.scan_count:
+        return None, None
+    count = record.scan_count if top_down else min(record.scan_count, lines - record.start_scan)
+    rows = min(count, lines)
+    bits = record.bits
+    if rle:
+        # A compressed band is the stream from its start, decoded into the
+        # band's own lines.
+        band = truncate_rle(bits, depth, rows)
+    else:
+        stride = (width * depth + 31) // 32 * 4
+        if len(bits) < stride * rows:
+            raise Unsupported("SetDIBitsToDevice band bits are truncated")
+        scans = [bits[row * stride : (row + 1) * stride] for row in range(rows)]
+        # Stored bottom-up, where StretchDIBits measures rows from the last line.
+        band = b"".join(reversed(scans) if top_down else scans)
+    offset = record.start_scan + count - record.src_y - record.src_height
+    if not (-record.src_height < offset < rows):
+        return None, None
+    # A compressed band keeps its stream's size; an uncompressed one is sized by its lines.
+    size = len(band) if rle else 0
+    header = info[:4] + struct.pack("<ii", width, rows) + info[12:20] + struct.pack("<I", size) + info[24:]
+    # Rows of the rectangle beyond the band have no source scan and are skipped.
+    return "stretch_dib", {
         "x": record.x,
         "y": record.y,
         "width": record.src_width,
         "height": record.src_height,
         "src_x": record.src_x,
-        "src_y": record.src_y,
-        "start_scan": record.start_scan,
-        "scan_count": record.scan_count,
+        "src_y": rows - offset - record.src_height,
+        "src_width": record.src_width,
+        "src_height": record.src_height,
+        "rop": SRCCOPY,
         "color_usage": record.usage,
-        "source": _dib(record),
+        "source": BitmapData("dib", header + band),
     }
 
 
@@ -420,7 +523,10 @@ TRANSLATIONS: dict[type, Callable] = {
     fixed.FlattenPath: _direct("flatten_path"),
     fixed.WidenPath: _direct("widen_path"),
     fixed.SelectClipPath: _direct("select_clip_path", "mode"),
-    fixed.SetArcDirection: _direct("set_arc_direction", "direction"),
+    # Native SetArcDirection fails for other values.
+    fixed.SetArcDirection: lambda r: (
+        ("set_arc_direction", {"direction": r.direction}) if r.direction in (1, 2) else (None, None)
+    ),
     fixed.ArcTo: lambda r: ("arc_to", _box_points(r)),
     fixed.AngleArc: lambda r: (
         "angle_arc",
@@ -452,6 +558,7 @@ TRANSLATIONS: dict[type, Callable] = {
     bitmaps.BitBlt: _source_blit,
     bitmaps.StretchBlt: _source_blit,
     bitmaps.StretchDIBits: _stretch_dib,
+    bitmaps.SetDIBitsToDevice: _set_dib_to_device,
     bitmaps.TransparentBlt: _transparent_blt,
     bitmaps.MaskBlt: _mask_blt,
     bitmaps.PlgBlt: _plg_blt,
@@ -467,6 +574,76 @@ TRANSLATIONS: dict[type, Callable] = {
     text.ExtTextOutA: _ext_text_out,
     text.ExtTextOutW: _ext_text_out,
 }
+
+
+# Records native playback skips when their bounds miss the clip box it reads
+# before the first record.
+CULLED_RECORDS = (
+    bitmaps.AlphaBlend,
+    bitmaps.BitBlt,
+    bitmaps.MaskBlt,
+    bitmaps.PlgBlt,
+    bitmaps.SetDIBitsToDevice,
+    bitmaps.StretchBlt,
+    bitmaps.StretchDIBits,
+    bitmaps.TransparentBlt,
+    variable.FillRgn,
+    variable.FrameRgn,
+    variable.InvertRgn,
+    variable.PaintRgn,
+)
+# The reference display's resolution in pixels per millimetre.
+REFERENCE_DENSITY = (float32(1024 / 271), float32(768 / 203))
+AD_COUNTERCLOCKWISE = 1
+# Attributes native playback resets before the first record, after selecting
+# the white brush, black pen and default palette. The device default font
+# is also selected; that waits for the text work.
+RESET_ATTRIBUTES = (
+    ("set_background_color", {"color": 0xFFFFFF}),
+    ("set_text_color", {"color": 0}),
+    ("set_text_character_extra", {"extra": 0}),
+    ("set_background_mode", {"mode": OPAQUE}),
+    ("set_polygon_fill_mode", {"mode": ALTERNATE}),
+    ("set_rop2", {"mode": R2_COPYPEN}),
+    ("set_stretch_mode", {"mode": BLACKONWHITE}),
+    ("set_text_alignment", {"alignment": 0}),
+    ("set_mapper_flags", {"flags": 0}),
+    ("set_brush_origin", {"x": 0, "y": 0}),
+    ("set_miter_limit", {"limit": 10.0}),
+    ("set_text_justification", {"break_count": 0, "break_extra": 0}),
+    ("set_arc_direction", {"direction": AD_COUNTERCLOCKWISE}),
+    ("move_to", {"x": 0, "y": 0}),
+)
+
+
+def record_bounds(record):
+    if isinstance(record, variable.RegionRecord):
+        return record.bounds
+    return record.bounds_left, record.bounds_top, record.bounds_right, record.bounds_bottom
+
+
+def culling_box(box, header):
+    """The clip box widened by the margin native playback allows for rounding.
+
+    Each axis widens by one logical unit, or by one more than the whole
+    number of reference-display pixels per metafile device pixel when the
+    metafile's device is denser.
+    """
+    left, top, right, bottom = box
+    margins = []
+    for axis in range(2):
+        density = float32(float32(header.device[axis]) / float32(header.millimetres[axis]))
+        reference = REFERENCE_DENSITY[axis]
+        margins.append(int(float32(density / reference)) + 1 if reference < density else 1)
+    return left - margins[0], top - margins[1], right + margins[0], bottom + margins[1]
+
+
+def culled(record, box) -> bool:
+    """Whether a record's non-empty bounds lie wholly outside the culling box."""
+    left, top, right, bottom = record_bounds(record)
+    if right < left or bottom < top:
+        return False
+    return right < box[0] or box[2] < left or bottom < box[1] or box[3] < top
 
 
 def fitted_rectangles(rectangles, fit):
@@ -540,7 +717,10 @@ def play(
 
     The picture frame is fitted to ``rect`` in the backend's device pixels;
     the default is the frame's own size in header device pixels at the
-    origin. The caller owns the backend's other initial state. ``comment``
+    origin. Playback starts as natively: the clip becomes the meta region,
+    stock objects and attributes are reset, and when the backend answers
+    ``get_clip_box``, transfers and region painting whose record bounds miss
+    the widened clip box are skipped. ``comment``
     receives every EMR_COMMENT record with its index, for a front-end that
     interprets EMF+ or other comment payloads.
 
@@ -587,7 +767,7 @@ def play(
         return slots[object_index]
 
     def set_transform(index, kind):
-        matrix = transform.matrix()
+        matrix = transform.device
         names = ("m11", "m12", "m21", "m22", "dx", "dy")
         invoke(index, kind, "set_world_transform", dict(zip(names, matrix, strict=True)))
 
@@ -659,7 +839,7 @@ def play(
                 limits=limits,
                 rect=output,
                 comment=None,
-                parent=transform.matrix(),
+                parent=transform.device,
                 depth=depth + 1,
             )
         except PlaybackError as error:
@@ -672,6 +852,22 @@ def play(
     # Attributed to the header record, which native playback starts from.
     invoke(-1, RecordType.HEADER, "set_graphics_mode", {"mode": GM_ADVANCED})
     set_transform(-1, RecordType.HEADER)
+    invoke(-1, RecordType.HEADER, "set_meta_region", {})
+    for stock_index, name in ((0, "select_object"), (7, "select_object"), (15, "select_palette")):
+        handle = lookup(-1, RecordType.HEADER, STOCK_OBJECT | stock_index)
+        if handle is not None and handle is not unavailable:
+            invoke(-1, RecordType.HEADER, name, {"handle": handle})
+    for name, arguments in RESET_ATTRIBUTES:
+        invoke(-1, RecordType.HEADER, name, arguments)
+    try:
+        box = backend.get_clip_box()
+    except UnsupportedOperation:
+        box = None
+        cull = None
+    else:
+        if box is None:
+            return omissions.result()  # Nothing is visible; native playback plays no records.
+        cull = culling_box(box, metafile.header)
     for index, record in enumerate(metafile.records):
         kind = record_type(record)
         if kind == RecordType.EOF:
@@ -742,9 +938,9 @@ def play(
                 invoke(index, kind, "delete_object", {"handle": handle})
             continue
         if isinstance(record, PlaybackTransform.MAPPING_RECORDS):
-            before = transform.matrix()
+            before = transform.device
             transform.apply(record)
-            if transform.matrix() != before:
+            if transform.device != before:
                 set_transform(index, kind)
             continue
         if isinstance(record, variable.ExtSelectClipRgn):
@@ -763,16 +959,12 @@ def play(
                 invoke(index, kind, "ext_select_clip_region", {"region": region, "mode": record.mode})
                 invoke(index, kind, "delete_object", {"handle": region})
             continue
+        if cull is not None and isinstance(record, CULLED_RECORDS) and culled(record, cull):
+            continue
         if isinstance(record, variable.RegionRecord):
             paint_region(index, kind, record)
             continue
         translate = TRANSLATIONS.get(type(record))
-        if isinstance(record, bitmaps.SetDIBitsToDevice):
-            matrix = transform.matrix()
-
-            def translate(record, matrix=matrix):
-                return _set_dib_to_device(record, matrix)
-
         creation = kind in CREATION_TYPES
         if creation and not 0 < record.object_index < len(slots):
             continue  # Native playback cannot store the object.
@@ -786,6 +978,8 @@ def play(
                 slots[record.object_index] = unavailable
             omissions.omit(index, kind, str(reason))
             continue
+        if name is None:
+            continue  # The record fails natively without drawing.
         ok, result = invoke(index, kind, name, arguments)
         if creation:
             if ok and not isinstance(result, Handle):

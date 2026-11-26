@@ -28,6 +28,10 @@ def fixed(value: float) -> int:
     return -magnitude if value < 0 else magnitude
 
 
+def _int32(value: int) -> int:
+    return (value + 2**31) % 2**32 - 2**31
+
+
 def scaled(value: int, numerator: int, denominator: int) -> int:
     if denominator == 0:
         raise ValueError("Zero extent divisor")
@@ -110,21 +114,24 @@ class Mapping:
         """Whether the world transform mixes the axes (rotates or shears)."""
         return bool(self.world[1] or self.world[2])
 
+    @property
+    def uniform_rotation(self) -> bool:
+        """Whether the world transform keeps circles round: orthogonal axes of equal length."""
+        m11, m12, m21, m22 = self.world[:4]
+        lengths = (hypot(m11, m12), hypot(m21, m22))
+        return (
+            abs(m11 * m21 + m12 * m22) <= 1e-3 * lengths[0] * lengths[1]
+            and abs(lengths[0] - lengths[1]) <= 1e-3 * lengths[0]
+        )
+
     def rotated_pen_scale(self, width: int) -> tuple[Fraction, Fraction]:
-        """Device scales realizing a pen of ``width`` under a rotating transform.
+        """Device scales realizing a pen of ``width`` under a uniform rotation.
 
         Each device axis takes the logical width vector along that axis,
         rounds both components to 28.4 and truncates its length, so a pen
-        narrows slightly at oblique angles. Only transforms that keep circles
-        round are modelled.
+        narrows slightly at oblique angles.
         """
         m11, m12, m21, m22 = self.world[:4]
-        lengths = (hypot(m11, m12), hypot(m21, m22))
-        if (
-            abs(m11 * m21 + m12 * m22) > 1e-3 * lengths[0] * lengths[1]
-            or abs(lengths[0] - lengths[1]) > 1e-3 * lengths[0]
-        ):
-            raise ValueError("Wide pens under a non-uniform rotating transform")
         if not width:
             return self.linear_scale
         return tuple(
@@ -257,6 +264,13 @@ class Mapping:
             result.append(coordinate)
         return tuple(result)
 
+    def rotated_logical_point(self, x, y) -> tuple[int, int]:
+        """The nearest logical point to a 28.4 device point under a rotating transform."""
+        m11, m12, m21, m22, dx, dy = self.world
+        x, y = x / 16 - dx, y / 16 - dy
+        det = m11 * m22 - m12 * m21
+        return rounded((x * m22 - y * m21) / det), rounded((y * m11 - x * m12) / det)
+
     def logical_point(self, x, y) -> tuple[int, int]:
         """DPtoLP: the nearest logical point to a device point."""
         return tuple(
@@ -312,10 +326,18 @@ class Mapping:
         self._fix_isotropic()
 
     def scale_extent(self, *, window: bool, xn: int, xd: int, yn: int, yd: int) -> None:
-        if self.mode not in (MM_ISOTROPIC, MM_ANISOTROPIC) or not xn or not xd or not yn or not yd:
+        """ScaleWindowExtEx and ScaleViewportExtEx, in GDI's 32-bit integers.
+
+        Each product wraps to 32 bits and divides truncating toward zero; a
+        zero divisor, a zero result or the one overflowing quotient fails.
+        """
+        if self.mode not in (MM_ISOTROPIC, MM_ANISOTROPIC) or not xd or not yd:
             return
         old = self.window_extent if window else self.viewport_extent
-        x, y = scaled(old[0], xn, xd), scaled(old[1], yn, yd)
+        x, y = _int32(old[0] * xn), _int32(old[1] * yn)
+        if (x == -(2**31) and xd == -1) or (y == -(2**31) and yd == -1):
+            return
+        x, y = scaled(x, 1, xd), scaled(y, 1, yd)
         if not x or not y:
             return
         if window:

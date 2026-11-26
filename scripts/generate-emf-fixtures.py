@@ -36,9 +36,9 @@ COLORONCOLOR, HALFTONE = 3, 4
 RGN_COPY = 5
 
 
-def frame(extent):
-    """A frame covering ``extent`` reference pixels on both axes."""
-    (pixels_x, pixels_y), (mm_x, mm_y) = REFERENCE_DEVICE.pixels, REFERENCE_DEVICE.millimetres
+def frame(extent, device=REFERENCE_DEVICE):
+    """A frame covering ``extent`` pixels of ``device`` on both axes."""
+    (pixels_x, pixels_y), (mm_x, mm_y) = device.pixels, device.millimetres
     return 0, 0, round(extent * mm_x * 100 / pixels_x), round(extent * mm_y * 100 / pixels_y)
 
 
@@ -49,6 +49,8 @@ class Drawing:
         self.extent = extent
         self.records = []
         self.slot = 0
+        # The header's reference device; drawings may choose a denser one.
+        self.device = REFERENCE_DEVICE
 
     def u(self, value):
         return round(value * self.extent / 128)
@@ -71,7 +73,7 @@ class Drawing:
         return self.select(lambda slot: fixed.CreateBrushIndirect(slot, style, color, hatch))
 
     def metafile(self):
-        return Metafile.build(self.records, frame=frame(self.extent))
+        return Metafile.build(self.records, frame=frame(self.extent, self.device), device=self.device)
 
 
 def shapes(d):

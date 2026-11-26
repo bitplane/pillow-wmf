@@ -352,3 +352,54 @@ class ClipRegion:
     def with_meta(self, bounds: Rectangle) -> "ClipRegion":
         """SetMetaRgn: the effective clip becomes the meta region; the clip is reset."""
         return ClipRegion(meta=self.within(bounds))
+
+
+def region_outlines(rectangles) -> list[list[tuple[int, int]]]:
+    """The boundary loops of a union of rectangles, corner vertices only.
+
+    Native GDI paints a region under a rotating transform by transforming
+    this outline and filling it, so collinear vertices must be dropped: each
+    vertex is mapped and rounded on its own.
+    """
+    rectangles = [r for r in rectangles if r[0] < r[2] and r[1] < r[3]]
+    if not rectangles:
+        return []
+    xs = sorted({value for r in rectangles for value in (r[0], r[2])})
+    ys = sorted({value for r in rectangles for value in (r[1], r[3])})
+    column, row = {x: i for i, x in enumerate(xs)}, {y: i for i, y in enumerate(ys)}
+    cells = set()
+    for left, top, right, bottom in rectangles:
+        for i in range(column[left], column[right]):
+            for j in range(row[top], row[bottom]):
+                cells.add((i, j))
+    edges = {}
+    for i, j in cells:
+        corners = ((i, j), (i, j + 1), (i + 1, j + 1), (i + 1, j))
+        for a, b in zip(corners, corners[1:] + corners[:1], strict=True):
+            if (b, a) in edges:
+                del edges[(b, a)]
+            else:
+                edges[(a, b)] = True
+    following: dict = {}
+    for a, b in edges:
+        following.setdefault(a, []).append(b)
+    loops = []
+    while following:
+        start = next(iter(following))
+        loop, current = [start], start
+        while True:
+            nxt = following[current].pop()
+            if not following[current]:
+                del following[current]
+            if nxt == start:
+                break
+            loop.append(nxt)
+            current = nxt
+        corners = [
+            (xs[x], ys[y])
+            for k, (x, y) in enumerate(loop)
+            if (loop[k - 1][0] - x) * (loop[(k + 1) % len(loop)][1] - y)
+            != (loop[k - 1][1] - y) * (loop[(k + 1) % len(loop)][0] - x)
+        ]
+        loops.append(corners)
+    return loops

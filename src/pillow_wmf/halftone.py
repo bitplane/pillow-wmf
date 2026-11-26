@@ -336,6 +336,17 @@ class HalftoneReduction:
             for sy, weight in area_weights(self.source_height, self.height, y)
         )
 
+    @property
+    def virtual_rows(self):
+        """Whether an unreduced view passes rows outside the source through to it."""
+        return not (self.shrink_x or self.shrink_y) and getattr(self.bitmap, "virtual_rows", False)
+
+    def scan(self, x, y):
+        """An unreduced source sample, including the source's virtual rows."""
+        if not self.valid:
+            return (0, 0, 0)
+        return self.bitmap.pixel(max(0, min(self.bitmap.width - 1, self.x + x)), self.y + y)
+
     def pixel(self, x, y):
         if not (0 <= x < self.width and 0 <= y < self.height):
             raise IndexError("Bitmap pixel outside bounds")

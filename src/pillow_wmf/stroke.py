@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from math import ceil, floor
+from math import ceil, floor, hypot
 
 from .gdi_math import circle_control
 from .geometry import Point, Polygon, StrokeSegment, charge_geometry_points, flatten_cubic
@@ -92,16 +92,69 @@ def realize_pen(width: int, scale_x=1, scale_y=1, *, geometric=False) -> PenGeom
             # half-contour seam layout used by the ordinary pen constructor.
             half = [(rx, 0), (0, -ry), (-rx, 0)]
         else:
-            cx, cy = circle_control(rx, upward=True), circle_control(ry, upward=False)
-            half = [(rx, 0)]
-            half += flatten_cubic(((rx, 0), (rx, -cy), (cx, -ry), (0, -ry)))
-            half += flatten_cubic(((0, -ry), (-cx, -ry), (-rx, -cy), (-rx, 0)))
-        # Keep the semicircle's terminal vertex: reflection duplicates both
-        # seam vertices. Native contour traversal visits those duplicates;
-        # they matter when rounded body support differs from the pen vertex.
+            return ellipse_pen((rx, 0), (0, -ry))
     if not table_pen:
         charge_geometry_points(2 * len(half))
     return PenGeometry(tuple(half + [(-x, -y) for x, y in half]), cosmetic, expanded=not table_pen)
+
+
+def ellipse_pen(first: Point, second: Point) -> PenGeometry:
+    """A cubic elliptical pen on two 28.4 radius vectors, counter-clockwise.
+
+    The semicircle runs from ``first`` through ``second`` to ``-first``. Both
+    quarters are flattened outward from the ``first`` axis, the second one
+    reversed into place, so the pen is symmetric about that axis.
+    """
+
+    def control(vector):
+        return tuple(circle_control(value, upward=True) for value in vector)
+
+    def add(a, b):
+        return (a[0] + b[0], a[1] + b[1])
+
+    opposite = (-first[0], -first[1])
+    first_handle, second_handle = control(first), control(second)
+    handle_back = (-first_handle[0], -first_handle[1])
+    half = [first]
+    half += flatten_cubic((first, add(first, second_handle), add(first_handle, second), second))
+    back = flatten_cubic((opposite, add(opposite, second_handle), add(second, handle_back), second))
+    half += list(reversed([opposite, *back]))[1:]
+    # Keep the semicircle's terminal vertex: reflection duplicates both
+    # seam vertices. Native contour traversal visits those duplicates;
+    # they matter when rounded body support differs from the pen vertex.
+    charge_geometry_points(2 * len(half))
+    return PenGeometry(tuple(half + [(-x, -y) for x, y in half]), False, expanded=True)
+
+
+def realize_transformed_pen(width: int, mapping, *, geometric: bool = False) -> PenGeometry:
+    """Realize a pen under a rotating or shearing world transform.
+
+    A uniform rotation keeps the device-aligned small pens, scaled by
+    ``mapping.rotated_pen_scale``. Wider pens, and every pen under a
+    transform that does not keep circles round, are cubic ellipses on the
+    transformed logical radius vectors, each component's full diameter
+    rounded to 28.4 and halved outward. Under such a transform a CreatePen
+    pen is a hairline when its transformed x diameter is below 1.5 pixels;
+    a geometric pen never is.
+    """
+    m11, m12, m21, m22 = (float(value) for value in mapping.world[:4])
+    if not width:
+        return realize_pen(0)
+    if mapping.uniform_rotation:
+        pen = realize_pen(width, *mapping.rotated_pen_scale(width))
+        if not pen.expanded:
+            return pen
+    elif not geometric and floor(width * hypot(m11, m12) * 16 + 0.5) < 24:
+        return realize_pen(1)
+
+    def radius(value):
+        diameter = floor(abs(value) * 16 + 0.5)
+        return (1 if value >= 0 else -1) * ((diameter + 1) // 2)
+
+    return ellipse_pen(
+        (radius(width * m11), radius(width * m12)),
+        (radius(-width * m21), radius(-width * m22)),
+    )
 
 
 def frame_footprint(width, height, scale_x, scale_y):
@@ -242,6 +295,93 @@ def join_outline(first: StrokeSegment, second: StrokeSegment, pen: PenGeometry, 
                 outline.append((vertex[0] + _cap(vertices[i][0], vertex), vertex[1] + _cap(vertices[i][1], vertex)))
     outline.append(end)
     return outline
+
+
+def support_outlines(
+    segments: tuple[StrokeSegment, ...], pen: PenGeometry, closed: bool, *, seam: int = 0
+) -> list[Polygon]:
+    """WidenPath's outlines of one figure for a support-vertex pen.
+
+    An open figure is one outline: the start cap, the far side forward, the
+    end cap and the near side back. A closed figure is its two sides. Each
+    side passes the outer side of a joint by sweeping the pen between the two
+    body supports, and the inner side through the vertex itself. Every
+    support index comes from the forward segment directions; the near side
+    takes the opposite vertex. An open figure with a ``seam`` joint starts
+    its outline at that joint's near side.
+    """
+    segments = tuple(segment for segment in segments if segment.direction != (0, 0))
+    if not segments:
+        return []
+    vertices = pen.vertices
+    count = len(vertices)
+    half = count // 2
+    supports = [_support_index(pen, *segment.direction) for segment in segments]
+
+    def body(origin, index):
+        x, y = vertices[index % count]
+        return (origin[0] + _body(x), origin[1] + _body(y))
+
+    def swept(origin, index):
+        x, y = vertices[index % count]
+        return (origin[0] + _cap(x, origin), origin[1] + _cap(y, origin))
+
+    def cap(origin, index):
+        points = []
+        for offset in range(half + 1):
+            position = (index + offset) % count
+            # Forward cap enumeration excludes each half's terminal sentinel.
+            if offset not in (0, half) and vertices[position] == vertices[(position + 1) % count]:
+                continue
+            points.append(body(origin, position) if offset in (0, half) else swept(origin, position))
+        return points
+
+    def joint(k, far):
+        first, second = segments[k], segments[(k + 1) % len(segments)]
+        dx1, dy1 = first.direction
+        dx2, dy2 = second.direction
+        turn = dx1 * dy2 - dy1 * dx2
+        # The turn direction chooses the outer side as join_outline does.
+        negative_first, negative_second = (dx1 < 0) != (dy2 < 0), (dy1 < 0) != (dx2 < 0)
+        clockwise = negative_first if negative_first != negative_second else turn < 0
+        vertex = first.end
+        if far:
+            start, end = supports[k] + half, supports[(k + 1) % len(segments)] + half
+        else:
+            start, end = supports[(k + 1) % len(segments)], supports[k]
+        outer = (turn or dx1 * dx2 + dy1 * dy2 < 0) and far == clockwise
+        if not outer:
+            return [body(vertex, start), vertex, body(vertex, end)]
+        points = [body(vertex, start)]
+        step = (1 if clockwise else -1) * (1 if far else -1)
+        index, target = start % count, end % count
+        while index != target:
+            index = (index + step) % count
+            if index != target:
+                # The reverse walker visits terminal sentinels; the forward
+                # walker starts the next half at its head instead.
+                if step > 0 and vertices[index] == vertices[(index + 1) % count]:
+                    continue
+                points.append(swept(vertex, index))
+        if step > 0 and end % count == half:
+            # The forward walker enters the second half at its head vertex,
+            # so a sweep ending there emits it before the body point.
+            points.append(swept(vertex, end))
+        points.append(body(vertex, end))
+        return points
+
+    last = len(segments) - 1
+    if closed:
+        far_side = [point for k in range(len(segments)) for point in joint(k, True)]
+        near_side = [point for k in range(last, -1, -1) for point in joint(k, False)]
+        return [far_side, near_side]
+    outline = cap(segments[0].start, supports[0])
+    for k in range(last):
+        outline += joint(k, True)
+    outline += cap(segments[-1].end, supports[-1] + half)
+    for k in range(last - 1, seam - 1, -1):
+        outline += joint(k, False)
+    return [[point for k in range(seam - 1, -1, -1) for point in joint(k, False)] + outline]
 
 
 def line_outline(start: Point, end: Point, width: int, scale_x, scale_y) -> Polygon:

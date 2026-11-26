@@ -83,7 +83,7 @@ def test_axis_aligned_operations_are_refused_under_rotation():
     context.set_graphics_mode(2)
     context.set_world_transform(*FIXTURE)
     with pytest.raises(UnsupportedOperation):
-        context.intersect_clip_rect(0, 0, 4, 4)
+        context.text_out(0, 0, b"x")
 
 
 def gradient_dib(width=16, height=12):

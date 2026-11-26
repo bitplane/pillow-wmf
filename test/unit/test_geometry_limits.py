@@ -58,20 +58,22 @@ def test_straight_cosmetic_drawing_does_not_spend_expansion_budget():
     assert render(data, (16, 16), max_geometry_points=0).tobytes() == render(data, (16, 16)).tobytes()
 
 
-def test_pillow_reports_curve_exhaustion_as_oserror():
+def test_pillow_reports_geometry_exhaustion_as_oserror():
     from io import BytesIO
 
     from PIL import Image
 
+    # Ellipses some 67 million device pixels across, inside the 28.4 range.
     source = Recorder()
+    source.select_object(source.create_pen(5, 0, 0))
     source.set_window_extent(1, 1)
     source.set_viewport_extent(32767, 32767)
-    source.scale_viewport_extent(32767, 1, 32767, 1)
-    source.scale_viewport_extent(32767, 1, 32767, 1)
-    source.ellipse(0, 0, 10, 10)
+    source.scale_viewport_extent(32, 1, 32, 1)
+    for _ in range(60):
+        source.ellipse(-64, -64, 64, 64)
     with (
         Image.open(BytesIO(source.to_bytes())) as image,
-        pytest.raises(OSError, match="Curve point limit") as caught,
+        pytest.raises(OSError, match="geometry point limit") as caught,
     ):
         image.load(size=(16, 16))
     assert isinstance(caught.value.__cause__, ResourceLimitError)

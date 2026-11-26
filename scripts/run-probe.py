@@ -129,6 +129,18 @@ PROBES = {
     "color-adjustment": Probe("probe-windows-color-adjustment.py", output="color-adjustment"),
     "color-match": Probe("probe-windows-color-match.py", output="color-match"),
     "emf-recording": Probe("probe-windows-emf-recording.py", output="emf-recording"),
+    "rotated-regions": Probe("probe-windows-rotated-regions.py", output="rotated-regions"),
+    "rotated-transfers": Probe("probe-windows-rotated-transfers.py", output="rotated-transfers"),
+    "rotated-blends": Probe("probe-windows-rotated-blends.py", output="rotated-blends"),
+    "rotated-wide-pens": Probe("probe-windows-rotated-wide-pens.py", output="rotated-wide-pens"),
+    "rotated-pen-styles": Probe("probe-windows-rotated-pen-styles.py", output="rotated-pen-styles"),
+    "pen-style-ends": Probe("probe-windows-pen-style-ends.py", output="pen-style-ends"),
+    "angle-arc-turns": Probe("probe-windows-angle-arc-turns.py", output="angle-arc-turns"),
+    "cosmetic-widen": Probe("probe-windows-cosmetic-widen.py", output="cosmetic-widen"),
+    "color-engine": Probe("probe-windows-color-engine.py", output="color-engine"),
+    "module-ids": Probe("probe-windows-module-ids.py", output="module-ids"),
+    "color-engine-phase": Probe("probe-windows-color-engine-phase.py", output="color-engine-phase"),
+    "coordinate-limits": Probe("probe-windows-coordinate-limits.py", output="coordinate-limits"),
 }
 
 

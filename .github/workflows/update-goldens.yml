@@ -78,6 +78,18 @@ on:
           - color-adjustment
           - color-match
           - emf-recording
+          - rotated-regions
+          - rotated-transfers
+          - rotated-blends
+          - rotated-wide-pens
+          - rotated-pen-styles
+          - pen-style-ends
+          - angle-arc-turns
+          - cosmetic-widen
+          - color-engine
+          - module-ids
+          - color-engine-phase
+          - coordinate-limits
   push:
     branches: [master]
     paths:

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import cached_property
-from math import ceil, floor
+from math import floor
 
 from .bitmap import DIBLayout
 from .constants import (
@@ -15,19 +15,38 @@ from .constants import (
     ETO_CLIPPED,
     ETO_OPAQUE,
     HALFTONE,
+    OPAQUE,
     PS_NULL,
+    PS_USERSTYLE,
     R2_COPYPEN,
-    TRANSPARENT,
     WINDING,
 )
 from .flood import flood_spans
 from .geometry import DevicePath, Polygon, coverage_spans
+from .gradient import triangle_spans
 from .paint import pattern_rop2, rop2, rop3
 from .raster_state import Brush, DrawingState
-from .stroke import cosmetic_line, cosmetic_span, dash_is_foreground, join_outline, realize_pen, widen_segment
+from .stroke import (
+    cosmetic_line,
+    cosmetic_span,
+    dash_is_foreground,
+    join_outline,
+    realize_pen,
+    realize_transformed_pen,
+    support_outlines,
+    widen_segment,
+)
 from .surface import Surface
 from .widen import CAP_FLAT, CAP_ROUND, JOIN_MITER, JOIN_ROUND, PenShape, dash_figures, perpendicular
 from .widen import outline as widen_outline
+
+
+def _nudged_index(numerator, det, step):
+    """Floor of ``numerator / det`` at x + epsilon, where ``step`` is the
+    numerator's change per device pixel along x: an exact boundary falls to
+    the lower index only when the coordinate decreases along device x."""
+    value = Fraction(numerator, det)
+    return floor(value) - (value.denominator == 1 and (step > 0) != (det > 0) and step != 0)
 
 
 @dataclass
@@ -271,7 +290,7 @@ class RasterPainter:
             passes = (
                 (False, True)
                 if (self.state.pen.style in range(1, 5) or self.state.pen.pattern)
-                and self.state.background_mode != TRANSPARENT
+                and self.state.background_mode == OPAQUE
                 else (True,)
             )
             for foreground in passes:
@@ -288,10 +307,10 @@ class RasterPainter:
 
         ``corners`` are the destination of the source's upper-left,
         upper-right and lower-left corners. Each pixel inverts the mapping
-        at its integer point. A source column on an exact boundary belongs
-        to the column it starts; a source row on an exact boundary belongs
-        to the row just above the pixel in device space. ``sample`` decides
-        per source pixel whether a mask lets it through.
+        at its integer point nudged right along device x, so a source
+        column or row on an exact boundary is the one just to the right of
+        the point. ``sample`` decides per source pixel whether a mask lets
+        it through.
         """
         (x0, y0), (x1, y1), (x2, y2) = corners
         ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x0, y2 - y0
@@ -300,21 +319,74 @@ class RasterPainter:
             return
         left, top, width, height = rectangle
         xs, ys = (x0, x1, x2, x1 + x2 - x0), (y0, y1, y2, y1 + y2 - y0)
-        upward = (ax > 0) == (det > 0)
         for y in range(max(0, min(ys) // 16), min(self._height, max(ys) // 16 + 1)):
             for x in range(max(0, min(xs) // 16), min(self._width, max(xs) // 16 + 1)):
                 dx, dy = 16 * x - x0, 16 * y - y0
-                u_numerator, v_numerator = (dx * by - dy * bx) * width, (ax * dy - ay * dx) * height
-                u = floor(Fraction(u_numerator, det))
-                v_exact = Fraction(v_numerator, det)
-                v = floor(v_exact)
-                if v == v_exact and ax and upward:
-                    v -= 1
+                u = _nudged_index((dx * by - dy * bx) * width, det, by)
+                v = _nudged_index((ax * dy - ay * dx) * height, det, -ay)
                 if not (0 <= u < width and 0 <= v < height):
                     continue
                 u, v = left + u, top + v
                 if sample is None or sample(u, v):
                     self.pixel(x, y, source.pixel(u, v), operation=R2_COPYPEN)
+
+    def _parallelogram_spans(self, corners):
+        (x0, y0), (x1, y1), (x2, y2) = corners
+        polygon = ((x0, y0), (x1, y1), (x1 + x2 - x0, y1 + y2 - y0), (x2, y2))
+        return self.contour_spans((polygon,))
+
+    def transform_blt(self, source, corners, rectangle, rop, *, mask=None, background_rop=None, blend=None) -> None:
+        """A transfer under a rotating or shearing transform.
+
+        It covers the polygon fill of its 28.4 destination parallelogram,
+        and each pixel takes the source sample at the floor of its inverted
+        integer point, nudged right along device x to break ties; samples
+        clamp into the source rectangle. ``mask`` chooses ``rop`` or ``background_rop`` per
+        source pixel, as MaskBlt does.
+        """
+        (x0, y0), (x1, y1), (x2, y2) = corners
+        ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x0, y2 - y0
+        det = ax * by - ay * bx
+        if not det:
+            return
+        left, top, width, height = rectangle
+        brush = self.state.brush
+
+        def index(numerator, step):
+            return _nudged_index(numerator, det, step)
+
+        for y, start, end in self._parallelogram_spans(corners):
+            for x in range(start, end):
+                if not self.state.clip.contains(x, y):
+                    continue
+                dx, dy = 16 * x - x0, 16 * y - y0
+                u = index((dx * by - dy * bx) * width, by)
+                v = index((ax * dy - ay * dx) * height, -ay)
+                u, v = min(width - 1, max(0, u)), min(height - 1, max(0, v))
+                sample = source.pixel(left + u, top + v)
+                if blend is not None:
+                    paint = blend(sample, self._pixels[x, y], left + u, top + v)
+                    if paint is not None:
+                        self._pixels[x, y] = paint
+                    continue
+                operation = rop if mask is None or mask(left + u, top + v) else background_rop
+                if (operation >> 16) & 255 == 0xCC:
+                    self._pixels[x, y] = sample
+                    continue
+                pattern = self.brush_color_at(x, y, brush, opaque=True) or (0, 0, 0)
+                self._pixels[x, y] = rop3(operation, pattern, sample, self._pixels[x, y])
+
+    def transform_pat_blt(self, corners, rop) -> None:
+        """PatBlt under a rotating transform: the brush fills the parallelogram."""
+        operation = pattern_rop2(rop)
+        if operation is None:
+            return
+        constant = (0, 0, 0) if operation in (1, 6, 11, 16) else None
+        for y, start, end in self._parallelogram_spans(corners):
+            for x in range(start, end):
+                paint = constant or self.brush_color_at(x, y, self.state.brush, opaque=True)
+                if paint is not None:
+                    self.pixel(x, y, paint, operation=operation)
 
     def gradient_rectangle(self, corners, *, vertical: bool) -> None:
         """Shade a device rectangle between two corner colours along one axis.
@@ -343,42 +415,10 @@ class RasterPainter:
                     self.pixel(position, y, color, operation=R2_COPYPEN)
 
     def gradient_triangle(self, corners) -> None:
-        """Shade a device triangle by the plane through its corner colours.
-
-        Rows run from the top vertex to the row before the bottom one; each
-        covers the columns from the ceiling of the left edge to before the
-        ceiling of the right edge. Each 16-bit channel of the exact plane
-        value is rounded to the nearest unit before its top 8 bits are kept.
-        """
-        (ax, ay), (bx, by), (cx, cy) = (corner[:2] for corner in corners)
-        det = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
-        if not det:
-            return
-        edges = [(corners[i], corners[(i + 1) % 3]) for i in range(3)]
-        top, bottom = min(ay, by, cy), max(ay, by, cy)
-        for y in range(max(top, 0), min(bottom, self._height)):
-            crossings = [
-                Fraction(p[0]) + Fraction((q[0] - p[0]) * (y - p[1]), q[1] - p[1])
-                for p, q in edges
-                if min(p[1], q[1]) <= y <= max(p[1], q[1]) and p[1] != q[1]
-            ]
-            left, right = ceil(min(crossings)), ceil(max(crossings))
+        """Shade a device triangle as native GradientFill does (see ``gradient.py``)."""
+        for y, left, right, colour in triangle_spans(corners, 0, self._height):
             for x in range(max(left, 0), min(right, self._width)):
-                # Barycentric weights of the second and third corners, over det.
-                second = (x - ax) * (cy - ay) - (y - ay) * (cx - ax)
-                third = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
-                first = det - second - third
-                color = tuple(
-                    floor(
-                        Fraction(
-                            corners[0][2 + i] * first + corners[1][2 + i] * second + corners[2][2 + i] * third, det
-                        )
-                        + Fraction(1, 2)
-                    )
-                    >> 8
-                    for i in range(3)
-                )
-                self.pixel(x, y, color, operation=R2_COPYPEN)
+                self.pixel(x, y, colour(x), operation=R2_COPYPEN)
 
     def pen_pixel(self, x: int, y: int) -> None:
         """Paint one pixel of a geometric pen footprint, through its brush if any."""
@@ -393,8 +433,10 @@ class RasterPainter:
     @cached_property
     def realized_pen(self):
         mapping = self.state.mapping
-        scale = mapping.rotated_pen_scale(self.state.pen.width) if mapping.rotated else mapping.linear_scale
-        pen = realize_pen(self.state.pen.width, *scale)
+        if mapping.rotated:
+            pen = realize_transformed_pen(self.state.pen.width, mapping, geometric=self.state.pen.geometric)
+        else:
+            pen = realize_pen(self.state.pen.width, *mapping.linear_scale)
         # Geometric pens are widened even below the cosmetic hairline width.
         return replace(pen, cosmetic=False) if self.state.pen.geometric else pen
 
@@ -412,6 +454,8 @@ class RasterPainter:
             pen.cap,
             pen.join,
             self.state.miter_limit,
+            tuple(float(value) for value in self.state.mapping.world[:4]) if self.state.mapping.rotated else None,
+            pen.width,
         )
 
     def _cosmetic_fragments(self, paths):
@@ -432,7 +476,7 @@ class RasterPainter:
                     phase = position + span.step * (pixel[major] - span.start)
                     if self._cosmetic_mark(phase):
                         yield pixel, True
-                    elif self.state.background_mode != TRANSPARENT:
+                    elif self.state.background_mode == OPAQUE:
                         yield pixel, False
                 position += len(span)
 
@@ -462,7 +506,7 @@ class RasterPainter:
             return set()
         pixels: set[tuple[int, int]] = set()
         for path in paths:
-            for segments, closed in self._pen_figures(path):
+            for segments, closed, _ in self._pen_figures(path):
                 pixels.update(self._figure_pixels(segments, closed, miter=miter))
         return pixels
 
@@ -472,20 +516,26 @@ class RasterPainter:
         if pen.geometric and pen.pattern:
             # Each dash is an open figure with the pen's caps and joins.
             scale = self.state.mapping.linear_scale
-            shorten = pen.width if pen.cap != CAP_FLAT else 0
-            for dash in dash_figures(path.segments, pen.pattern, scale, shorten=shorten):
-                yield dash, False
+            # Predefined styles pull capped dash ends back; user styles do not.
+            shorten = pen.width if pen.cap != CAP_FLAT and pen.style != PS_USERSTYLE else 0
+            logical = self.state.mapping.rotated_logical_point if self.state.mapping.rotated else None
+            figures = dash_figures(
+                path.segments, pen.pattern, scale, shorten=shorten, closed=path.closed, logical=logical
+            )
+            for dash, seam in figures:
+                yield dash, False, seam
         else:
-            yield path.segments, path.closed
+            yield path.segments, path.closed, 0
 
-    def widened_outlines(self, paths: tuple[DevicePath, ...]) -> list[Polygon] | None:
-        """WidenPath's closed outlines, or None for pens without outline construction."""
-        if self.pen_shape is None:
-            return None
+    def widened_outlines(self, paths: tuple[DevicePath, ...]) -> list[Polygon]:
+        """WidenPath's closed outlines: perpendicular bodies or support-vertex sweeps."""
         outlines: list[Polygon] = []
         for path in paths:
-            for segments, closed in self._pen_figures(path.flattened()):
-                outlines.extend(widen_outline(self.pen_shape, segments, closed))
+            for segments, closed, seam in self._pen_figures(path.flattened()):
+                if self.pen_shape is None:
+                    outlines.extend(support_outlines(segments, self.realized_pen, closed, seam=seam))
+                else:
+                    outlines.extend(widen_outline(self.pen_shape, segments, closed, seam=seam))
         return outlines
 
     def _figure_pixels(self, segments, closed, *, miter=False):
@@ -501,15 +551,18 @@ class RasterPainter:
                 CAP_ROUND,
                 JOIN_MITER,
                 self.state.miter_limit,
+                tuple(float(value) for value in self.state.mapping.world[:4]),
+                width,
             )
             perps = None
             if closed and len(segments) == 4:
                 # A box frame takes one perpendicular per box axis, from the
                 # left-top corner, for both of its parallel edges.
                 top, left, bottom, right = segments
-                horizontal = perpendicular(shape.pen, bottom.direction)
+                # The two edges leaving that corner give the vectors.
+                horizontal = perpendicular(shape.pen, top.direction)
                 vertical = perpendicular(shape.pen, left.direction)
-                perps = [(-horizontal[0], -horizontal[1]), vertical, horizontal, (-vertical[0], -vertical[1])]
+                perps = [horizontal, vertical, (-horizontal[0], -horizontal[1]), (-vertical[0], -vertical[1])]
             outline = widen_outline(shape, segments, closed, perps=perps)
             return set(self.contour_pixels(tuple(outline), fill_mode=WINDING))
         if self.pen_shape is not None:
@@ -645,6 +698,6 @@ class RasterPainter:
             return self.state.palette.colorref(brush.color)
         return (
             self.state.palette.colorref(self.state.background_color)
-            if opaque or self.state.background_mode != TRANSPARENT
+            if opaque or self.state.background_mode == OPAQUE
             else None
         )

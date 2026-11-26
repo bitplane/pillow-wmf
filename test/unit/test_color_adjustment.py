@@ -30,9 +30,7 @@ def test_channels_take_their_own_gamma():
     assert (red[128], green[128], blue[128]) == (64, 128, 128)
 
 
-def test_channel_mixing_adjustments_are_refused():
-    from pillow_wmf.gdi import UnsupportedOperation
-    from pillow_wmf.raster import RasterContext
-
-    with pytest.raises(UnsupportedOperation):
-        RasterContext(4, 4).set_color_adjustment(colorfulness=50)
+def test_channel_mixing_adjustments_use_the_engine():
+    assert ColorAdjustment(colorfulness=50).engine and ColorAdjustment(tint=-1).engine
+    assert ColorAdjustment(illuminant=3).engine and not ColorAdjustment(illuminant=6).engine
+    assert not ColorAdjustment(contrast=50).engine

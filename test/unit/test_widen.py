@@ -19,7 +19,7 @@ from pillow_wmf.widen import (
 
 
 def shape(width, cap, join, limit=10.0):
-    return PenShape(realize_pen(width, 1, 1), (8 * width, 8 * width), (1.0, 1.0), cap, join, limit)
+    return PenShape(realize_pen(width, 1, 1), (8 * width, 8 * width), (1.0, 1.0), cap, join, limit, None, width)
 
 
 def figure(*points):
@@ -79,20 +79,57 @@ def test_round_caps_walk_half_the_pen_from_the_perpendicular():
     assert points[:6] == [(96, 24), (96, 25), (46, 46), (25, 96), (46, 146), (96, 168)]
 
 
+def test_round_caps_walk_from_the_edge_holding_the_perpendicular():
+    pen = shape(4, CAP_ROUND, JOIN_BEVEL)
+    (points,) = outline(pen, (StrokeSegment((320, 320), (704, 384), (384, 64)),), False)
+    # The perpendicular (8, -32) is a pen vertex, but its keyframe interval
+    # puts it on the edge to (-8, -32): the cap skips it and ends on its
+    # opposite vertex instead.
+    assert points[:8] == [
+        (328, 288),
+        (313, 289),
+        (297, 297),
+        (289, 313),
+        (289, 327),
+        (297, 343),
+        (313, 351),
+        (312, 352),
+    ]
+
+
 def test_dashes_are_logical_lengths_with_round_cap_ends_pulled_back():
     line = figure((6, 6), (46, 14))
-    flat = dash_figures(line, (9, 3), (1, 1))
+    flat = [dash for dash, _ in dash_figures(line, (9, 3), (1, 1))]
     assert [(dash[0].start, dash[-1].end) for dash in flat][:2] == [((96, 96), (237, 124)), ((284, 134), (425, 162))]
-    rounded = dash_figures(line, (9, 3), (1, 1), shorten=3)
+    rounded = [dash for dash, _ in dash_figures(line, (9, 3), (1, 1), shorten=3)]
     assert rounded[0][-1].end == (190, 115)
     # Dots with extending caps become zero-length dashes.
     dots = dash_figures(figure((6, 6), (46, 6)), (3, 3), (1, 1), shorten=3)
-    assert dots[1] == (StrokeSegment((192, 96), (192, 96), (640, 0)),)
+    assert dots[1] == ((StrokeSegment((192, 96), (192, 96), (640, 0)),), 0)
+
+
+def test_closed_dashes_run_on_across_the_closing_vertex():
+    square = figure((0, 0), (10, 0), (10, 10), (0, 10), (0, 0))
+    dashes = dash_figures(square, (7, 2), (1, 1), closed=True)
+    # The dash drawing at the close joins the first; its seam is that joint.
+    merged, seam = dashes[0]
+    assert seam == 1
+    assert (merged[0].start, merged[0].end, merged[1].start) == ((0, 64), (0, 0), (0, 0))
+    assert all(seam == 0 for _, seam in dashes[1:])
+
+
+def test_axis_symmetric_pens_mirror_their_perpendiculars():
+    pen = realize_pen(7, 1, 1, geometric=True)
+    assert perpendicular(pen, (12, 18)) == (40, -32)
+    assert perpendicular(pen, (12, -18)) == (-40, -32)
+    assert perpendicular(pen, (-12, 18)) == (40, 32)
 
 
 def test_scaled_square_caps_round_twice():
     scale = (2.5092592239379883, 2.5098910331726074)
-    scaled = PenShape(realize_pen(2, *scale), (16 * scale[0], 16 * scale[1]), scale, CAP_SQUARE, JOIN_BEVEL)
+    scaled = PenShape(
+        realize_pen(2, *scale), (16 * scale[0], 16 * scale[1]), scale, CAP_SQUARE, JOIN_BEVEL, 10.0, None, 2
+    )
     # Native 28.4 extensions for these device directions of the 2.5x fixture.
     assert square_vector(scaled, (201, 362)) == (20, 35)
     assert square_vector(scaled, (200, 362)) == (19, 35)
@@ -150,10 +187,3 @@ def test_widen_path_replaces_the_figure_with_its_outline():
     ((commands, closed),) = context._state.path
     vertices = [command[0] for command in commands]
     assert closed and vertices == outline(shape(5, CAP_FLAT, JOIN_BEVEL), figure((6, 6), (18, 28), (30, 6)), False)[0]
-
-
-def test_widen_path_refuses_pens_without_outlines():
-    from pillow_wmf.gdi import UnsupportedOperation
-
-    with pytest.raises(UnsupportedOperation):
-        widened(0x00010000)  # Round caps and joins.

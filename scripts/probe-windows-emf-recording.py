@@ -713,6 +713,185 @@ def gap_scenarios():
 
         yield f"clip-path-{variant}", None, clip_path
 
+    def angle_arc_turns(dc):
+        # Sweeps of a full turn or more: the bounds and current position.
+        for x, y, radius, start, sweep in (
+            (60, 60, 10, 30.0, 360.0),
+            (60, 60, 10, 90.0, 1080.0),
+            (50, 50, 17, 45.0, 400.0),
+            (50, 50, 17, 300.0, -540.0),
+        ):
+            move_to(dc, 0, 0, None)
+            angle_arc(dc, x, y, radius, start, sweep)
+            polyline_to(dc, *points((300, 300)))
+        move_to(dc, 70, 70, None)
+        angle_arc(dc, 70, 70, 20, 10.0, 725.0)
+
+    yield "angle-arc-turns", None, angle_arc_turns
+
+    def null_selections(dc):
+        # Null object and palette selections, between drawing calls.
+        rectangle(dc, 0, 0, 10, 10)
+        select(dc, None)
+        rectangle(dc, 20, 0, 30, 10)
+        select_palette(dc, None, False)
+        rectangle(dc, 40, 0, 50, 10)
+
+    yield "null-selections", None, null_selections
+
+    def clip_path_shapes(dc):
+        # SelectClipPath of paths holding shapes and curves; each clipped
+        # polyline's bounds give the clip region's box.
+        shapes = (
+            lambda: ellipse(dc, 5, 5, 40, 30),
+            lambda: round_rect(dc, 6, 4, 41, 33, 12, 9),
+            lambda: pie(dc, 5, 5, 41, 31, 40, 5, 5, 6),
+            lambda: chord(dc, 3, 7, 44, 30, 2, 30, 44, 8),
+            lambda: (move_to(dc, 2, 2, None), arc_to(dc, 10, 10, 50, 35, 50, 20, 10, 12), line_to(dc, 2, 2)),
+            lambda: (move_to(dc, 30, 30, None), angle_arc(dc, 20, 20, 13, 30.0, 200.0)),
+            lambda: (move_to(dc, 4, 4, None), poly_bezier_to(dc, *points((60, 0), (0, 60), (50, 50)))),
+            lambda: (arc(dc, 5, 5, 45, 35, 45, 10, 5, 30), ellipse(dc, 30, 30, 45, 50)),
+        )
+        for shape in shapes:
+            save_dc(dc)
+            begin_path(dc)
+            shape()
+            end_path(dc)
+            select_clip_path(dc, 5)
+            polyline(dc, *points((0, 0), (90, 0), (90, 90), (0, 90), (0, 0)))
+            restore_dc(dc, -1)
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(0.9, 0.4, -0.4, 0.9, 20, 0)))
+        begin_path(dc)
+        ellipse(dc, 5, 5, 40, 30)
+        end_path(dc)
+        select_clip_path(dc, 5)
+        polyline(dc, *points((-50, -50), (90, -50), (90, 90), (-50, 90), (-50, -50)))
+
+    yield "clip-path-shapes", None, clip_path_shapes
+
+    def mask_blt_patterns(dc):
+        # Source-less MaskBlt: the pattern through a mask, and without one.
+        select(dc, hatch_brush(5, 0x0000FF))
+        mono = create_bitmap(8, 6, 1, 1, ctypes.create_string_buffer(bytes((0xA5, 0, 0x5A, 0) * 3), 12))
+        mask_blt(dc, 4, 4, 8, 6, None, 0, 0, mono, 0, 0, 0xAAF00021)
+        mask_blt(dc, 20, 4, 8, 6, None, 0, 0, mono, 2, 1, 0x55F00021)
+        mask_blt(dc, 36, 4, 8, 6, None, 0, 0, None, 0, 0, 0xAAF00021)
+        delete(mono)
+
+    yield "mask-blt-patterns", None, mask_blt_patterns
+
+    def compressed_pattern_brushes(dc):
+        # DIB pattern brushes from RLE8 and RLE4 DIBs.
+        palette = b"".join(struct.pack("<I", value) for value in (0x0000FF, 0x00FF00, 0xFF0000, 0xFFFFFF))
+        for compression, bits in (
+            (1, bytes((4, 1, 4, 2, 0, 0, 8, 3, 0, 0, 2, 0, 0, 2, 2, 1, 0, 0, 0, 1))),
+            (2, bytes((8, 0x12, 0, 0, 8, 0x30, 0, 0, 0, 3, 0x12, 0x30, 0, 0, 0, 1))),
+        ):
+            depth = 8 if compression == 1 else 4
+            header = struct.pack("<IiiHHIIiiII", 40, 8, 4, 1, depth, compression, len(bits), 0, 0, 4, 0)
+            packed = ctypes.create_string_buffer(header + palette + bits)
+            select(dc, dib_pattern_brush(packed, 0))
+            rectangle(dc, 0, 0, 20, 20)
+            select(dc, stock(0))
+
+    yield "compressed-pattern-brushes", None, compressed_pattern_brushes
+
+    def clip_path_widened_shapes(dc):
+        # SelectClipPath after widening shapes, arcs and extended-pen paths.
+        select(dc, create_pen(0, 5, 0))
+        shapes = (
+            lambda: ellipse(dc, 5, 5, 40, 30),
+            lambda: round_rect(dc, 6, 4, 41, 33, 12, 9),
+            lambda: pie(dc, 5, 5, 41, 31, 40, 5, 5, 6),
+            lambda: (move_to(dc, 2, 2, None), arc_to(dc, 10, 10, 50, 35, 50, 20, 10, 12), line_to(dc, 2, 2)),
+            lambda: rectangle(dc, 8, 8, 40, 30),
+        )
+        for shape in shapes:
+            save_dc(dc)
+            begin_path(dc)
+            shape()
+            end_path(dc)
+            widen_path(dc)
+            select_clip_path(dc, 5)
+            polyline(dc, *points((0, 0), (90, 0), (90, 90), (0, 90), (0, 0)))
+            restore_dc(dc, -1)
+        brush = LogBrush(0, 0, 0)
+        for style in (0x00010000 | 0x0200 | 0x2000, 0x00010000 | 0x0100 | 0x1000):
+            select(dc, ext_create_pen(style, 7, ctypes.byref(brush), 0, None))
+            save_dc(dc)
+            begin_path(dc)
+            move_to(dc, 10, 10, None)
+            line_to(dc, 40, 15)
+            line_to(dc, 20, 35)
+            end_path(dc)
+            widen_path(dc)
+            select_clip_path(dc, 5)
+            polyline(dc, *points((0, 0), (90, 0), (90, 90), (0, 90), (0, 0)))
+            restore_dc(dc, -1)
+
+    yield "clip-path-widened-shapes", None, clip_path_widened_shapes
+
+    def odd_arc_to(dc):
+        # The clockwise ArcTo on an odd-sized box, then its current position.
+        set_arc_direction(dc, 2)
+        for box, radials in (((10, 10, 41, 31), (40, 10, 10, 30)), ((10, 10, 41, 31), (10, 30, 40, 10))):
+            move_to(dc, 0, 0, None)
+            arc_to(dc, *box, *radials)
+            polyline_to(dc, *points((300, 300)))
+
+    yield "odd-arc-to", None, odd_arc_to
+
+    def path_readback(dc):
+        # GetPath after building and widening the ArcTo figure, and the
+        # current position after each odd ArcTo, written into GDI comments.
+        api("GdiComment", boolean, ptr, wintypes.UINT, ctypes.c_char_p)
+        api("GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+        api("GetCurrentPositionEx", boolean, ptr, ctypes.POINTER(wintypes.POINT))
+
+        def comment_path():
+            count = gdi.GetPath(dc, None, None, 0)
+            pts, kinds = (wintypes.POINT * max(count, 1))(), (ctypes.c_ubyte * max(count, 1))()
+            gdi.GetPath(dc, pts, kinds, count)
+            data = b"PATH" + b"".join(
+                struct.pack("<iiB", p.x, p.y, k) for p, k in zip(pts[:count], kinds[:count], strict=True)
+            )
+            gdi.GdiComment(dc, len(data), data)
+
+        select(dc, create_pen(0, 80, 0))  # Five device pixels once mapped.
+        set_map_mode(dc, 8)  # Read the path back in sixteenths of a pixel.
+        set_window_ext(dc, 16, 16, None)
+        set_viewport_ext(dc, 1, 1, None)
+        begin_path(dc)
+        move_to(dc, 32, 32, None)
+        arc_to(dc, 160, 160, 800, 560, 800, 320, 160, 192)
+        line_to(dc, 32, 32)
+        end_path(dc)
+        comment_path()
+        widen_path(dc)
+        comment_path()
+        abort_path(dc)
+        set_arc_direction(dc, 2)
+        for box, radials in (((10, 10, 41, 31), (40, 10, 10, 30)), ((10, 10, 41, 31), (10, 30, 40, 10))):
+            begin_path(dc)
+            move_to(dc, 0, 0, None)
+            arc_to(dc, *(16 * value for value in (*box, *radials)))
+            end_path(dc)
+            comment_path()
+            abort_path(dc)
+        set_arc_direction(dc, 1)
+        set_map_mode(dc, 1)
+        set_arc_direction(dc, 2)
+        for box, radials in (((10, 10, 41, 31), (40, 10, 10, 30)), ((10, 10, 41, 31), (10, 30, 40, 10))):
+            move_to(dc, 0, 0, None)
+            arc_to(dc, *box, *radials)
+            point = wintypes.POINT()
+            gdi.GetCurrentPositionEx(dc, ctypes.byref(point))
+            data = b"CPOS" + struct.pack("<ii", point.x, point.y)
+            gdi.GdiComment(dc, len(data), data)
+
+    yield "path-readback", None, path_readback
+
 
 def records(data):
     position = 0

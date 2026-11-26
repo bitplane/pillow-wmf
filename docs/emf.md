@@ -13,9 +13,42 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   mapping records do not reach it. Playback keeps the metafile's own page state
   and world transform, and sets the DC world transform to *world, then page,
   then frame fit* as one float32 matrix (`emf/transform.py`).
+- Before the first record, the DC's clip becomes its meta region (so a
+  metafile's `SelectClipRgn(NULL)` returns to it), the white brush, black
+  pen and default palette are selected, and the attributes are reset: white
+  background, black text, no character extra, `OPAQUE`, `ALTERNATE`,
+  `R2_COPYPEN`, `BLACKONWHITE`, text alignment 0, mapper flags 0, brush
+  origin (0, 0), miter limit 10, no justification, counter-clockwise arcs
+  and the current position at (0, 0). Native playback also selects the
+  device default font; that waits for the text work. Colour adjustment is
+  not reset.
+- Native playback reads the clip box, in the metafile's logical units, once
+  before the first record, and widens it on each axis by one unit, or by one
+  more than the whole number of reference-display pixels per metafile
+  device pixel when the header's device is denser than the 1024x768,
+  271x203 mm reference display. Transfers (`BitBlt`, `StretchBlt`,
+  `StretchDIBits`, `SetDIBitsToDevice`, `MaskBlt`, `PlgBlt`, `AlphaBlend`,
+  `TransparentBlt`) and region painting (`FillRgn`, `FrameRgn`,
+  `InvertRgn`, `PaintRgn`) whose record bounds lie wholly outside that box
+  are skipped; reversed (empty) bounds never are. Nothing plays when the
+  clip is empty.
 - The frame fit maps the header frame (0.01 mm) onto the target rectangle using
-  the header's device pixels and millimetres. Fits within 0.001 of 1:1 on both
-  axes use exactly 1.0. A reversed frame does not play.
+  the header's device pixels and millimetres, in binary32. A reversed frame
+  does not play.
+- The page state lives in a hidden DC. After a mapping record it reads that
+  DC's world-to-device transform, multiplies it by the frame fit and sets the
+  product on the target DC; a left-multiplying `ModifyWorldTransform` is
+  applied to the target's transform directly instead. Products follow GDI's
+  binary32 order (`multiply` in `emf/transform.py`): each offset is the
+  second matrix's off-diagonal term on the first's other offset, plus the
+  second's offset, plus the diagonal product. A product whose offset reaches
+  2^32, or a transform that is singular in binary32, leaves the target's
+  transform unchanged. `ScaleWindowExtEx` and `ScaleViewportExtEx` multiply
+  in wrapping 32-bit integers and divide truncating toward zero, and only
+  play in the isotropic and anisotropic modes.
+- The frame fit is composed with the target DC's own transform before its
+  scales snap to exactly 1 when both lie within [0.999, 1.001] and neither
+  matrix has off-diagonal terms.
 - Physical mapping modes take their extents from the header millimetres.
   Singular world transforms, unknown `ModifyWorldTransform` modes and isotropic
   adjustments that would collapse an axis leave the state unchanged.
@@ -23,6 +56,33 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   of boxes, builds curves from the transformed box in world orientation and
   scales width-1 pens. Device-space clip regions are fitted like points.
   `SetDIBitsToDevice` with every scan line plays as a `SRCCOPY` stretch.
+  A partial band carries only its own scan lines. They form a bitmap whose
+  top row is a bottom-up band's last line or a top-down band's first, and
+  the source rectangle's top is row `start + count - ySrc - cySrc` of it,
+  a bottom-up count being limited to the lines the DIB has. The whole
+  rectangle stretches; its rows outside the band draw nothing. A compressed
+  band is its stream from the start, decoded into the band's lines and
+  ended there; like any compressed source, it skips unwritten pixels only
+  when copied directly from the DIB origin, and otherwise realizes them as
+  index 0.
+- `AngleArc` builds its arc from the start and end angles directly, each in
+  the quadrant of its angle's floor, with the arc constructions of `Arc`.
+  A sweep of a turn or more draws the remainder (the sweep less its whole
+  turns) and then, for each turn, the arc from the remainder's end round to
+  the start followed by the remainder again; a zero remainder is one
+  zero-length Bezier. The current position ends at the final angle.
+- After `ArcTo` and `AngleArc` the DC keeps the arc's exact 28.4 end, and
+  the next `LineTo`, `PolylineTo` or `PolyBezierTo` starts from it, so a
+  path figure continues across the arc.
+- Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
+  `PlgBlt`, `AlphaBlend`, `TransparentBlt`) map their logical source
+  rectangle through the recorded source transform, rounding each edge half
+  up to a bitmap pixel. A scaled or mirrored source becomes a stretch of that
+  rectangle onto the destination (in the DC's stretch mode); a `MaskBlt` mask
+  covers the mapped rectangle and stretches with it. A rotated or sheared
+  source draws nothing, as GDI rejects such a source DC. A `DIB_PAL_COLORS`
+  colour table indexes the default palette, whatever palette the metafile
+  selected, with indexes wrapping modulo its 20 entries.
 
 The raster refuses operations whose `GM_ADVANCED` output has no native
 references yet (`UNVERIFIED_IN_ADVANCED_MODE` in `raster.py`), and the player
@@ -55,30 +115,30 @@ the codec and reference columns against the code and fixtures.
 | `SETPIXELV` | typed | full | yes |  |
 | `SETMAPPERFLAGS` | typed | full | yes | Font mapping; text is font-limited. |
 | `SETMAPMODE` | typed | full | yes | Physical extents from the header millimetres. |
-| `SETBKMODE` | typed | full | yes |  |
-| `SETPOLYFILLMODE` | typed | full | yes |  |
-| `SETROP2` | typed | full | yes |  |
-| `SETSTRETCHBLTMODE` | typed | full | yes |  |
+| `SETBKMODE` | typed | full | yes | Values other than OPAQUE are transparent; hatched `PatBlt` always paints its background. |
+| `SETPOLYFILLMODE` | typed | full | yes | Values other than WINDING fill as ALTERNATE. |
+| `SETROP2` | typed | full | yes | The low byte b selects mix ((b - 1) & 15) + 1, so 0 is R2_WHITE. |
+| `SETSTRETCHBLTMODE` | typed | full | yes | Values outside 1-4 stretch as WHITEONBLACK. |
 | `SETTEXTALIGN` | typed | full | no | Text is not yet drawn in GM_ADVANCED. |
-| `SETCOLORADJUSTMENT` | typed | partial | yes | Per-channel adjustments of scaled HALFTONE copies; colourfulness, tint and illuminants are refused. |
+| `SETCOLORADJUSTMENT` | typed | full | yes | Scaled HALFTONE copies; transfers under rotating transforms sample without it. |
 | `SETTEXTCOLOR` | typed | full | yes |  |
 | `SETBKCOLOR` | typed | full | yes |  |
-| `OFFSETCLIPRGN` | typed | partial | yes | Offsets scale through the world transform; rounding ties are unverified. |
+| `OFFSETCLIPRGN` | typed | full | yes | Offsets scale through the world transform, ties rounding away from zero. |
 | `MOVETOEX` | typed | full | yes |  |
 | `SETMETARGN` | typed | full | yes |  |
 | `EXCLUDECLIPRECT` | typed | full | yes |  |
 | `INTERSECTCLIPRECT` | typed | full | yes |  |
-| `SCALEVIEWPORTEXTEX` | typed | partial | no | Transforms whose offsets overflow are not rejected as natively. |
-| `SCALEWINDOWEXTEX` | typed | partial | no | As SCALEVIEWPORTEXTEX. |
+| `SCALEVIEWPORTEXTEX` | typed | full | yes | 32-bit products and truncating division, as natively. |
+| `SCALEWINDOWEXTEX` | typed | full | no | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
-| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover shapes, lines and SRCCOPY DIB transfers; see below. |
+| `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing except text; see below. |
 | `MODIFYWORLDTRANSFORM` | typed | partial | yes | As SETWORLDTRANSFORM. |
 | `SELECTOBJECT` | typed | partial | yes | Stock brushes, pens and palette; stock fonts need the font work. |
 | `CREATEPEN` | typed | full | yes |  |
 | `CREATEBRUSHINDIRECT` | typed | full | yes | Solid, null and hatched brushes. |
-| `DELETEOBJECT` | typed | full | no |  |
-| `ANGLEARC` | typed | partial | yes | Sweeps of a full turn or more are not yet drawn. |
+| `DELETEOBJECT` | typed | full | yes |  |
+| `ANGLEARC` | typed | full | yes | Sweeps of a full turn or more repeat the circle. |
 | `ELLIPSE` | typed | full | yes |  |
 | `RECTANGLE` | typed | full | yes |  |
 | `ROUNDRECT` | typed | full | yes |  |
@@ -94,7 +154,7 @@ the codec and reference columns against the code and fixtures.
 | `LINETO` | typed | full | yes |  |
 | `ARCTO` | typed | full | yes |  |
 | `POLYDRAW` | typed | full | yes |  |
-| `SETARCDIRECTION` | typed | full | yes | Clockwise figures are the y-mirror of counterclockwise ones. |
+| `SETARCDIRECTION` | typed | full | yes | Clockwise figures are the y-mirror of counterclockwise ones; other values fail. |
 | `SETMITERLIMIT` | typed | full | yes | Recorded as an integer; limits geometric miter joins. |
 | `BEGINPATH` | typed | full | yes |  |
 | `ENDPATH` | typed | full | yes |  |
@@ -103,7 +163,7 @@ the codec and reference columns against the code and fixtures.
 | `STROKEANDFILLPATH` | typed | full | yes |  |
 | `STROKEPATH` | typed | full | yes |  |
 | `FLATTENPATH` | typed | full | yes |  |
-| `WIDENPATH` | typed | partial | yes | Extended geometric pens other than round caps with round joins; other pens are refused. |
+| `WIDENPATH` | typed | full | yes | `CreatePen` styles widen as solid; cosmetic `ExtCreatePen` pens fail, keeping the path. |
 | `SELECTCLIPPATH` | typed | full | yes | The path interior becomes a region by its fill coverage. |
 | `ABORTPATH` | typed | full | yes |  |
 | `COMMENT` | typed | partial | yes | GDIC multi-format comments play their embedded EMF; EMF+ is not rendered. |
@@ -112,11 +172,11 @@ the codec and reference columns against the code and fixtures.
 | `INVERTRGN` | typed | full | yes | As FILLRGN. |
 | `PAINTRGN` | typed | full | yes | As FILLRGN. |
 | `EXTSELECTCLIPRGN` | typed | full | yes | Device-space regions fitted like points; a missing clip combines with the whole surface. |
-| `BITBLT` | typed | partial | yes | Source transforms and palette-indexed sources are missing. |
-| `STRETCHBLT` | typed | partial | yes | As BITBLT. |
+| `BITBLT` | typed | full | yes | Scaled and mirrored source transforms stretch; `DIB_PAL_COLORS` sources use the default palette. |
+| `STRETCHBLT` | typed | full | yes | As BITBLT. |
 | `MASKBLT` | typed | full | yes | Per-pixel ROP3 from the mask; scaled transfers pad as their foreground ROP decides. |
-| `PLGBLT` | typed | full | yes | Identity source transforms and RGB sources. |
-| `SETDIBITSTODEVICE` | typed | partial | yes | Partial bands are unverified under scaling. |
+| `PLGBLT` | typed | full | yes | A masked transfer keeps an identity source transform. |
+| `SETDIBITSTODEVICE` | typed | full | yes | Scaled with the playback transform, partial and compressed bands included. |
 | `STRETCHDIBITS` | typed | full | yes |  |
 | `EXTCREATEFONTINDIRECTW` | typed | full | no | Text is font-limited. |
 | `EXTTEXTOUTA` | typed | partial | no | Not yet drawn in GM_ADVANCED; font-limited. |
@@ -149,7 +209,7 @@ the codec and reference columns against the code and fixtures.
 | `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
-| `ALPHABLEND` | typed | partial | yes | Constant and per-pixel alpha with nearest sampling; per-pixel alpha below full constant alpha is unreferenced. |
+| `ALPHABLEND` | typed | full | yes | Constant and per-pixel alpha with nearest sampling. |
 | `SETLAYOUT` | typed | full | yes | Mirrors the playback transform about the reference device width; the DC layout is unchanged. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; playback refuses them without it. |
@@ -202,13 +262,20 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   a header as a 40-byte one.
 - Fonts are written as `LOGFONTEXDV`: the LOGFONT, empty full name, style and
   script, and a design vector with no axes.
-- `AngleArc` and `ArcTo` leave the current position at the exact end point,
-  floored; `ArcTo` measures it on the recorded, inclusive box's ellipse.
+- `AngleArc` leaves the current position at the exact end point, floored.
+  `ArcTo` leaves it at the arc's 28.4 end, floored to a logical point; in
+  `GM_COMPATIBLE` its ellipse fills the recorded, inclusive box while its
+  radials are measured against the box as given.
 - Header bounds count what reaches the device: drawing inside a path bracket
-  only measures the path, which `StrokePath` and `FillPath` then add. An
+  only measures the path, which `StrokePath` and `FillPath` then add, and a
+  point-list record inside the bracket has empty bounds of its own. An
   excluded clip rectangle shrinks the clip box to what it leaves, and
   `SelectClipPath` clips to the bounding box of the path's fill coverage, or
-  of the pen's stroke footprint once widened.
+  of the pen's stroke footprint once widened. Shapes, arcs and extended pens
+  in a widened path take the widened outlines, filled with the DC's polygon
+  fill mode, so overlapping caps can cancel. Shapes and arcs take the
+  playback figures; in `GM_COMPATIBLE`, `AngleArc` builds them as in
+  `GM_ADVANCED`, and `ArcTo` as described above.
 - Without an explicit frame, the frame is the bounds in 0.01 mm of the
   reference device; the header's micrometre extension is the reference
   display's size at 96 DPI.
@@ -217,10 +284,11 @@ Recordings of the covered calls are byte-identical to native ones
 ([`test_emf_recorder.py`](../test/unit/emf/test_emf_recorder.py)). Text output
 waits for the font work. Refused: pattern brushes from device bitmaps other
 than 1- and 32-bpp (native `CreateBitmap` cannot make them), compressed
-transfer sources, `SelectClipPath` of paths holding curves or shapes other
-than rectangles, and null object selections. Unverified: the `ArcTo` end
-position for one clockwise arc on an odd-sized box lands a pixel earlier
-natively than the ellipse rule gives.
+transfer sources (a recorded transfer carries uncompressed samples, which
+cannot keep an RLE source's unwritten pixels), and `SelectClipPath` of
+widened inside-frame paths. Null object and palette selections fail without
+a record, as natively; so do DIB pattern brushes from RLE DIBs, whose
+creation fails, and source-less `MaskBlt`, which records nothing.
 
 ## Geometric pens
 
@@ -230,29 +298,64 @@ point:
 
 - Round caps with round joins use the support-vertex construction shared with
   wide `CreatePen` strokes. Square caps with round joins keep those bodies.
-- Every other combination places the body on a perpendicular chosen from the
-  realized pen polygon: a line parallel to a pen edge uses the edge midpoint,
-  a line parallel to the chord across a vertex uses that vertex, and other
-  directions interpolate between them by cross-product weights before snapping
-  to the half-pixel grid. Flat and square caps, bevels and miters share it.
+- Every other combination places the body on the pen perpendicular as native
+  widening computes it. The pen is held as its first half, from a vertex to
+  the opposite one, after the vertex preceding that half around the pen, so
+  its first edge is the reverse of its last. A binary search over the edges'
+  cross products with the line direction finds the draw vertex where their
+  sign changes; the perpendicular runs from half the adjacent edge before it
+  along the edge with the smaller cross product, by the share of the other,
+  divided with rounding at the half, and is negated when the first edge's
+  cross product is negative. Each component snaps to the half-pixel grid, x
+  ties toward zero and y ties away from it. Flat and square caps, bevels and
+  miters share it.
 - Inner joins pass through the vertex; round inner joins also sweep the pen.
-  Miter tips round to the nearest 28.4 point; miters longer than the limit
-  bevel.
-- Square caps extend along the logical direction by the device half-width of
-  the larger axis, rounded to 28.4; under a scaling mapping it is first rounded
-  to sixteenths of a 28.4 unit.
+  Miter tips round to the nearest 28.4 point. A tip is kept when the vector
+  from the vertex to it, taken back through the pen's world transform and
+  rounded to whole world units, is no longer than half the pen width times
+  the miter limit (compared squared, in single precision); otherwise the
+  join bevels.
+- Round caps and round joins walk the pen's vertices between the pen edges
+  holding the two offsets: each offset's edge is the one whose keyframe
+  interval holds the segment direction (taken unmirrored, even where the
+  perpendicular itself is mirrored). The walk runs from the leading end of
+  the first edge to the trailing end of the second, so a cap covers exactly
+  half the pen. A join's walk that ends on the head of the pen's second half
+  emits it twice when that head is the second edge's keyed vertex. Square
+  caps with round joins sweep between their support vertices instead, and a
+  sweep reaching the head of the pen's second half in vertex order also
+  emits that vertex.
+- Square caps extend along the line by the 28.4 direction scaled, in single
+  precision, by half the pen's world width over the direction's length in
+  whole world units (the direction taken back through the pen's world
+  transform and rounded), each component rounded half away from zero.
 - Predefined geometric styles are multiples of the width (dash 3:1, dot 1:1,
   and so on); user styles are logical lengths. Dashes are measured in logical
   units, cut by interpolating along the device segment, and drawn as open
-  figures. Round and square caps pull each dash end back by one width, so
-  dots become zero-length dashes.
+  figures; a dash that crosses a vertex keeps its join. Under a rotating
+  transform segment lengths are measured between the logical points nearest
+  their device ends. On predefined styles, round and square caps pull each
+  dash end back by one width, so dots become zero-length dashes; user styles
+  are not pulled back.
+- On a closed figure a dash still drawing at the closing vertex runs on into
+  the first dash as one figure, whose `WidenPath` outline starts at the
+  closing joint's near side.
 - Cosmetic alternate and user styles step through device pixels, user style
   entries in units of three pixels like the predefined styles. Cosmetic pens
   are always one pixel wide and solid.
 - `WidenPath` flattens each figure and replaces it with these outlines as
-  closed polygon figures, one per dash for patterned pens. Round caps with
-  round joins, and pens that are not extended geometric pens, have no outline
-  construction and are refused.
+  closed polygon figures, one per dash for patterned pens. A `CreatePen`
+  style is ignored: the pen widens as the solid pen of its width. A cosmetic
+  `ExtCreatePen` pen cannot be widened; the call fails and keeps the path.
+- For `CreatePen` pens and geometric pens with round caps and joins,
+  `WidenPath` stitches one outline per open figure: the start cap, the far
+  side forward, the end cap and the near side back. A closed figure gives
+  its two sides as two figures. The outer side of a joint sweeps the pen
+  between the two body supports and the inner side passes through the
+  vertex. Every support index comes from the forward segment directions, the
+  near side taking the opposite pen vertex, and a forward sweep that ends at
+  the head of the pen's second half also emits that vertex before the body
+  point.
 - Hatched and DIB pattern pens fill the widened footprint with the brush,
   tiled from the brush origin like any brush; a DIB pattern pen's LOGBRUSH
   colour is its colour usage.
@@ -260,34 +363,83 @@ point:
 ## Gradient fills
 
 `GradientFill` maps each vertex to a whole device pixel and writes inside the
-clip region without applying ROP2 (the ROP2 interaction is unverified):
+clip region; ROP2 does not apply:
 
 - Rectangles shade from the corner nearer the leading edge, whichever index
   holds it. Each 16-bit channel advances by a floored 16.16 step per pixel
   and keeps its top 8 bits. The far column or row is not drawn.
-- Triangles cover rows from the top vertex to the row before the bottom
-  vertex; each row runs from the ceiling of its left edge crossing to before
-  the ceiling of its right one. A pixel's colour is the exact plane through
-  the corner colours, rounded to a 16-bit unit, then its top 8 bits.
+- Triangles ([`gradient.py`](../src/pillow_wmf/gradient.py)) clamp their
+  vertex channels to 0xff00 and cover rows from the top vertex to the row
+  before the bottom vertex; each row runs from the ceiling of its left edge
+  crossing to before the ceiling of its right one. Each channel's plane is
+  stepped in 48-bit fixed point: floored per-pixel and per-row slopes over
+  the doubled area, and a half-unit bias at the top vertex. A row starts
+  with the colour its leftmost edge reaches, or a horizontal edge's exact
+  vertex colour without the bias, and pixels keep each channel's top 8
+  bits.
+- A mesh whose vertices span 0x4000 pixels or more either way is drawn as a
+  stack, last triangle first: triangles outside the clip bounds are dropped
+  and any edge longer than 0x4000 splits its triangle at the single-precision
+  midpoint of its longest edge, the far half first, with fixed capacity for
+  the added triangles and vertices. Drawing clamps shared vertex colours in
+  place, so later midpoints see the clamped values.
 
 ## Colour adjustment
 
 `SetColorAdjustment` changes only scaled `HALFTONE` copies, whether filtered
 or replicated. Each channel maps through its own table
-([`color_adjustment.py`](../src/pillow_wmf/color_adjustment.py)), on the 0..1
-scale:
+([`color_adjustment.py`](../src/pillow_wmf/color_adjustment.py)), built as the
+native table builder does in six-digit fixed point (10^6 is one), in this
+order:
 
-1. reference black and white stretch the value;
-2. the channel's gamma (hundredths of a percent) raises it to a power;
-3. `CA_LOG_FILTER` replaces it with log8(1 + 7v);
-4. contrast multiplies it by exp(0.0148885 * contrast);
+1. the level becomes level / 255, rounded half up;
+2. the channel's gamma (hundredths of a percent) raises it to a power,
+   through GDI's fixed-point logarithm;
+3. reference black and white stretch it;
+4. contrast multiplies it by 1.015^contrast;
 5. brightness adds 0.375 * brightness / 100;
-6. `CA_NEGATIVE` inverts it;
+6. `CA_LOG_FILTER` replaces it with log8(1 + 7v);
+7. it is clamped to 0..1, and `CA_NEGATIVE` inverts it;
 
-then it is clamped and rounded to the nearest 8-bit level. Each step matches
-native output on its own and contrast with brightness or negative together;
-other combinations are unverified. Colourfulness, red-green tint and
-illuminants other than the default mix channels and are refused.
+then it is rounded to the nearest 8-bit level.
+
+Colourfulness, red-green tint and illuminants other than the default (D65)
+mix channels. Native GDI then maps colours through a colour engine
+([`color_engine.py`](../src/pillow_wmf/color_engine.py)), and the channel
+tables above apply to the engine's output:
+
+1. Pixels are ordered-dithered to 5 bits per channel: a channel byte `v`
+   becomes `(256 + round(v * 7935 / 255) - d) >> 8`, with one threshold `d`
+   per pixel shared by the three channels from a 66 x 65 table (64
+   thresholds per row and a wrap that repeats the first).
+2. The three 5-bit indexes select one of 32**3 precomputed colours. Each is
+   its node `(r, g, b) / 31` taken to CIE XYZ with the sRGB primaries and
+   the adjustment's illuminant as white, then to CIE L\*u\*v\*, where
+   colourfulness multiplies the chroma by `1 + colourfulness / 100` and
+   tint rotates its hue 0.6 degrees per step, and back to XYZ and sRGB under
+   the D65 device white. Results outside the gamut are rescaled into it.
+   All arithmetic is fixed point with six decimal places, rounded half
+   up; cube roots go through six-digit base-10 logarithms.
+
+Enlargements map source pixels as their scans are read, before the stretch
+replicates or filters them; each scan read advances the dither one row.
+Reductions map the reduced destination pixels, dithered at their
+destination positions. Dithering starts at the first visible destination
+column modulo 65 and at the first visible row, or the last one for a
+vertically flipped transfer, whose dither rows count down. Scans start at
+the first source column and row that a visible pixel samples, by the
+stretch's centre-phase step, and:
+
+- replication reads from there;
+- the enlargement filter for up to five times the source size first reads
+  two more scans, re-reading the bitmap's top row where it has none above
+  (when mirrored, two scans whatever is above);
+- larger enlargements, and mirrored ones up to five times, first read up to
+  two real columns before; larger ones also read up to two real scans
+  before and re-read the bitmap's last scan below it;
+- scans repeated beyond the bitmap's edges are each dithered afresh.
+
+The source's storage orientation does not matter.
 
 ## Right-to-left layout
 
@@ -305,7 +457,9 @@ its formats with the enhanced-metafile signature, as `PlayEnhMetaFile` does:
 the embedded frame is fitted to the comment's output rectangle in the outer
 metafile's logical units, then mapped by the outer world transform. The
 embedded picture is not clipped to that rectangle. It plays inside a saved
-DC with its own object table, and the outer transform is set again after.
+DC with its own object table and the same start as a top-level playback,
+so the outer clip becomes its meta region and the outer attributes and
+objects do not reach it; the outer transform is set again after.
 Nesting stops after eight levels.
 
 ## Rotated and sheared transforms
@@ -320,39 +474,81 @@ products plus the 28.4 translation.
   constructions as their special case: edge midpoints take floored halves,
   the circle-constant insets round per device component, and the lower half
   reflects the upper through the right-top and left-bottom corners.
-- A CreatePen pen keeps its device-aligned small-pen shape. Each device axis
+- Under a uniform rotation (orthogonal axes of equal length) a pen within
+  the small-pen table keeps its device-aligned shape. Each device axis
   rounds the logical width vector along it to 28.4 and truncates its length,
   so a pen narrows slightly at oblique angles.
+- Wider pens, and every pen under a transform that does not keep circles
+  round, are cubic ellipses on the transformed logical radius vectors: each
+  component's full diameter is rounded to 28.4 and halved outward, the
+  second vector is the image of the negative logical y radius, and both
+  quarters of the semicircle are flattened outward from the first vector's
+  axis. The axis-aligned wide pens are the special case.
+- Under a non-uniform transform a `CreatePen` pen is a hairline when its
+  transformed x diameter is below 1.5 pixels; a geometric pen never is.
 - `Rectangle` frames are mitred: each body lies on the pen perpendicular
-  used by geometric pens, one per box axis taken from the left-top corner and
-  shared by both parallel edges. Other figures keep the support-vertex
-  bodies of wide `CreatePen` strokes.
-- DIB transfers with SRCCOPY map their destination rectangle to a
-  parallelogram and copy as PlgBlt does.
+  used by geometric pens, one per box axis, taken from the two edges that
+  leave the left-top corner and shared by both parallel edges. Other figures
+  keep the support-vertex bodies of wide `CreatePen` strokes.
+- A wide `PS_INSIDEFRAME` pen insets the box at its transformed corners: the
+  vectors (-width, width) and (width, width) are mapped to 28.4 and halved,
+  rounding up; the right-top corner moves by the first, the left-top by the
+  second and the left-bottom back by the first. A box narrower than the pen
+  on either axis is filled with the pen instead, and arcs, chords and pies
+  in it draw nothing.
+- Geometric pens use the caps, joins and styles above with the realized pen.
+- `PatBlt` and the DIB transfers (`BitBlt`, `StretchBlt`, `StretchDIBits`
+  and `MaskBlt` records, any ROP3) cover the polygon fill of their
+  destination rectangle's three 28.4 corners and the reflected fourth. Each
+  covered pixel inverts its integer point against that parallelogram and
+  takes the source sample at the floor, breaking exact ties as if the point
+  were nudged right along device x; samples clamp into the source
+  rectangle. The ROP then combines source, brush and destination as usual,
+  and a `MaskBlt` mask chooses the ROP per source pixel. The stretch mode
+  and colour adjustment do not apply.
+- `AlphaBlend` and `TransparentBlt` sample the same way and then blend or
+  skip the key colour exactly as unrotated.
+- A legacy `BitBlt` or `StretchBlt` that reads the destination DC draws
+  nothing: native GDI rejects a source DC under a rotating transform.
+  Source-less pattern operations fill the parallelogram as `PatBlt` does.
+- A direct `SetDIBitsToDevice` maps only its origin, rounded to a device
+  pixel, and copies the scan lines unscaled and unrotated.
+- `GradientFill` maps its vertices to whole device pixels. A rectangle is
+  shaded as two triangles (left-top, right-top, right-bottom and left-top,
+  right-bottom, left-bottom) whose corners take the colour of the edge they
+  lie on.
+- `AngleArc` and `ArcTo` strokes follow the curve constructions above.
+- Clip rectangles become filled parallelograms: `IntersectClipRect` rounds
+  the transformed corners to device pixels first, `ExcludeClipRect` keeps
+  them in 28.4. `OffsetClipRgn` moves the clip by the offset mapped through
+  the transform and rounded; `SelectClipRgn` regions are device pixels as
+  always.
+- `FillRgn`, `PaintRgn` and `InvertRgn` trace the region's outline (corner
+  vertices only), map it to 28.4 and fill it as a polygon.
+- `FrameRgn` widens that outline with a geometric pen twice the larger frame
+  size wide, with mitred joins and the DC's miter limit, whose world
+  transform squeezes the smaller axis by the sizes' ratio (an ellipse of
+  twice the frame sizes in logical units), and paints the widened outline's
+  winding fill within the region.
 
-PlgBlt inverts the mapping at each pixel's integer point against the 28.4
-parallelogram. A source column on an exact boundary belongs to the column it
-starts; a source row on an exact boundary belongs to the row just above the
-pixel in device space. A mask bit of 1 copies the source pixel.
+PlgBlt onto a parallelogram that is a whole-pixel device rectangle (its
+corners on pixel boundaries, its edges along the axes) is a stretch: a copy
+at equal extents outside `HALFTONE`, otherwise a stretch in the DC's stretch
+mode, a negative extent mirroring the source. Its mask lies over the
+destination, so a mirrored axis reads the mask mirrored within the source
+rectangle. Any other parallelogram inverts the mapping at each pixel's
+integer point nudged right along device x: a source column or row on an
+exact boundary is the one just right of the point. Its mask is read at the
+source pixel. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
-- Tie rounding of the geometric pen perpendicular: about one direction in
-  twenty, at exact half-pixel ties, snaps the other way natively.
-- A triangle gradient's flat top row: native colours along a horizontal top
-  edge fall just below exact 8-bit boundaries, one unit lower than the
-  rounded plane.
-
-- Whether playback resets DC attributes before the first record, and whether it
-  clips to the target rectangle.
-- Absolute `RestoreDC` levels and the native limit on transform offsets.
-- Under rotating or shearing transforms: text, regions, clip rectangles,
-  gradients, legacy and non-SRCCOPY transfers, extended geometric pens, pens
-  wider than the small-pen table, and wide pens under non-uniform transforms
-  are refused.
-- A masked PlgBlt onto a parallelogram mirrored against its source reads the
-  mask mirrored within the source rectangle; only fully mirrored cases have
-  native references.
+- Device coordinates at or beyond 2^27 pixels, where 28.4 values wrap:
+  native primitives then fail, draw part of their figure or draw wrapped
+  geometry, each in its own way
+  ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
+  records the native results).
+- Under rotating or shearing transforms: text is refused.
 - EMF+ (GDI+) drawing.
 - Text in `GM_ADVANCED`, Unicode text and stock fonts. Text output is
   font-limited and reported separately from exact comparisons.

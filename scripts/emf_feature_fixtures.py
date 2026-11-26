@@ -9,6 +9,7 @@ import math
 import struct
 
 from pillow_wmf.emf import Metafile, bitmaps, fixed, system, variable
+from pillow_wmf.mapping import ReferenceDevice
 
 PS_SOLID, PS_DASH, PS_DOT, PS_USERSTYLE, PS_ALTERNATE, PS_NULL = 0, 1, 2, 7, 8, 5
 PS_GEOMETRIC = 0x00010000
@@ -381,6 +382,245 @@ def transparent_blt(d):
     d.add(bitmaps.TransparentBlt(**fields | {"x": d.u(64), "y": d.u(60), "width": 16, "height": 12}, data=data))
 
 
+def source_transforms(d):
+    """BitBlt and StretchBlt records whose source DC had a world transform.
+
+    The source rectangle is logical in the recorded source transform: scales
+    and mirrors stretch it; a rotation or shear is expected to fail.
+    """
+    transfer_background(d)
+    d.add(fixed.SetStretchBltMode(3))  # COLORONCOLOR
+    fields, data = source_fields(bitmaps.BitBlt, SOURCE)
+    blits = (
+        # (x, y, width, height, src_x, src_y, (m11, m12, m21, m22, dx, dy))
+        (4, 4, 32, 24, 0, 0, (0.5, 0, 0, 0.5, 0, 0)),
+        (44, 4, 8, 6, 0, 0, (2, 0, 0, 2, 0, 0)),
+        (60, 4, 10, 8, 0, 0, (1, 0, 0, 1, 4, 2)),
+        (76, 4, 10, 8, 3, 1, (1, 0, 0, 1, 2, 1)),
+        (92, 4, 16, 12, 0, 0, (-1, 0, 0, 1, 16, 0)),
+        (4, 36, 16, 12, 0, 0, (1, 0, 0, -1, 0, 12)),
+        (24, 36, 20, 8, 0, 0, (0.75, 0, 0, 1.5, 0, 0)),
+        (48, 36, 13, 9, 1, 1, (1.2, 0, 0, 1.25, 0.5, 0.4)),
+        (68, 36, 16, 12, 0, 0, (0.866, 0.5, -0.5, 0.866, 6, 0)),
+        (88, 36, 16, 12, 0, 0, (1, 0, 0.5, 1, 0, 0)),
+    )
+    for x, y, width, height, src_x, src_y, xform in blits:
+        place = {"x": d.u(x), "y": d.u(y), "width": d.u(width), "height": d.u(height), "src_x": src_x, "src_y": src_y}
+        transform = dict(zip(bitmaps.SOURCE_XFORM, xform, strict=True))
+        d.add(bitmaps.BitBlt(**fields | place | transform | {"rop": SRCCOPY}, data=data))
+    fields, data = source_fields(bitmaps.StretchBlt, SOURCE)
+    stretches = (
+        # (x, y, width, height, src_x, src_y, src_width, src_height, transform)
+        (4, 60, 48, 36, 0, 0, 16, 12, (0.5, 0, 0, 0.5, 0, 0)),
+        (56, 60, 16, 12, 0, 0, 8, 6, (2, 0, 0, 2, 0, 0)),
+        (76, 60, 24, 18, 2, 2, 12, 8, (1, 0, 0, 1, -1, -1)),
+        (104, 60, 20, 16, 0, 0, 16, 12, (-1, 0, 0, -1, 16, 12)),
+        (4, 100, 30, 20, 0, 0, 10, 10, (1.5, 0, 0, 1.2, 0, 0)),
+        (40, 100, 24, 18, 0, 0, 16, 12, (0.866, 0.5, -0.5, 0.866, 6, 0)),
+    )
+    for x, y, width, height, src_x, src_y, src_width, src_height, xform in stretches:
+        place = {"x": d.u(x), "y": d.u(y), "width": d.u(width), "height": d.u(height), "src_x": src_x, "src_y": src_y}
+        place |= {"src_width": src_width, "src_height": src_height}
+        transform = dict(zip(bitmaps.SOURCE_XFORM, xform, strict=True))
+        d.add(bitmaps.StretchBlt(**fields | place | transform | {"rop": SRCCOPY}, data=data))
+    # A transformed source with a ternary operation.
+    place = {"x": d.u(70), "y": d.u(100), "width": d.u(32), "height": d.u(24), "rop": SRCINVERT}
+    d.add(
+        bitmaps.StretchBlt(
+            **fields | place | {"src_m11": 0.5, "src_m22": 0.5, "src_width": 32, "src_height": 24}, data=data
+        )
+    )
+
+
+def palette_dib(depth, width, height, indexes, sample):
+    """A bottom-up DIB whose colour table is WORD logical palette indexes."""
+    stride = ((width * depth + 31) // 32) * 4
+    header = struct.pack("<IiiHHIIiiII", 40, width, height, 1, depth, 0, stride * height, 0, 0, len(indexes), 0)
+    rows = []
+    for y in range(height - 1, -1, -1):
+        value = 0
+        for x in range(width):
+            value |= sample(x, y) << (stride * 8 - depth * (x + 1))
+        rows.append(value.to_bytes(stride, "big"))
+    return header + struct.pack(f"<{len(indexes)}H", *indexes), b"".join(rows)
+
+
+def palette_sources(d):
+    """Transfers whose source colour table indexes the selected logical palette."""
+    transfer_background(d)
+    entries = ((255, 0, 0, 0), (0, 160, 0, 0), (0, 0, 255, 0), (255, 255, 0, 0), (128, 0, 128, 0))
+    d.add(variable.CreatePalette(1, entries), fixed.SelectPalette(1), fixed.RealizePalette())
+    sources = (
+        palette_dib(8, 8, 6, (4, 3, 2, 1, 0, 9), lambda x, y: (x + y) % 6),
+        palette_dib(4, 8, 6, (1, 2, 7, 300), lambda x, y: (x // 2 + y) % 4),
+        palette_dib(1, 8, 6, (2, 3), lambda x, y: (x + y // 2) % 2),
+        palette_dib(8, 8, 6, tuple(range(8)), lambda x, y: (x * 3 + y) % 8),
+    )
+
+    def transfers(top):
+        for column, source in enumerate(sources):
+            fields, data = source_fields(bitmaps.BitBlt, source)
+            place = {"x": d.u(4 + 30 * column), "y": d.u(top), "width": 8, "height": 6, "usage": DIB_PAL_COLORS}
+            d.add(bitmaps.BitBlt(**fields | place | {"rop": SRCCOPY}, data=data))
+            fields, data = source_fields(bitmaps.StretchBlt, source)
+            place |= {"y": d.u(top + 10), "width": d.u(24), "height": d.u(18), "src_width": 8, "src_height": 6}
+            d.add(bitmaps.StretchBlt(**fields | place | {"rop": SRCCOPY}, data=data))
+
+    transfers(4)
+    d.add(fixed.SelectPalette(DEFAULT_PALETTE), fixed.RealizePalette())
+    transfers(40)
+    d.add(fixed.SelectPalette(1), variable.SetPaletteEntries(1, 0, ((0, 0, 0, 0), (255, 255, 255, 0))))
+    transfers(76)
+
+
+def blend_sources(d):
+    """AlphaBlend, TransparentBlt, MaskBlt and PlgBlt with a scaled, a palette-indexed
+    and a rotated source, one column each."""
+    transfer_background(d)
+    d.add(fixed.SetStretchBltMode(3))  # COLORONCOLOR
+    scaled = {"src_m11": 0.5, "src_m22": 0.5}
+    rotated = {"src_m11": 0.866, "src_m12": 0.5, "src_m21": -0.5, "src_m22": 0.866, "src_dx": 6.0}
+    indexed = palette_dib(8, 16, 12, (4, 3, 2, 1, 0, 9), lambda x, y: (x // 2 + y // 2) % 6)
+    columns = (({**scaled}, SOURCE, 32, 24), ({"usage": DIB_PAL_COLORS}, indexed, 16, 12), (rotated, SOURCE, 16, 12))
+    red, green, blue = gradient(5, 5)
+    for column, (change, source, src_width, src_height) in enumerate(columns):
+        x = d.u(4 + 40 * column)
+        size = {"width": d.u(32), "height": d.u(24), "src_width": src_width, "src_height": src_height}
+        fields, data = source_fields(bitmaps.AlphaBlend, source)
+        d.add(bitmaps.AlphaBlend(**fields | change | size | {"x": x, "y": d.u(4), "blend": 0x00C00000}, data=data))
+        fields, data = source_fields(bitmaps.TransparentBlt, source)
+        key = {"transparent": red | green << 8 | blue << 16 if source is SOURCE else 0x000080}
+        d.add(bitmaps.TransparentBlt(**fields | change | size | key | {"x": x, "y": d.u(36)}, data=data))
+        fields, data = source_fields(bitmaps.MaskBlt, (*source, *MASK))
+        place = {"x": x, "y": d.u(68), "width": d.u(16), "height": d.u(12), "rop": 0xAACC0020}
+        d.add(bitmaps.MaskBlt(**fields | change | place, data=data))
+        fields, data = source_fields(bitmaps.PlgBlt, source)
+        corners = {"x0": x, "y0": d.u(100), "x1": x + d.u(32), "y1": d.u(104), "x2": x + d.u(4), "y2": d.u(124)}
+        d.add(
+            bitmaps.PlgBlt(**fields | change | corners | {"src_width": src_width, "src_height": src_height}, data=data)
+        )
+
+
+def scan_bands(d):
+    """SetDIBitsToDevice records carrying partial scan bands of a 16x12 DIB.
+
+    Each record holds the full-height header and only its band's scan lines,
+    as a band-by-band caller passes them.
+    """
+    transfer_background(d)
+    stride = 16 * 3
+    pixels = {y: b"".join(bytes(reversed(gradient(x, y))) for x in range(16)) for y in range(12)}
+    bands = (
+        # (x, y, src_x, src_y, src_width, src_height, start, count, top_down)
+        (4, 4, 0, 0, 16, 12, 0, 4, False),
+        (24, 4, 0, 0, 16, 12, 4, 4, False),
+        (44, 4, 0, 0, 16, 12, 8, 8, False),
+        (64, 4, 2, 3, 10, 6, 2, 5, False),
+        (84, 4, 0, 0, 16, 12, 3, 20, False),
+        (4, 40, 0, 0, 16, 12, 0, 4, True),
+        (24, 40, 0, 0, 16, 12, 5, 4, True),
+        (44, 40, 1, 2, 12, 8, 2, 6, True),
+    )
+    for x, y, src_x, src_y, src_width, src_height, start, count, top_down in bands:
+        height = -12 if top_down else 12
+        info = struct.pack("<IiiHHIIiiII", 40, 16, height, 1, 24, 0, 0, 0, 0, 0, 0)
+        # Scan line n is row n from the top of a top-down DIB, else from the bottom.
+        lines = range(start, min(start + count, 12))
+        bits = b"".join(pixels[line if top_down else 11 - line] for line in lines)
+        bits += bytes(stride * (count - len(lines)))
+        offset = 8 + struct.calcsize("<" + bitmaps.SetDIBitsToDevice.wire_layout)
+        placement = (d.u(x), d.u(y), src_x, src_y, src_width, src_height)
+        blocks = (offset, len(info), offset + len(info), len(bits), 0, start, count)
+        d.add(bitmaps.SetDIBitsToDevice(0, 0, 0, 0, *placement, *blocks, info + bits))
+
+
+def offset_ties(d):
+    """OffsetClipRgn offsets that scale to exact half pixels, one cell each.
+
+    A clip rectangle is set and offset under a scaling world transform, then
+    a cell-sized rectangle is filled through it under the identity.
+    """
+    d.pen(PS_NULL, 0, 0)
+    d.brush(BS_SOLID, 0x2060C0)
+    cases = (
+        # (m11, m22, offset x, offset y)
+        (0.5, 0.5, 1, 1),
+        (0.5, 0.5, -1, -1),
+        (0.5, 0.5, 3, -3),
+        (0.5, 0.5, 5, 7),
+        (2.5, 1.5, 1, 1),
+        (2.5, 1.5, -1, -1),
+        (2.5, 1.5, 3, 3),
+        (-0.5, 0.5, 1, 1),
+        (1.5, -2.5, -1, 3),
+        (1.25, 0.75, 2, -2),
+        (0.25, 0.25, 2, 6),
+        (0.25, 0.25, -2, -6),
+    )
+    for index, (m11, m22, offset_x, offset_y) in enumerate(cases):
+        left, top = 4 + 31 * (index % 4), 4 + 40 * (index // 4)
+        # The clip covers device (left + 6, top + 6) to (left + 18, top + 22).
+        corners = [((left + 6 + dx) / m11, (top + 6 + dy) / m22) for dx, dy in ((0, 0), (12, 16))]
+        (x0, y0), (x1, y1) = (tuple(round(value) for value in corner) for corner in corners)
+        d.add(fixed.SaveDC(), fixed.SetWorldTransform(m11, 0.0, 0.0, m22, 0.0, 0.0))
+        d.add(fixed.IntersectClipRect(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+        d.add(fixed.OffsetClipRgn(offset_x, offset_y))
+        d.add(fixed.SetWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+        d.add(fixed.Rectangle(left, top, left + 30, top + 36), fixed.RestoreDC(-1))
+
+
+def top_down_dib(width, height, colour):
+    """A top-down 24-bit DIB split into (BitmapInfo, bits)."""
+    stride = (width * 3 + 3) & ~3
+    header = struct.pack("<IiiHHIIiiII", 40, width, -height, 1, 24, 0, stride * height, 0, 0, 0, 0)
+    rows = (b"".join(bytes(reversed(colour(x, y))) for x in range(width)) for y in range(height))
+    return header, b"".join(row + bytes(stride - len(row)) for row in rows)
+
+
+def hues(x, y):
+    """Many distinct colours, so HALFTONE filters rather than replicates."""
+    return (x * 37 + y * 11) % 256, (x * 13 + y * 41) % 256, (x * 23 + y * 29 + 90) % 256
+
+
+def color_engine(orientation, transfers):
+    """HALFTONE StretchDIBits through the colour engine (colourfulness, tint, illuminant)."""
+    dib = top_down_dib if orientation == "top-down" else rgb_dib
+
+    def draw(d):
+        d.add(fixed.SetStretchBltMode(HALFTONE))
+        for adjustment, clip, (x, y, width, height), (src_x, src_y, src_width, src_height), source in transfers:
+            colorfulness, tint, illuminant = adjustment
+            d.add(
+                fixed.SaveDC(),
+                fixed.SetColorAdjustment(24, 0, illuminant, 10000, 10000, 10000, 0, 10000, 0, 0, colorfulness, tint),
+            )
+            if clip:
+                d.add(fixed.IntersectClipRect(*clip))
+            info, bits = dib(*source)
+            offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+            placement = (x, y, src_x, src_y, src_width, src_height, offset, len(info), offset + len(info), len(bits))
+            d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *placement, 0, SRCCOPY, width, height, info + bits))
+            d.add(fixed.RestoreDC(-1))
+
+    return draw
+
+
+SMALL, WIDE = (16, 12, gradient), (50, 50, hues)
+ENGINE_REPLICATED = (
+    ((60, 0, 0), None, (2, 2, 64, 48), (0, 0, 16, 12), SMALL),
+    ((0, -40, 0), None, (66, 2, 48, 36), (0, 0, 16, 12), SMALL),
+    ((0, 0, 1), None, (2, 52, 64, 48), (3, 2, 10, 8), SMALL),
+    ((30, 20, 8), (70, 60, 110, 110), (66, 52, 60, 72), (0, 0, 10, 12), SMALL),
+)
+ENGINE_FILTERED = (((40, -30, 0), None, (1, 1, 125, 125), (0, 0, 50, 50), WIDE),)
+ENGINE_OFFSET = (((40, -30, 0), (10, 10, 110, 118), (0, 0, 120, 120), (5, 4, 40, 40), WIDE),)
+ENGINE_REDUCED = (
+    ((50, 0, 0), None, (4, 4, 30, 30), (0, 0, 50, 50), WIDE),
+    ((0, 30, 2), None, (40, 4, 41, 36), (0, 0, 50, 50), WIDE),
+)
+ENGINE_LARGE = (((-50, 60, 0), None, (2, 2, 120, 108), (0, 0, 16, 12), (16, 12, hues)),)
+
+
 def gradients(d):
     vertices = ((d.u(4), d.u(4), 0xFF00, 0, 0, 0), (d.u(60), d.u(40), 0, 0, 0xFF00, 0))
     d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
@@ -390,6 +630,58 @@ def gradients(d):
     colours = ((0xFF00, 0, 0), (0, 0xFF00, 0), (0, 0, 0xFF00), (0xFF00, 0xFF00, 0xFF00))
     vertices = tuple((d.u(x), d.u(y), *colour, 0) for (x, y), colour in zip(corners, colours, strict=True))
     d.add(variable.GradientFill((0, 0, 0, 0), 2, vertices, ((0, 1, 3), (1, 2, 3))))
+
+
+def gradient_edges(d):
+    """GradientFill edge conditions: flat edges, clamped channels, tiny and huge shapes."""
+
+    def triangle(points, colours):
+        vertices = tuple((x, y, *colour, 0) for (x, y), colour in zip(points, colours, strict=True))
+        d.add(variable.GradientFill((0, 0, 0, 0), 2, vertices, ((0, 1, 2),)))
+
+    odd = ((0x1234, 0xFEDC, 0x0F0F), (0xF0F0, 0x2468, 0x8642), (0x7777, 0x0101, 0xFF00))
+    triangle(((4, 4), (60, 4), (30, 40)), odd)  # flat top
+    triangle(((70, 4), (100, 40), (66, 40)), odd)  # flat bottom
+    triangle(((4, 46), (60, 50), (20, 80)), ((0xFFFF, 0, 0xFF80), (0, 0xFFFF, 0x80), (0xFF01, 0xFFFF, 0)))
+    triangle(((110, 46), (112, 47), (111, 50)), odd)
+    triangle(((115, 46), (125, 46), (120, 46)), odd)  # degenerate
+    vertices = ((66, 46, 0xFFFF, 0x1234, 0x0001, 0), (124, 60, 0x0101, 0xFEFE, 0xFFFF, 0))
+    d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
+    vertices = ((66, 62, 0x1357, 0xFFFF, 0x2468, 0), (124, 86, 0xFFFF, 0x0102, 0x9ABC, 0))
+    d.add(fixed.SaveDC(), fixed.IntersectClipRect(70, 64, 120, 84))
+    d.add(variable.GradientFill((0, 0, 0, 0), 1, vertices, ((0, 1),)), fixed.RestoreDC(-1))
+    triangle(
+        ((-20000, 90), (30000, 100), (64, 30000)), ((0xFF00, 0, 0x1000), (0, 0xFF00, 0x8000), (0x4000, 0x4000, 0xFF00))
+    )
+
+
+def rotated_frames(d):
+    """FrameRgn under rotating, shearing and general world transforms."""
+    d.add(
+        fixed.CreateBrushIndirect(1, BS_SOLID, 0xA00000, 0),
+        fixed.CreateBrushIndirect(2, BS_HATCHED, 0x0060C0, HS_DIAGCROSS),
+    )
+    shapes = (
+        [(0, 0, 30, 20)],
+        [(0, 0, 14, 10), (0, 10, 34, 22)],
+        [(0, 0, 30, 6), (0, 6, 8, 18), (22, 6, 30, 18), (0, 18, 30, 24)],
+    )
+    cases = (
+        ((0.9063, 0.4226, -0.4226, 0.9063, 18.0, 2.0), 0, 1, (1, 1)),
+        ((0.9063, 0.4226, -0.4226, 0.9063, 70.0, 2.0), 1, 2, (3, 2)),
+        ((1.0, 0.0, 0.5, 1.0, 4.0, 46.0), 2, 1, (2, 5)),
+        ((0.9, 0.35, -0.2, 1.1, 70.0, 44.0), 1, 1, (4, 4)),
+        ((0.7071, -0.7071, 0.7071, 0.7071, 10.0, 104.0), 2, 2, (6, 3)),
+        ((1.2, 0.3, 0.1, 0.8, 70.0, 88.0), 0, 1, (2, 7)),
+    )
+    d.add(fixed.SetMiterLimit(2))
+    for index, (transform, shape, brush, (width, height)) in enumerate(cases):
+        if index == 3:
+            d.add(fixed.SetMiterLimit(10))
+        region = region_data(list(shape_rects for shape_rects in shapes[shape]))
+        d.add(fixed.SetWorldTransform(*transform))
+        d.add(variable.FrameRgn(bounds=(0, 0, 0, 0), brush=brush, width=width, height=height, region=region))
+    d.add(fixed.SetWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
 
 
 def palettes(d):
@@ -501,6 +793,363 @@ def comments(d):
     d.add(fixed.Rectangle(*d.rect(20, 20, 108, 108)))
 
 
+def _stretch_dib(d, left, top, bounds, source):
+    """A StretchDIBits of ``source`` at design (left, top), 1:1, with explicit record bounds."""
+    info, bits = source
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    width, height = struct.unpack_from("<ii", info, 4)
+    fields = (d.u(left), d.u(top), 0, 0, width, abs(height), offset, len(info), offset + len(info), len(bits))
+    d.add(bitmaps.StretchDIBits(*bounds, *fields, 0, SRCCOPY, width, abs(height), info + bits))
+
+
+def record_culling(dense):
+    """Transfers and region painting whose record bounds miss the clip box.
+
+    Native playback skips these records when their non-empty bounds lie
+    wholly outside the clip box, widened by a margin, that it reads before
+    the first record. Each record draws inside the picture whatever its
+    bounds say, so only culling leaves a gap.
+    """
+
+    def draw(d):
+        if dense:
+            d.device = ReferenceDevice((4096, 3072), (271, 203), dpi=None)
+        source = rgb_dib(12, 9, gradient)
+        edge = d.u(128)
+        # Far outside; reversed (empty) bounds are never culled.
+        _stretch_dib(d, 4, 4, (500, 500, 520, 520), source)
+        _stretch_dib(d, 24, 4, (520, 520, 500, 500), source)
+        # At and just past the widened box's leading and trailing edges.
+        for column, offset in enumerate(range(-1, -7, -1)):
+            _stretch_dib(d, 4 + 20 * column, 20, (-20, -20, offset, offset), source)
+        for column, offset in enumerate(range(1, 7)):
+            _stretch_dib(d, 4 + 20 * column, 36, (edge + offset, 0, edge + offset + 5, 5), source)
+            _stretch_dib(d, 4 + 20 * column, 52, (0, edge + offset, 5, edge + offset + 5), source)
+        d.brush(BS_SOLID, 0x2080C0)
+        region = region_data(((d.u(4), d.u(72), d.u(40), d.u(100)),))
+        brush = d.slot
+        d.add(variable.FillRgn(bounds=(600, 0, 700, 10), brush=brush, region=region))
+        region = region_data(((d.u(48), d.u(72), d.u(84), d.u(100)),))
+        d.add(variable.PaintRgn(bounds=(-1, -1, -1, -1), region=region))
+        region = region_data(((d.u(92), d.u(72), d.u(124), d.u(100)),))
+        d.add(variable.InvertRgn(bounds=(0, -30, 10, -3), region=region))
+        blit = dict.fromkeys(bitmaps.BitBlt.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0, "data": b""}
+        blit |= {"x": d.u(4), "y": d.u(106), "width": d.u(56), "height": d.u(18), "rop": PATCOPY}
+        d.add(bitmaps.BitBlt(**blit | dict(zip(bitmaps.BOUNDS, (0, edge + 2, 10, edge + 9), strict=True))))
+        blit |= {"x": d.u(68)}
+        d.add(bitmaps.BitBlt(**blit | dict(zip(bitmaps.BOUNDS, (-9, 0, -1, 10), strict=True))))
+
+    return draw
+
+
+def nested_reset(d):
+    """An embedded metafile drawing with the attributes native playback resets.
+
+    The outer metafile changes every attribute playback resets, selects a
+    hatched brush and wide pen, and clips; the embedded metafile then draws
+    with its defaults, and removes its own clip to reach the outer one.
+    """
+    d.brush(BS_SOLID, 0xC0C0C0)
+    d.add(fixed.Rectangle(*d.rect(0, 0, 64, 128)))
+    d.brush(BS_HATCHED, 0x0000C0, HS_DIAGCROSS)
+    d.pen(PS_SOLID, 3, 0x00C000)
+    d.add(
+        fixed.SetBkColor(0x80FFFF),
+        fixed.SetTextColor(0xFF0000),
+        fixed.SetBkMode(TRANSPARENT),
+        fixed.SetPolyFillMode(WINDING),
+        fixed.SetROP2(7),
+        fixed.SetStretchBltMode(HALFTONE),
+        fixed.SetBrushOrgEx(3, 5),
+        fixed.SetMiterLimit(1),
+        fixed.SetArcDirection(AD_CLOCKWISE),
+        fixed.MoveToEx(d.u(120), d.u(30)),
+        fixed.IntersectClipRect(*d.rect(4, 4, 124, 124)),
+    )
+    star = [
+        (30 + 24 * math.cos(math.radians(90 + 144 * i)), 32 - 24 * math.sin(math.radians(90 + 144 * i)))
+        for i in range(5)
+    ]
+    inner = [
+        fixed.Rectangle(70, 8, 120, 30),
+        fixed.LineTo(60, 60),
+        fixed.Arc(70, 36, 120, 76, 120, 56, 70, 56),
+        fixed.CreateBrushIndirect(1, BS_HATCHED, 0x008000, HS_BDIAGONAL),
+        fixed.SelectObject(1),
+        variable.Polygon((0, 0, 0, 0), tuple((round(x), round(y)) for x, y in star)),
+        fixed.Rectangle(8, 64, 60, 96),
+        bitmaps.ExtCreatePen(2, 0, 0, 0, 0, PS_GEOMETRIC | PS_JOIN_MITER | PS_ENDCAP_FLAT, 6, BS_SOLID, 0x800080, 0),
+        fixed.SelectObject(2),
+        variable.Polyline((0, 0, 0, 0), ((70, 120), (80, 84), (90, 120))),
+        variable.ExtSelectClipRgn(RGN_COPY),
+        fixed.SelectObject(STOCK | 8),
+        fixed.CreateBrushIndirect(3, BS_SOLID, 0xC08040, 0),
+        fixed.SelectObject(3),
+        fixed.Rectangle(100, 84, 140, 140),
+    ]
+    embedded = Metafile.build(inner, frame=(0, 0, 3388, 3383)).to_bytes()
+    left, top, right, bottom = d.rect(0, 0, 128, 128)
+    multiformats = struct.pack("<II4iI", 0x43494447, 0x40000004, left, top, right, bottom, 1)
+    multiformats += struct.pack("<4I", 0x464D4520, 0x00010000, len(embedded), 8 + 16 + 4 + 16) + embedded
+    d.add(variable.Comment(multiformats))
+    # The outer state is back after the embedded metafile.
+    d.add(fixed.LineTo(d.u(100), d.u(124)))
+
+
+def transform_limits(d):
+    """Native playback's transform arithmetic at its limits.
+
+    A chain of left-multiplying ModifyWorldTransform records is applied to
+    the target's transform directly, so its rounding differs from composing
+    the world transform first; one stroke crosses that difference. A world
+    offset that overflows once fitted, and a matrix that is singular only in
+    single precision, leave the transform unchanged. ScaleViewportExtEx
+    wraps its 32-bit product.
+    """
+    import random
+
+    random.seed(0)
+    scale = random.uniform(0.002, 0.006)
+    d.add(
+        fixed.SaveDC(), fixed.SetWorldTransform(scale, 0.0, 0.0, scale, random.uniform(10, 40), random.uniform(10, 40))
+    )
+    for _ in range(30):
+        angle = random.uniform(-0.2, 0.2)
+        stretch = random.uniform(0.98, 1.02)
+        offsets = random.uniform(-3, 3), random.uniform(-3, 3)
+        rotation = (math.cos(angle) * stretch, math.sin(angle), -math.sin(angle), math.cos(angle))
+        d.add(fixed.ModifyWorldTransform(*rotation, *offsets, 2))
+    points = tuple(
+        (round(9000 + 8000 * math.cos(t * 0.37)), round(9000 + 8000 * math.sin(t * 0.53))) for t in range(1500)
+    )
+    d.pen(PS_SOLID, 0, 0x2080C0)
+    d.add(variable.Polyline((0, 0, 0, 0), points), fixed.RestoreDC(-1))
+    d.brush(BS_SOLID, 0x00A000)
+    d.add(fixed.SaveDC(), fixed.SetWorldTransform(1.0, 0.0, 0.0, 1.0, 3e9, 0.0), fixed.Rectangle(2, 30, 12, 40))
+    d.add(fixed.SetWorldTransform(3.0, 1.0, 1.0, 1 / 3, 0.0, 0.0), fixed.Rectangle(16, 30, 26, 40), fixed.RestoreDC(-1))
+    d.add(fixed.SaveDC(), fixed.SetMapMode(8), fixed.SetWindowExtEx(1, 1), fixed.SetViewportExtEx(65536, 65536))
+    d.add(fixed.ScaleViewportExtEx(65537, 65536, 65537, 65536), fixed.Rectangle(30, 30, 40, 40), fixed.RestoreDC(-1))
+
+
+def gradient_rop2(d):
+    """GradientFill over a coloured ground under several ROP2 modes."""
+    transfer_background(d)
+    for column, mode in enumerate((7, 6, 15, 9)):  # XORPEN, NOT, WHITE, MASKPEN
+        left = 4 + 31 * column
+        d.add(fixed.SetROP2(mode))
+        vertices = ((d.u(left), d.u(4), 0xFF00, 0x2000, 0, 0), (d.u(left + 27), d.u(60), 0, 0x8000, 0xFF00, 0))
+        d.add(variable.GradientFill((0, 0, 0, 0), 0, vertices, ((0, 1),)))
+        corners = ((left, 68), (left + 27, 80), (left + 8, 124))
+        colours = ((0xFF00, 0, 0), (0, 0xFF00, 0), (0, 0, 0xFF00))
+        vertices = tuple((d.u(x), d.u(y), *colour, 0) for (x, y), colour in zip(corners, colours, strict=True))
+        d.add(variable.GradientFill((0, 0, 0, 0), 2, vertices, ((0, 1, 2),)))
+
+
+def rotated_insideframe(d):
+    """PS_INSIDEFRAME shapes under a rotating and a shearing world transform."""
+    transforms = (
+        (
+            math.cos(math.radians(20)),
+            math.sin(math.radians(20)),
+            -math.sin(math.radians(20)),
+            math.cos(math.radians(20)),
+        ),
+        (1.0, 0.0, 0.45, 1.0),
+    )
+    for row, matrix in enumerate(transforms):
+        d.add(fixed.SetWorldTransform(*matrix, d.u(6), d.u(4 + 62 * row)))
+        for column, width in enumerate((1, 6, 9)):
+            d.pen(6, d.u(width), (0x800000, 0x008000, 0x000080)[column])  # PS_INSIDEFRAME
+            d.brush(BS_HATCHED, 0x0080C0, HS_DIAGCROSS)
+            left = 4 + 38 * column
+            d.add(fixed.Rectangle(*d.rect(left, 2, left + 30, 18)))
+            d.add(fixed.Ellipse(*d.rect(left, 22, left + 30, 38)))
+            d.add(fixed.RoundRect(*d.rect(left, 40, left + 14, 56), d.u(8), d.u(6)))
+            d.add(fixed.Pie(*d.rect(left + 16, 40, left + 32, 56), *d.rect(left + 32, 48, left + 16, 40)))
+    d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+
+
+def rotated_color_adjustment(d):
+    """HALFTONE stretches with colour adjustment under a rotating transform."""
+    transfer_background(d)
+    d.add(fixed.SetStretchBltMode(HALFTONE))
+    angle = math.radians(15)
+    d.add(fixed.SetWorldTransform(math.cos(angle), math.sin(angle), -math.sin(angle), math.cos(angle), d.u(20), 0.0))
+    adjustments = (
+        (24, 0, 0, 10000, 10000, 10000, 0, 10000, 30, 20, 0, 0),
+        (24, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 40, -30),
+    )
+    for row, adjustment in enumerate(adjustments):
+        d.add(fixed.SetColorAdjustment(*adjustment))
+        info, bits = SOURCE
+        offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+        fields = (d.u(8), d.u(8 + 56 * row), 0, 0, 16, 12, offset, len(info), offset + len(info), len(bits), 0, SRCCOPY)
+        d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *fields, d.u(48), d.u(36), info + bits))
+        fields, data = source_fields(bitmaps.StretchBlt, SOURCE)
+        fields |= {"x": d.u(64), "y": d.u(8 + 56 * row), "width": d.u(40), "height": d.u(30)}
+        d.add(bitmaps.StretchBlt(**fields | {"rop": SRCCOPY, "src_width": 16, "src_height": 12}, data=data))
+
+
+def plgblt_mirrored_masks(d):
+    """Masked PlgBlt onto parallelograms mirrored on one axis of the source."""
+    transfer_background(d)
+    fields, data = source_fields(bitmaps.PlgBlt, (*SOURCE, *MASK))
+    fields |= {"src_width": 16, "src_height": 12}
+    corners = (
+        ((60, 8), (8, 8), (60, 44)),  # mirrored horizontally
+        ((68, 44), (120, 44), (68, 8)),  # mirrored vertically
+        ((50, 60), (8, 70), (60, 110)),  # mirrored and sheared
+        ((80, 120), (124, 110), (70, 70)),  # flipped and sheared
+    )
+    for (x0, y0), (x1, y1), (x2, y2) in corners:
+        placed = {"x0": d.u(x0), "y0": d.u(y0), "x1": d.u(x1), "y1": d.u(y1), "x2": d.u(x2), "y2": d.u(y2)}
+        d.add(bitmaps.PlgBlt(**fields | placed, data=data))
+
+
+def _rle8(rows):
+    """RLE8 bits for rows given bottom-up as lists of (count, index) runs."""
+    data = b""
+    for runs in rows:
+        data += b"".join(bytes((count, index)) for count, index in runs) + b"\0\0"
+    data += b"\0\1"
+    return data + bytes(-len(data) % 4)
+
+
+def rle_bands(d):
+    """SetDIBitsToDevice of an RLE8 DIB, whole and in partial bands."""
+    transfer_background(d)
+    palette = b"".join(bytes((b, g, r, 0)) for r, g, b in ((200, 30, 30), (30, 160, 30), (30, 30, 200), (230, 200, 40)))
+    # Bottom-up rows of a 12x8 DIB; the second row leaves its end unwritten.
+    rows = [[(12, y % 4)] if y != 1 else [(5, 1)] for y in range(8)]
+    bits = _rle8(rows)
+    info = struct.pack("<IiiHHIIiiII", 40, 12, 8, 1, 8, 1, len(bits), 0, 0, 4, 0) + palette
+    offset = 8 + struct.calcsize("<" + bitmaps.SetDIBitsToDevice.wire_layout)
+    for column, (start, count) in enumerate(((0, 8), (0, 4), (2, 3), (5, 6))):
+        placement = (d.u(4 + 30 * column), d.u(10), 0, 0, 12, 8)
+        blocks = (offset, len(info), offset + len(info), len(bits), 0, start, count)
+        d.add(bitmaps.SetDIBitsToDevice(0, 0, 0, 0, *placement, *blocks, info + bits))
+    placement = (d.u(4), d.u(60), 2, 1, 8, 5)
+    blocks = (offset, len(info), offset + len(info), len(bits), 0, 1, 6)
+    d.add(bitmaps.SetDIBitsToDevice(0, 0, 0, 0, *placement, *blocks, info + bits))
+
+
+def invalid_modes(d):
+    """Out-of-range mode values for ROP2, fill, stretch, background and arc direction.
+
+    Each row starts from a valid mode, sets an out-of-range value and then
+    draws something whose appearance shows the mode in effect.
+    """
+    d.pen(PS_NULL, 0, 0)
+    d.brush(BS_SOLID, 0x30A0E0)
+    for column in range(8):
+        d.add(fixed.Rectangle(*d.rect(column * 16, 0, column * 16 + 8, 128)))
+    d.brush(BS_SOLID, 0x0000C0)
+    for column, value in enumerate((0, 17, 23, 29, 0x107, 0x10D, 0xFFFFFFFF, 255)):
+        d.add(
+            fixed.SetROP2(7), fixed.SetROP2(value), fixed.Rectangle(*d.rect(2 + 16 * column, 2, 14 + 16 * column, 24))
+        )
+    d.add(fixed.SetROP2(13))
+    star = [
+        (8 + 7 * math.cos(math.radians(90 + 144 * i)), 36 - 7 * math.sin(math.radians(90 + 144 * i))) for i in range(5)
+    ]
+    d.brush(BS_SOLID, 0x008000)
+    for column, value in enumerate((0, 3, 0x101, 0x102, 0xFFFFFFFF)):
+        points = tuple((d.u(x + 16 * column), d.u(y)) for x, y in star)
+        d.add(fixed.SetPolyFillMode(2), fixed.SetPolyFillMode(value), variable.Polygon((0, 0, 0, 0), points))
+    d.add(fixed.SetPolyFillMode(1))
+    info, bits = rgb_dib(16, 16, lambda x, y: (255, 255, 255) if (x + y) % 2 else (40, 40, 160))
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    for column, value in enumerate((0, 5, 0x101, 0x104, 0xFFFFFFFF)):
+        d.add(fixed.SetStretchBltMode(3), fixed.SetStretchBltMode(value))
+        fields = (
+            d.u(2 + 16 * column),
+            d.u(48),
+            0,
+            0,
+            16,
+            16,
+            offset,
+            len(info),
+            offset + len(info),
+            len(bits),
+            0,
+            SRCCOPY,
+        )
+        d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *fields, 5, 5, info + bits))
+    d.add(fixed.SetStretchBltMode(3))
+    d.brush(BS_HATCHED, 0x800080, HS_DIAGCROSS)
+    d.add(fixed.SetBkColor(0x00FFFF))
+    for column, value in enumerate((0, 3, 0x101, 0x102, 0xFFFFFFFF)):
+        d.add(
+            fixed.SetBkMode(1),
+            fixed.SetBkMode(value),
+            fixed.Rectangle(*d.rect(2 + 16 * column, 66, 14 + 16 * column, 86)),
+        )
+    d.add(fixed.SetBkMode(2))
+    d.pen(PS_SOLID, 0, 0x000000)
+    for column, value in enumerate((0, 3, 0x101, 0xFFFFFFFF)):
+        box = d.rect(2 + 16 * column, 92, 14 + 16 * column, 104)
+        d.add(fixed.SetArcDirection(2), fixed.SetArcDirection(value))
+        d.add(fixed.Arc(*box, box[2], (box[1] + box[3]) // 2, box[0], box[1]))
+    d.add(fixed.SetArcDirection(1))
+
+
+def color_adjustment_combos(d):
+    """Colour adjustment steps in combination, on every channel level.
+
+    The source holds all 256 levels in each channel; each panel stretches it
+    2x in HALFTONE under one combination of reference black and white,
+    per-channel gamma, the log filter, contrast, brightness and negative.
+    """
+    info, bits = rgb_dib(16, 16, lambda x, y: (16 * y + x, 255 - (16 * y + x), (7 * (16 * y + x)) % 256))
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    d.add(fixed.SetStretchBltMode(HALFTONE))
+    combos = (
+        # (flags, rg, gg, bg, black, white, contrast, brightness)
+        (0, 18000, 8000, 25000, 0, 10000, 40, 0),
+        (0, 15000, 15000, 15000, 0, 10000, 0, 30),
+        (2, 10000, 10000, 10000, 0, 10000, -30, 20),  # CA_LOG_FILTER
+        (1, 12000, 9000, 10000, 0, 10000, 25, -15),  # CA_NEGATIVE
+        (0, 10000, 10000, 10000, 1000, 8500, 35, 10),
+        (3, 20000, 6500, 13000, 800, 9000, -45, 40),
+        (2, 25000, 25000, 25000, 2000, 7000, 0, 0),
+        (1, 10000, 10000, 10000, 3000, 6000, -100, -100),
+    )
+    for index, (flags, rg, gg, bg, black, white, contrast, brightness) in enumerate(combos):
+        d.add(fixed.SetColorAdjustment(24, flags, 0, rg, gg, bg, black, white, contrast, brightness, 0, 0))
+        x, y = 32 * (index % 4), 32 * (index // 4)
+        fields = (x, y, 0, 0, 16, 16, offset, len(info), offset + len(info), len(bits), 0, SRCCOPY)
+        d.add(bitmaps.StretchDIBits(0, 0, 0, 0, *fields, 32, 32, info + bits))
+
+
+def background_mode_values(d):
+    """Raw SetBkMode values with each primitive that draws a background.
+
+    Rows set 0, 1, 2, 3, 0x101 and 0xFFFF; columns draw a hatched PatBlt, a
+    hatched Rectangle, a hatched Polygon, a hatched FillRgn, a hatched
+    PATCOPY BitBlt and a dashed cosmetic line.
+    """
+    d.pen(PS_NULL, 0, 0)
+    d.brush(BS_SOLID, 0x30A0E0)
+    d.add(fixed.Rectangle(0, 0, d.extent + 1, d.extent + 1))
+    d.add(fixed.SetBkColor(0x00FFFF))
+    hatch = d.brush(BS_HATCHED, 0x800080, HS_DIAGCROSS)
+    blit = dict.fromkeys(bitmaps.BitBlt.fields, 0) | {"src_m11": 1.0, "src_m22": 1.0, "data": b""}
+    for row, value in enumerate((0, 1, 2, 3, 0x101, 0xFFFF)):
+        top = 2 + 21 * row
+        d.add(fixed.SetBkMode(value))
+        d.add(bitmaps.BitBlt(**blit | {"x": 2, "y": top, "width": 18, "height": 18, "rop": PATCOPY}))
+        d.add(fixed.Rectangle(23, top, 41, top + 18))
+        d.add(variable.Polygon((0, 0, 0, 0), ((44, top), (62, top), (53, top + 18))))
+        region = region_data(((65, top, 83, top + 18),))
+        d.add(variable.FillRgn(bounds=(0, 0, 0, 0), brush=hatch, region=region))
+        d.add(bitmaps.BitBlt(**blit | {"x": 86, "y": top, "width": 18, "height": 18, "rop": 0x005A0049}))  # PATINVERT
+        d.add(fixed.SelectObject(STOCK | 7))
+        dash = d.pen(PS_DASH, 0, 0x000000)
+        d.add(fixed.MoveToEx(107, top + 4), fixed.LineTo(126, top + 4), fixed.MoveToEx(107, top + 12))
+        d.add(fixed.LineTo(126, top + 12), fixed.SelectObject(STOCK | 8), fixed.DeleteObject(dash))
+
+
 def state_record(*records):
     """Records that should not change a bitmap DC's output, followed by drawing."""
 
@@ -552,13 +1201,43 @@ FEATURES = (
     ("alphablend", alpha_blend(True), (128, 51)),
     ("alphablend-constant", alpha_blend(False), (128,)),
     ("transparentblt", transparent_blt, (128, 51)),
+    ("source-transforms", source_transforms, (128, 51)),
+    ("palette-sources", palette_sources, (128,)),
+    ("blend-sources", blend_sources, (128,)),
+    ("scan-bands", scan_bands, (128, 51)),
+    ("offset-ties", offset_ties, (128,)),
+    *(
+        (f"color-engine-{name}-{orientation}", color_engine(orientation, transfers), (128,))
+        for name, transfers in (
+            ("replicated", ENGINE_REPLICATED),
+            ("filtered", ENGINE_FILTERED),
+            ("offset", ENGINE_OFFSET),
+            ("reduced", ENGINE_REDUCED),
+            ("large", ENGINE_LARGE),
+        )
+        for orientation in ("top-down", "bottom-up")
+    ),
     ("gradientfill", gradients, (128, 51)),
+    ("gradient-edges", gradient_edges, (128,)),
+    ("rotated-frames", rotated_frames, (128, 51)),
     ("palettes", palettes, (128,)),
     ("flood-fill", flood_fills, (128, 51)),
     ("layout", layout, (128,)),
     ("rotation", rotation, (128, 51)),
     ("save-levels", save_levels, (128,)),
     ("comments", comments, (128,)),
+    ("record-culling", record_culling(False), (128, 51)),
+    ("record-culling-dense", record_culling(True), (128,)),
+    ("nested-reset", nested_reset, (128,)),
+    ("transform-limits", transform_limits, (51,)),
+    ("gradient-rop2", gradient_rop2, (128,)),
+    ("rotated-insideframe", rotated_insideframe, (128, 51)),
+    ("rotated-color-adjustment", rotated_color_adjustment, (128,)),
+    ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
+    ("rle-bands", rle_bands, (128,)),
+    ("invalid-modes", invalid_modes, (128,)),
+    ("color-adjustment-combos", color_adjustment_combos, (128,)),
+    ("background-mode-values", background_mode_values, (128,)),
     *((f"state-{name}", state_record(*records), (128,)) for name, records in STATE_RECORDS.items()),
 )
 SCALE_NAMES = {128: "unit", 51: "up-2-5"}
