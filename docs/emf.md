@@ -113,6 +113,11 @@ Text records play through the font collection's faces:
   underline and strikeout are parallelograms along the baseline. Without
   explicit spacing, glyphs are placed by their logical extents (cumulative
   design widths at the logical em, rounded half up) laid along the baseline.
+  When a GM_ADVANCED escapement differs from the orientation, each glyph's
+  centre (origin plus half its advance) sits on the escapement at the running
+  sum of per-glyph extents: the distance from the centre, along the
+  escapement, to an ellipse through the half advance and the whole-pixel ink
+  top or bottom widened by a sixteenth of the font's ascent.
 - Current-position text continues from the 28.4 device point the previous run
   left. An opaque cell widens over ink protruding past the advances, and, with
   explicit advances, to the left of the origin.

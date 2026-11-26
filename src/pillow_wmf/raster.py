@@ -1955,7 +1955,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             number for number, index in enumerate(indices) if index and index == face.cmap.get(face.break_character)
         )
         rotating = bool(matrix[1] or matrix[2] or request.escapement % 3600)
-        if not advances and rotating:
+        if not advances and rotating and advance_matrix is None:
             # Rotated or sheared glyphs take their logical extents: the design
             # widths at the logical em, accumulated and rounded half up.
             design, logical, previous, bold = 0, [], 0, 0

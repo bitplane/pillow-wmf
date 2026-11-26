@@ -2,7 +2,8 @@
 
 ``transformed_runs.json`` holds the pixels the ``glyph-transforms`` probe read
 back for each run: text drawn at the device point (40, 48) with the given
-world transform, font height, escapement and alignment.
+world transform, font height, escapement (and orientation, when it differs)
+and alignment.
 """
 
 import json
@@ -29,7 +30,7 @@ def test_runs_match_native_pixels(run):
     font = FontRequest(
         height=run["height"],
         escapement=escapement,
-        orientation=escapement,
+        orientation=run.get("orientation", escapement),
         weight=400,
         quality=3,
         face_name="Pillow WMF Test",

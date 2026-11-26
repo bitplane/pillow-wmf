@@ -17,6 +17,7 @@ horizontal alignment by the whole or half total advance (halved toward zero),
 and each origin then rounds to a pixel, ``(p + 8) >> 4``.
 """
 
+import struct
 from ctypes import byref
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -211,17 +212,24 @@ class TransformedFont:
         at the transformed x axis's pixels per em and lay it along that axis.
         Runs place glyphs by logical extents instead; see ``RasterContext``.
         """
-        a, b, c, d = self._device_matrix() if self.advance_matrix is None else self.advance_matrix
-        pixels = self.advance_pixels(index)
+        return self._advance(index, self._device_matrix() if self.advance_matrix is None else self.advance_matrix)
+
+    def glyph_advance(self, index: int) -> tuple[int, tuple[int, int]]:
+        """The whole-pixel advance length and 28.4 vector along the glyph's own baseline."""
+        matrix = self._device_matrix()
+        return self._advance_pixels(index, matrix), tuple(value >> 32 for value in self._advance(index, matrix))
+
+    def _advance(self, index, matrix):
+        a, b, c, _ = matrix
+        pixels = self._advance_pixels(index, matrix)
         if not b and not c:
             return ((pixels if a >= 0 else -pixels) * 16 << 32, 0)
         # Whole pixels laid along the transformed x axis.
         length = sqrt(float(a) ** 2 + float(c) ** 2)
         return tuple(_round_half_away(Fraction(pixels * float(value) / length) * 16 * (1 << 32)) for value in (a, c))
 
-    def advance_pixels(self, index: int) -> int:
-        """The glyph's whole-pixel advance length; see ``advance``."""
-        a, b, c, d = self._device_matrix() if self.advance_matrix is None else self.advance_matrix
+    def _advance_pixels(self, index, matrix):
+        a, b, c, _ = matrix
         units = self.design_advances.get(index, 0)
         bold = 1 if self.embolden and units else 0
         if not b and not c:
@@ -244,14 +252,23 @@ class TransformedFont:
         return tuple(_round_half_away(Fraction(value) * units * 16) for value in (b, d))
 
     def ink_extent(self, index: int) -> tuple[int, int]:
-        """The glyph's 28.4 ink top and bottom along the ascender."""
+        """The glyph's 28.4 ink top and bottom along the ascender, in whole pixels.
+
+        A scale-only realization takes them from the glyph's bitmap; others
+        round the notional black box out along the side vector. An empty glyph
+        reports a top of 0 and a bottom of one pixel, as the driver does.
+        """
         span = self.ink_heights.get(index)
         if span is None:
-            return 0, 0
-        _, b, _, d = self._device_matrix()
+            return 0, 16
+        _, b, c, d = self._device_matrix()
+        if not b and not c:
+            glyph = self.glyph(index, 1 << 30)
+            top = -glyph.bearing[1] if d < 0 else glyph.bearing[1] + glyph.size[1]
+            return top * 16, (top - glyph.size[1]) * 16
         length = sqrt(float(b) ** 2 + float(d) ** 2) * 16
         low, high = span
-        return _round_half_away(float32(high * length)), _round_half_away(float32(low * length))
+        return -(-int(high * length) // 16) * 16 if high > 0 else 0, (int(low * length) // 16) * 16 if low < 0 else 0
 
     def frame(self) -> "Frame":
         """The realized font's unit vectors, cell extents and alignment vectors."""
@@ -458,9 +475,10 @@ def _gen_widths(alpha, beta, width, top, bottom, height):
     low, high = min(bottom, 0), max(top, 0)
     if beta < 0:
         low, high = -high, -low
-    high += int(height / 16) or 0
+    margin = int(height / 16)
+    high += margin
     high = high or 1
-    low -= int(height / 16)
+    low -= margin
     low = low or -1
     if not alpha:
         return -low, high
@@ -469,9 +487,30 @@ def _gen_widths(alpha, beta, width, top, bottom, height):
 
     def extent(limit):
         ratio = float32(float32(beta) / float32(limit))
-        return _round_half_away(float32(1 / float32(sqrt(float32(float32(ratio * ratio) + across)))))
+        return _round_half_away(float32(1 / _efloat_sqrt(float32(float32(ratio * ratio) + across))))
 
     return extent(low), extent(high)
+
+
+def _efloat_sqrt(value: float) -> float:
+    """GDI's single-precision square root: the mantissa's root truncated to 24 bits."""
+    if value <= 0:
+        return 0.0
+    bits = struct.unpack("<I", struct.pack("<f", value))[0]
+    exponent = bits >> 23 & 0xFF
+    odd = (exponent - 1) & 1
+    mantissa = (bits & 0x7FFFFF | 0x800000) << (8 if odd else 7)
+    exponent = (exponent + 0x7E + (odd ^ 1)) >> 1
+    root = remainder = 0
+    for _ in range(24):
+        remainder = remainder << 2 | mantissa >> 30 & 3
+        mantissa = mantissa << 2 & 0xFFFFFFFF
+        trial = root << 2 | 1
+        root <<= 1
+        if trial <= remainder:
+            root |= 1
+            remainder -= trial
+    return struct.unpack("<f", struct.pack("<I", exponent << 23 | root & 0x7FFFFF))[0]
 
 
 def _escapement_positions(font, indices, advances, baseline, extra, break_extra, breaks):
@@ -489,9 +528,8 @@ def _escapement_positions(font, indices, advances, baseline, extra, break_extra,
     beta = float32((bx * uy - by * ux) / cross)
     positions, carry, logical = [], 0, 0
     for number, index in enumerate(indices):
-        dx, dy = font.advance(index)
-        dx, dy = dx >> 32, dy >> 32
-        width = 16 * font.advance_pixels(index)
+        pixels, (dx, dy) = font.glyph_advance(index)
+        width = 16 * pixels
         top, bottom = font.ink_extent(index)
         back, forward = _gen_widths(alpha, beta, width, top, bottom, frame.ascent)
         centre = carry + back
