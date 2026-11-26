@@ -779,7 +779,7 @@ def scan_outline(contours, *, closed):
     control then fills, along every row and column centre line, each stretch
     of interior that holds no pixel centre (including vertices that only
     touch the line): the pixel to the left or below, or the other neighbour
-    when that one lies outside the outline's pixel bounds.
+    when that one lies outside the glyph bitmap.
     """
     segments = [(p, q) for contour in contours for p, q in zip(contour, contour[1:] + contour[:1], strict=True)]
     if not segments:
@@ -799,9 +799,10 @@ def scan_outline(contours, *, closed):
                     covered.add((column, row))
             elif sum(direction for position, direction in crossings if position < centre_x):
                 covered.add((column, row))
-    # Dropout pixels stay inside the outline's pixel bounds: a choice outside
-    # them takes the other neighbour instead.
-    left, bottom = min(xs) // 64, -(-max(ys) // 64) - 1
+    # Dropout pixels stay inside the glyph bitmap, whose pixels have centres
+    # within the outline's extent (rounded half up in the rasterizer's y-up
+    # frame): a choice outside it takes the other neighbour instead.
+    left, bottom = (min(xs) + 31) // 64, (max(ys) + 32) // 64 - 1
     for row in rows:
         for start, end in _dropout_spans(contours, segments, 64 * row + 32, 1):
             first = -((32 - start) // 64)  # the first pixel whose centre is at or after the start
