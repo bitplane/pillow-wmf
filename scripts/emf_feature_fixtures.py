@@ -803,6 +803,65 @@ def _stretch_dib(d, left, top, bounds, source):
     d.add(bitmaps.StretchDIBits(*bounds, *fields, 0, SRCCOPY, width, abs(height), info + bits))
 
 
+def _dib_variants():
+    """DIBs GDI may or may not draw: rarer headers, compressions and depths, 4x3 each."""
+    import io
+
+    from PIL import Image
+
+    pixels = [((x * 80) % 256, (y * 120) % 256, (x * 40 + y * 60) % 256) for y in range(3) for x in range(4)]
+
+    def info(header, depth, compression, size=0, colors=0, extra=b""):
+        base = struct.pack("<IiiHHIIiiII", header, 4, 3, 1, depth, compression, size, 0, 0, colors, 0)
+        return (base + extra).ljust(header, b"\0") if header > 40 else base + extra
+
+    def rows(depth, sample):
+        stride = (4 * depth + 31) // 32 * 4
+        data = bytearray()
+        for y in reversed(range(3)):
+            row = bytearray()
+            for x in range(4):
+                row += sample(*pixels[y * 4 + x])
+            data += bytes(row).ljust(stride, b"\0")
+        return bytes(data)
+
+    bgr = rows(24, lambda r, g, b: bytes((b, g, r)))
+    bgrx = rows(32, lambda r, g, b: bytes((b, g, r, 0xFF)))
+    masks = struct.pack("<III", 0xFF0000, 0xFF00, 0xFF)
+    image = Image.new("RGB", (4, 3))
+    image.putdata(pixels)
+    encoded = {}
+    for name in ("JPEG", "PNG"):
+        buffer = io.BytesIO()
+        image.save(buffer, name)
+        encoded[name] = buffer.getvalue()
+    two = bytes((0b00011011, 0b11100100, 0b01010101, 0b10101010) * 3)
+    cmyk = rows(32, lambda r, g, b: bytes((0, 255 - r, 255 - g, 255 - b))[::-1])
+    wide = rows(64, lambda r, g, b: struct.pack("<4H", b << 8, g << 8, r << 8, 0xFFFF))
+    return (
+        (info(52, 32, 3, extra=masks), bgrx),
+        (info(56, 32, 3, extra=masks + struct.pack("<I", 0xFF000000)), bgrx),
+        (info(64, 24, 0), bgr),
+        (info(40, 0, 4, len(encoded["JPEG"])), encoded["JPEG"]),
+        (info(40, 0, 5, len(encoded["PNG"])), encoded["PNG"]),
+        (info(40, 32, 6) + masks + struct.pack("<I", 0xFF000000), bgrx),
+        (info(40, 32, 11), cmyk),
+        (info(40, 2, 0, colors=4) + struct.pack("<4I", 0x000080, 0x008000, 0x800000, 0x808080), two),
+        (info(40, 64, 0), wide),
+    )
+
+
+def dib_variants(d):
+    """StretchDIBits of rarer DIB headers, compressions and depths, each enlarged in its own cell."""
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    for index, (header, bits) in enumerate(_dib_variants()):
+        left, top = 4 + 41 * (index % 3), 4 + 41 * (index // 3)
+        d.brush(BS_SOLID, 0xC0C0C0)
+        d.add(fixed.Rectangle(*d.rect(left - 2, top - 2, left + 38, top + 32)))
+        fields = (d.u(left), d.u(top), 0, 0, 4, 3, offset, len(header), offset + len(header), len(bits))
+        d.add(bitmaps.StretchDIBits(-1, -1, 1000, 1000, *fields, 0, SRCCOPY, d.u(36), d.u(30), header + bits))
+
+
 def record_culling(dense):
     """Transfers and region painting whose record bounds miss the clip box.
 
@@ -1602,6 +1661,7 @@ FEATURES = (
     ("text-records", text_records, (128, 51)),
     ("text-transform-styles", text_transform_styles, (128, 51)),
     ("scale-extents", scale_extents, (128, 51)),
+    ("dib-variants", dib_variants, (128,)),
     ("text-justification", text_justification, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
