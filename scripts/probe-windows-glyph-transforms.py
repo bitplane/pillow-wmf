@@ -6,7 +6,7 @@ GetGlyphOutlineW's metrics and monochrome bitmap, then the pixels ExtTextOutW
 paints for that character alone and for the run "AB A", at a fixed origin
 with baseline alignment:
 
-    case NAME height=H transform=(m11, m12, m21, m22) escapement=E [orientation=O]
+    case NAME height=H transform=(m11, m12, m21, m22) escapement=E [orientation=O] [weight=700 italic=1]
     glyph CH box=W,H origin=X,Y cell=CX,CY
     bits ROW MASK              (# marks a set bit)
     text LABEL [align=A]       (baseline alignment unless given)
@@ -106,6 +106,11 @@ def cases():
     # The default height (zero) at the EMF fixtures' fractional playback scale.
     for name in ("identity", "mirror-x", "scale"):
         yield f"default-{name}-fractional", 0, tuple(value * 128 / 51 for value in TRANSFORMS[name]), 0, 0
+    # Simulated bold italic (the controlled face has neither) at the EMF
+    # style fixture's sizes.
+    for name in ("identity", "mirror-x", "rotate", "shear"):
+        yield f"synthetic-{name}", -8, TRANSFORMS[name], 0, 0
+        yield f"synthetic-{name}-fractional", -8, tuple(value * 128 / 51 for value in TRANSFORMS[name]), 0, 0
     # The EMF escapement fixture's own size.
     for name in ("rotate", "shear", "mirror-x"):
         yield f"upright-{name}-300-small", -8, TRANSFORMS[name], 300, 0
@@ -146,9 +151,11 @@ def main():
         set_align(dc, 24)  # TA_BASELINE
         for name, height, matrix, escapement, orientation in cases():
             extra = f" orientation={orientation}" if orientation != escapement else ""
+            weight, italic = (700, 1) if name.startswith("synthetic-") else (400, 0)
+            extra += " weight=700 italic=1" if italic else ""
             print(f"case {name} height={height} transform={matrix} escapement={escapement}{extra}")
             check(set_world(dc, ctypes.byref(XForm(*matrix, 0.0, 0.0))), "SetWorldTransform")
-            logfont = LogFont(height, 0, escapement, orientation, 400, 0, 0, 0, 0, 0, 0, 3, 0, FAMILY)
+            logfont = LogFont(height, 0, escapement, orientation, weight, italic, 0, 0, 0, 0, 0, 3, 0, FAMILY)
             font = check(create_font(ctypes.byref(logfont)), "CreateFontIndirectW")
             previous = select(dc, font)
             for character in "AB ":
