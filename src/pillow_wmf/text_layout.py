@@ -70,6 +70,7 @@ def layout_text(
     precise_origin=None,
     byte_lengths=(),
     byte_indexed_advances=True,
+    device_run=False,
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if characters is None and glyph_indices is None:
@@ -134,6 +135,10 @@ def layout_text(
     run_width = total * scale if advances else rounded((total // 65536) / scale) * scale
     if escapement % 900 and not advances:
         run_width = Fraction(total, 65536)
+    if device_run and not advances:
+        # A non-uniform GM_ADVANCED scale aligns by the device advance,
+        # without logical rounding.
+        run_width = Fraction(total // 65536)
     width = rounded(run_width)
     # Monochrome GDI places cached glyphs at integer origins. Centering an
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
@@ -142,6 +147,9 @@ def layout_text(
     if horizontal == 2 and precise_origin is not None:
         # Subtract the advance before rounding the aligned reference point.
         origin_x = rounded(precise_origin[0] - run_width)
+    elif horizontal == 6 and precise_origin is not None and device_run:
+        # Half the 28.4 advance, toward zero, before rounding the reference point.
+        origin_x = rounded(precise_origin[0] - Fraction(int(run_width * 16) // 2, 16))
     baseline = y + (font.ascent if vertical == 0 else -font.descent if vertical == 8 else 0)
     run_height = vertical_offsets[-1]
     if mirrored_layout:

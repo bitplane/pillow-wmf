@@ -1816,6 +1816,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             vertical_scale=abs(sy),
             mirrored_layout=self.mapping.rtl,
             precise_origin=precise_origin,
+            device_run=self.mapping.graphics_mode == GM_ADVANCED and self._font_xform is None and abs(sx) != abs(sy),
         )
         if layout.position is not None:
             layout = replace(
