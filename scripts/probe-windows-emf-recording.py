@@ -860,8 +860,8 @@ def gap_scenarios():
 
         select(dc, create_pen(0, 80, 0))  # Five device pixels once mapped.
         set_map_mode(dc, 8)  # Read the path back in sixteenths of a pixel.
-        set_window_ext(dc, 16, 16)
-        set_viewport_ext(dc, 1, 1)
+        set_window_ext(dc, 16, 16, None)
+        set_viewport_ext(dc, 1, 1, None)
         begin_path(dc)
         move_to(dc, 32, 32, None)
         arc_to(dc, 160, 160, 800, 560, 800, 320, 160, 192)
