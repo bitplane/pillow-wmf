@@ -1970,7 +1970,51 @@ class RasterContext(ExecutionContext[DrawingState]):
             sign = -1 if alignment & 6 == 2 else 1
             fixed_position = tuple(start + sign * step for start, step in zip(fixed_origin, run.advance, strict=True))
             position = self.mapping.logical_from_fixed(*fixed_position)
-        return TextLayout(run.glyphs, background, position, decorations, fixed_position)
+        # Logical extents follow the notional widths at the logical em, rounded half up.
+        total, extents = 0, []
+        for index in indices:
+            total += face.design_advances.get(index, 0)
+            extents.append(math.floor(Fraction(total) * em_width / upem + Fraction(1, 2)))
+        return TextLayout(run.glyphs, background, position, decorations, fixed_position, tuple(extents))
+
+    def measure_text(self, args):
+        """What a recording DC derives from text output.
+
+        Returns the UTF-16 text, the logical advance of each character (the
+        explicit advances when given), the exclusive device box the run
+        covers, and the logical and 28.4 current position it leaves.
+        """
+        mode = self._state.background_mode
+        self._state.background_mode = OPAQUE  # The covered box is the opaque cell.
+        try:
+            layout, _ = self._prepare_text(args)
+        finally:
+            self._state.background_mode = mode
+        text = args["text"]
+        if isinstance(text, EncodedText):
+            request = self._state.text_state.font or self.fonts.default_font
+            characters = self.fonts.decode_run(request, self.fonts.resolve(request), text.data).text
+        elif isinstance(text, UnicodeText):
+            characters = text.text
+        else:
+            characters = "".join(map(chr, text.indices))
+        extents = layout.extents
+        advances = tuple(b - a for a, b in zip((0, *extents), extents, strict=False))
+        box = None
+        if layout.background:
+            xs = [x for x, _ in layout.background]
+            ys = [y for _, y in layout.background]
+            if layout.glyphs and self._general_text(self._state.text_state.font or self.fonts.default_font):
+                # A parallelogram counts its 28.4 bounds widened by two pixels.
+                box = (
+                    math.floor(min(xs)) - 2,
+                    math.floor(min(ys)) - 2,
+                    math.ceil(max(xs)) + 2,
+                    math.ceil(max(ys)) + 2,
+                )
+            else:
+                box = (math.floor(min(xs)), math.floor(min(ys)), math.ceil(max(xs)), math.ceil(max(ys)))
+        return characters, advances, box, layout.position, layout.fixed_position
 
     def _font_aspect(self):
         """A metafile text record's font transform stretches the width by its y over x scale."""

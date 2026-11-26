@@ -42,6 +42,8 @@ class Glyph:
     channels: int = 1
     ink_span: tuple[int, int] = (0, 0)
     background_ink_span: tuple[int, int] = (0, 0)
+    # The exact left edge of the black box, in pixels from the origin.
+    ink_left: Fraction = Fraction(0)
 
 
 GLYPH_CACHE_BYTES = 4 << 20
@@ -197,6 +199,7 @@ class RasterFont:
                 channels,
                 ink_span=ink_span,
                 background_ink_span=background_ink_span,
+                ink_left=Fraction(ink_bounds.xMin, 64),
             )
             self._glyphs.store(index, glyph)
         if glyph.size[0] * glyph.size[1] > max_pixels:

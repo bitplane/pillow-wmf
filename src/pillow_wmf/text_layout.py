@@ -22,6 +22,9 @@ class TextLayout:
     decorations: tuple[tuple[tuple[int, int], ...], ...] = ()
     # The 28.4 device current position a TA_UPDATECP run leaves.
     fixed_position: tuple[int, int] | None = None
+    # Logical partial extents of the run, as GetTextExtentExPoint reports
+    # them; empty when explicit advances place the glyphs.
+    extents: tuple[int, ...] = ()
 
 
 def _horizontal_script_offsets(characters, glyphs, offsets):
@@ -170,11 +173,17 @@ def layout_text(
             for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
         ]
     )
+    # With explicit advances the cell also widens left to the first pixel
+    # that protruding ink covers from the exact run origin.
+    exact_x = None if precise_origin is None or escapement % 3600 else precise_origin[0] + origin_x - x
     left = min(
         [origin_x]
         + [
             floor(origin_x + offset + glyph.bearing[0])
+            if exact_x is None
+            else ceil(exact_x + offset + glyph.ink_left - Fraction(1, 2))
             for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
+            if advances and glyph.size[0]
         ]
     )
     top, bottom = baseline - font.ascent, baseline + font.descent
@@ -232,7 +241,8 @@ def layout_text(
         for offset, thickness in font.decorations
         for span_x, span_y, span_width in decoration_spans
     )
-    return TextLayout(tuple(positioned), background, position, decorations)
+    extents = () if advances else tuple(rounded(offset / scale) for offset in mapped_offsets[1:])
+    return TextLayout(tuple(positioned), background, position, decorations, extents=extents)
 
 
 def paired_background(glyphs, offsets, vertical_offsets, origin_x, baseline, cell, x, y, escapement):

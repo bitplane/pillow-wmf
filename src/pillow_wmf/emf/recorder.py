@@ -30,7 +30,16 @@ from fractions import Fraction
 from math import cos, floor, radians, sin
 
 from ..bitmap import read_dib
-from ..constants import GM_ADVANCED, GM_COMPATIBLE, MM_TEXT, PS_INSIDEFRAME, PS_NULL
+from ..constants import (
+    ETO_CLIPPED,
+    ETO_GLYPH_INDEX,
+    ETO_OPAQUE,
+    GM_ADVANCED,
+    GM_COMPATIBLE,
+    MM_TEXT,
+    PS_INSIDEFRAME,
+    PS_NULL,
+)
 from ..ellipse import advanced_arc, arc_figure
 from ..gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from ..geometry import DevicePath, coverage_spans
@@ -38,10 +47,10 @@ from ..limits import DEFAULT_LIMITS
 from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice, _round_half_away
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
-from ..objects import FontRequest, RegionGeometry
+from ..objects import EncodedText, FontRequest, RegionGeometry
 from ..stroke import realize_pen
 from ..trace import TraceContext
-from . import bitmaps, fixed, variable
+from . import bitmaps, fixed, text, variable
 from .file import Metafile
 from .objects import FACE_NAME_BYTES, LogFont
 
@@ -257,6 +266,8 @@ class _Object:
     realize: tuple | None = None
     # A creation that fails natively: selecting it records nothing.
     null: bool = False
+    # Fonts: the logical font, to lay out recorded text.
+    request: FontRequest | None = None
 
 
 @dataclass
@@ -294,6 +305,14 @@ class _State:
     # Arc direction: what the program set, and what the file last recorded.
     arc_direction: int = 1
     recorded_arc_direction: int = 1
+    # Text state the recorded advances and bounds follow.
+    font: _Object | None = None
+    text_alignment: int = 0
+    background_mode: int = 2
+    character_extra: int = 0
+    justification: tuple[int, int] = (0, 0)
+    # (logical position, 28.4 device position) after current-position text.
+    text_position: tuple | None = None
     saved: list = field(default_factory=list)
 
 
@@ -308,8 +327,11 @@ class Recorder(TraceContext):
         max_objects: int = DEFAULT_LIMITS.max_objects,
         max_saved_states: int = DEFAULT_LIMITS.max_saved_states,
         trace_calls: bool = True,
+        fonts=None,
     ):
         super().__init__(max_objects=max_objects, max_saved_states=max_saved_states, trace_calls=trace_calls)
+        # Fonts lay out recorded text: its advances and bounds.
+        self.fonts = fonts
         self.device = device
         self.micrometres = micrometres
         self.records: list = []
@@ -485,6 +507,10 @@ class Recorder(TraceContext):
         simple = _SIMPLE.get(name)
         if simple is not None:
             records.append(simple(a))
+            if name == "set_background_mode":
+                state.background_mode = a["mode"]
+            elif name == "set_text_alignment":
+                state.text_alignment = a["alignment"]
             if name == "save_dc":
                 state.saved.append({key: deepcopy(getattr(state, key)) for key in _SAVED})
             elif name == "restore_dc":
@@ -588,7 +614,12 @@ class Recorder(TraceContext):
 
     def _record_create_font(self, a, state, records):
         font = _log_font(a["font"])
-        self._created(state, _Object("font", lambda slot: variable.ExtCreateFontIndirectW(slot, font, FONT_EXTENSION)))
+        self._created(
+            state,
+            _Object(
+                "font", lambda slot: variable.ExtCreateFontIndirectW(slot, font, FONT_EXTENSION), request=a["font"]
+            ),
+        )
 
     def _record_create_pattern_brush(self, a, state, records):
         from ..bitmap16 import read_bitmap16
@@ -666,6 +697,108 @@ class Recorder(TraceContext):
             state.pen = entry
         elif entry.kind == "brush":
             state.brush_null = entry.style == BS_NULL
+        elif entry.kind == "font":
+            state.font = entry
+
+    def _record_set_text_justification(self, a, state, records):
+        state.justification = (a["break_count"], a["break_extra"])  # Not recorded; advances include it.
+
+    def _record_set_text_character_extra(self, a, state, records):
+        state.character_extra = a["extra"]  # EMF has no record; recorded advances include it.
+
+    def _record_text_out(self, a, state, records):
+        self._record_ext_text_out({**a, "options": 0, "rectangle": None, "advances": ()}, state, records)
+
+    def _text_shadow(self, state: _State):
+        """A raster DC in the recording DC's text state, to lay out text."""
+        from ..raster import RasterContext
+
+        shadow = RasterContext(1, 1, trace_calls=False, fonts=self.fonts)
+        shadow.mapping = deepcopy(state.mapping)
+        shadow.mapping.graphics_mode = state.graphics_mode
+        if state.font is not None and state.font.request is not None:
+            shadow.select_object(shadow.create_font(state.font.request))
+        shadow.set_text_alignment(state.text_alignment)
+        shadow.set_background_mode(state.background_mode)
+        shadow.set_text_character_extra(state.character_extra)
+        shadow.set_text_justification(*state.justification)
+        shadow._state.position = state.position
+        shadow._state.text_position = state.text_position
+        return shadow
+
+    def _text_scales(self, state: _State) -> tuple[float, float]:
+        """A GM_COMPATIBLE record's font transform: 0.01 mm per logical unit on the reference device."""
+        if state.graphics_mode == GM_ADVANCED:
+            return 0.0, 0.0
+        # The page transform alone: a world transform left from GM_ADVANCED
+        # still places the text but does not enter the scales.
+        mapping = state.mapping
+        sx, sy = (float32(v / w) for v, w in zip(mapping.viewport_extent, mapping.window_extent, strict=True))
+        (px, py), (mx, my) = self.device.pixels, self.device.millimetres
+        return tuple(
+            float32(float32(float32(float32(mm) * float32(scale)) * 100) / float32(pixels))
+            for mm, scale, pixels in ((mx, sx, px), (my, sy, py))
+        )
+
+    def _text_record(self, state, x, y, units, options, rectangle, advances, bounds):
+        data = b"".join(ord(unit).to_bytes(2, "little") for unit in units)
+        data += bytes(-len(data) % 4)
+        dx_offset = 0x4C + len(data)
+        data += b"".join(struct.pack("<i", value) for value in advances)
+        return text.ExtTextOutW(
+            bounds or (0, 0, -1, -1),
+            state.graphics_mode,
+            *self._text_scales(state),
+            x,
+            y,
+            len(units),
+            0x4C,
+            options,
+            tuple(rectangle) if options & (ETO_OPAQUE | ETO_CLIPPED) else (0, 0, -1, -1),
+            dx_offset,
+            data,
+        )
+
+    def _text_rectangle(self, state, rectangle) -> Rect | None:
+        """A text rectangle as the inclusive device box it fills."""
+        (x0, y0), (x1, y1) = (state.mapping.device_point(*rectangle[:2]), state.mapping.device_point(*rectangle[2:]))
+        left, right, top, bottom = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        return (left, top, right - 1, bottom - 1) if left < right and top < bottom else None
+
+    def _record_ext_text_out(self, a, state, records):
+        content, options = a["text"], a.get("options", 0)
+        rectangle, advances = a.get("rectangle"), tuple(a.get("advances", ()))
+        opaque = self._text_rectangle(state, rectangle) if rectangle is not None and options & ETO_OPAQUE else None
+        if not content:
+            if opaque is not None:
+                # GDI records the empty call, then fills the rectangle as glyph output.
+                records.append(self._text_record(state, a["x"], a["y"], "", options, rectangle, (), None))
+                bounds = self._clipped(state, opaque)
+                records.append(
+                    self._text_record(state, a["x"], a["y"], "", options | ETO_GLYPH_INDEX, rectangle, (), bounds)
+                )
+                self._draw(state, bounds)
+            return
+        shadow = self._text_shadow(state)
+        units, measured, box, position, fixed_position = shadow.measure_text(a)
+        if isinstance(content, EncodedText) and advances:
+            advances = shadow_advances = advances  # noqa: F841 - byte-indexed advances map per character below.
+        recorded = advances or measured
+        bounds = None
+        if box is not None:
+            bounds = (box[0], box[1], box[2] - 1, box[3] - 1)
+        if options & ETO_CLIPPED and rectangle is not None:
+            clip = self._text_rectangle(state, rectangle)
+            bounds = _intersection(bounds, clip) if bounds is not None and clip is not None else None
+        if opaque is not None:
+            bounds = _union(bounds, opaque)
+        bounds = self._clipped(state, bounds)
+        records.append(self._text_record(state, a["x"], a["y"], units, options, rectangle, recorded, bounds))
+        self._draw(state, bounds)
+        if position is not None:
+            state.position = position
+            state.text_position = (position, fixed_position)
+            state.fixed_position = None
 
     def _record_select_palette(self, a, state, records):
         handle = a["handle"]
@@ -774,13 +907,13 @@ class Recorder(TraceContext):
         state.miter_limit = float(a["limit"])
 
     def _record_set_world_transform(self, a, state, records):
-        if state.graphics_mode != GM_ADVANCED:
-            raise InvalidOperation("World transforms require GM_ADVANCED")
         values = tuple(a[key] for key in ("m11", "m12", "m21", "m22", "dx", "dy"))
-        state.mapping.world = values
-        # Native recording follows SetWorldTransform with MWT_SET of the same matrix.
+        # Native recording follows SetWorldTransform with MWT_SET of the same
+        # matrix, even in GM_COMPATIBLE, where the call itself then fails.
         records.append(fixed.SetWorldTransform(*values))
         records.append(fixed.ModifyWorldTransform(*values, 4))
+        if state.graphics_mode == GM_ADVANCED:
+            state.mapping.world = values
 
     # Drawing
 
@@ -1515,6 +1648,12 @@ _SAVED = (
     "brush_null",
     "background",
     "arc_direction",
+    "font",
+    "text_alignment",
+    "background_mode",
+    "character_extra",
+    "justification",
+    "text_position",
 )
 
 _SIMPLE = {
@@ -1530,7 +1669,6 @@ _SIMPLE = {
     "set_brush_origin": lambda a: fixed.SetBrushOrgEx(a["x"], a["y"]),
     "set_meta_region": lambda a: fixed.SetMetaRgn(),
     "set_layout": lambda a: fixed.SetLayout(a["layout"]),
-    "set_text_justification": lambda a: fixed.SetTextJustification(a["break_extra"], a["break_count"]),
     "set_color_adjustment": lambda a: fixed.SetColorAdjustment(
         24,
         a["flags"],
