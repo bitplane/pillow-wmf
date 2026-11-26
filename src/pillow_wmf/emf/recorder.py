@@ -45,7 +45,7 @@ from ..ellipse import advanced_arc, arc_figure
 from ..gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from ..geometry import DevicePath, coverage_spans
 from ..limits import DEFAULT_LIMITS
-from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice, _round_half_away
+from ..mapping import IDENTITY_TRANSFORM, REFERENCE_DEVICE, Mapping, ReferenceDevice, _round_half_away
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
 from ..objects import BitmapData, EncodedText, FontRequest, RegionGeometry
@@ -289,6 +289,10 @@ class _State:
     # The exact 28.4 device point an arc left the current position at, which
     # the next *To call starts from; None once a logical point sets it.
     fixed_position: tuple[int, int] | None = None
+    # Whether the DC has ever held a non-identity world transform. From then
+    # on GM_COMPATIBLE curved shapes keep their far edges in their bounds,
+    # whatever transform follows.
+    world_transformed: bool = False
     bounds: Rect | None = None
     path: Rect | None = None
     recording_path: bool = False
@@ -407,12 +411,15 @@ class Recorder(TraceContext):
             return min(xs) >> 4, min(ys) >> 4, (max(xs) + 15) >> 4, (max(ys) + 15) >> 4
         return _box(self._device(state, x, y) for x, y in points)
 
-    def _device_rect(self, state: _State, left: int, top: int, right: int, bottom: int, *, closed=False) -> Rect:
+    def _device_rect(
+        self, state: _State, left: int, top: int, right: int, bottom: int, *, closed=False, curved=False
+    ) -> Rect:
         """The inclusive device box of a logical box, as bounds count it.
 
         In GM_COMPATIBLE the device right and bottom edges are moved in by
-        one pixel; in GM_ADVANCED the mapped edges are used as they are.
-        Under rotation or shear the box spans the pixels its four corners'
+        one pixel; in GM_ADVANCED the mapped edges are used as they are. Once
+        the DC has held a non-identity world transform, a ``curved`` shape's
+        box keeps its GM_COMPATIBLE edges. Under rotation or shear the box spans the pixels its four corners'
         exact positions lie across; the far edges are exclusive except for a
         ``closed`` box (a GM_ADVANCED rectangle includes its lower-right edges).
         """
@@ -423,7 +430,7 @@ class Recorder(TraceContext):
             inset = 0 if closed else 1
             return min(xs) >> 4, min(ys) >> 4, ((max(xs) + 15) >> 4) - inset, ((max(ys) + 15) >> 4) - inset
         (x0, y0), (x1, y1) = self._device(state, left, top), self._device(state, right, bottom)
-        if state.graphics_mode == GM_COMPATIBLE:
+        if state.graphics_mode == GM_COMPATIBLE and not (curved and state.world_transformed):
             x1, y1 = x1 - 1, y1 - 1
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
@@ -949,6 +956,7 @@ class Recorder(TraceContext):
         records.append(fixed.ModifyWorldTransform(*values, 4))
         if state.graphics_mode == GM_ADVANCED:
             state.mapping.world = values
+            state.world_transformed |= tuple(map(float, values)) != IDENTITY_TRANSFORM
 
     def _record_modify_world_transform(self, a, state, records):
         values = tuple(a[key] for key in ("m11", "m12", "m21", "m22", "dx", "dy"))
@@ -957,6 +965,7 @@ class Recorder(TraceContext):
             world = modified_world(state.mapping.world, a["mode"], tuple(float32(v) for v in values))
             if world is not None:
                 state.mapping.world = world
+                state.world_transformed |= world != IDENTITY_TRANSFORM
 
     # Drawing
 
@@ -972,7 +981,8 @@ class Recorder(TraceContext):
         else:
             self._untraced(state)
         records.append(record_type(left, top, right, bottom, *extra))
-        box = self._device_rect(state, left, top, a["right"], a["bottom"], closed=record_type is fixed.Rectangle)
+        rectangle = record_type is fixed.Rectangle
+        box = self._device_rect(state, left, top, a["right"], a["bottom"], closed=rectangle, curved=not rectangle)
         if state.pen.style == PS_NULL:
             if state.brush_null:
                 return  # Neither outline nor interior is drawn.
@@ -1000,7 +1010,7 @@ class Recorder(TraceContext):
         start, end = (a["start_x"], a["start_y"]), (a["end_x"], a["end_y"])
         self._arc_direction(state, records)
         records.append(record_type(left, top, right, bottom, *start, *end))
-        x0, y0, x1, y1 = self._device_rect(state, left, top, a["right"], a["bottom"])
+        x0, y0, x1, y1 = self._device_rect(state, left, top, a["right"], a["bottom"], curved=True)
         closure = {fixed.Arc: "open", fixed.ArcTo: "open", fixed.Chord: "chord", fixed.Pie: "pie"}[record_type]
         figure = arc_figure(
             x0,

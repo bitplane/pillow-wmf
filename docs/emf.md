@@ -310,9 +310,10 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   extent), rounded half to even. GM_ADVANCED boxes are written as given;
   there is no record for the graphics mode. `SetWorldTransform` is followed
   by `ModifyWorldTransform(MWT_SET)` with the same matrix;
-  `ModifyWorldTransform` is written as given. Once a world transform has
-  been set (until `MWT_IDENTITY`), GM_COMPATIBLE boxes other than rectangles
-  keep their bottom edge in their bounds.
+  `ModifyWorldTransform` is written as given. Once the DC has held a
+  non-identity world transform, whatever follows, GM_COMPATIBLE ellipses,
+  rounded rectangles, arcs, chords and pies keep their far edges in their
+  bounds; rectangles do not.
 - `OffsetViewportOrgEx` is written as `SetViewportOrgEx` of the result.
   Escapes (`MFCOMMENT` included) and `SetMapperFlags` leave no record;
   `gdi_comment` writes `EMR_GDICOMMENT`.
@@ -324,7 +325,8 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   one-pixel pens add nothing. Arcs, chords and pies count their drawn sweep,
   `*To` records include the current position (unless `PolyDraw` opens with a
   move; after an arc, a one-pixel pen counts the floored logical point and
-  the device pixel the exact point rounds up to), and a flood fill claims
+  the device pixel the exact point rounds up to), arcs, chords and pies span
+  their figure's floored and rounded-up extremes, and a flood fill claims
   the whole device. Under rotation or shear, points count the pixels their
   exact 28.4 positions lie across, and a box its four corners, its far edges
   exclusive except for a rectangle's. Record and header bounds
