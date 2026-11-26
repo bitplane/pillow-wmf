@@ -419,8 +419,11 @@ class FontFace:
                         f"Cannot realize font {self.family!r} at {size} pixels: {error}"
                     ) from error
 
+                # The scaler holds the vertical pixels per design unit in 16.16.
+                vertical = Fraction(round(Fraction(size) * 65536 / self.units_per_em), 65536)
+
                 def metric(units):
-                    return (units * size * 2 + self.units_per_em) // (2 * self.units_per_em)
+                    return rounded(units * vertical)
 
                 ascent, bottom = self.device_metrics.get(rounded(size), (metric(self.ascent), -metric(self.descent)))
                 background_cell = ascent, -bottom

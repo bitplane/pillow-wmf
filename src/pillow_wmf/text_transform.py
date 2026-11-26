@@ -174,8 +174,15 @@ class TransformedFont:
         return tuple(_round_half_away(Fraction(pixels * value / length) * 16 * (1 << 32)) for value in (a, c))
 
     def vertical(self, units: int) -> tuple[int, int]:
-        """A notional vertical offset as a 28.4 device vector."""
-        _, b, _, d = self.matrix
+        """A notional vertical offset as a 28.4 device vector.
+
+        A scale-only transform takes whole pixels at its 16.16 vertical scale.
+        """
+        a, b, c, d = self._device_matrix()
+        if not b and not c:
+            scale = Fraction(_round_half_away(abs(Fraction(d)) * 65536), 65536)
+            pixels = _round_half_away(abs(units) * scale)
+            return (0, pixels * 16 if (d < 0) == (units < 0) else -pixels * 16)
         return tuple(_round_half_away(Fraction(value) * units * 16) for value in (b, d))
 
 
