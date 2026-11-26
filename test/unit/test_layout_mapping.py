@@ -5,7 +5,7 @@ from fractions import Fraction
 
 import pytest
 
-from pillow_wmf import RasterContext, UnsupportedOperation
+from pillow_wmf import RasterContext
 from pillow_wmf.ellipse import arc_cubics, ellipse_cubics
 from pillow_wmf.mapping import Mapping, ReferenceDevice
 from pillow_wmf.stroke import frame_footprint
@@ -127,11 +127,10 @@ def test_layout_is_saved_with_mapping_not_baked_into_extents():
     assert dc.mapping.viewport_extent == (20, 12)
 
 
-def test_unimplemented_layout_bits_fail_without_mutating_state():
+def test_layout_bits_without_drawing_effect_are_ignored():
     dc = RasterContext(20, 12)
-    with pytest.raises(UnsupportedOperation, match="Layout"):
-        dc.set_layout(2)
-    assert dc.mapping.layout == 0
+    dc.set_layout(2 | 1)
+    assert dc.mapping.layout == 1
 
 
 def test_points_clip_edges_and_displacements_have_distinct_contracts():
@@ -200,3 +199,14 @@ def test_isotropic_fit_uses_the_device_pixel_shape():
 def test_device_capabilities_must_be_positive():
     with pytest.raises(ValueError, match="must be positive"):
         ReferenceDevice(pixels=(0, 768))
+
+
+def test_page_mapping_follows_a_rotating_world_transform():
+    dc = RasterContext(40, 40)
+    dc.set_graphics_mode(2)
+    dc.set_world_transform(0.0, 1.0, -1.0, 0.0, 10.0, 0.0)
+    dc.set_map_mode(8)
+    dc.set_window_extent(1, 1)
+    dc.set_viewport_extent(2, 2)
+    # World first: (3, 1) -> (9, 3); then the page doubles it.
+    assert dc.mapping.fixed_point(3, 1) == (18 * 16, 6 * 16)

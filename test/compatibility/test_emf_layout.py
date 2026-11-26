@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from pillow_wmf import FontCollection, FontFace
 from pillow_wmf.emf import Metafile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,10 +26,16 @@ def test_generated_fixtures_are_reproducible_and_playable() -> None:
     assert committed == generated, f"Stale generated fixtures: {sorted(committed - generated)}"
 
 
+@pytest.fixture(scope="module")
+def fonts():
+    # The controlled faces the reference workflow installs on the oracle.
+    return FontCollection(FontFace.from_path(path) for path in sorted((ROOT / "test/fonts").glob("*.ttf")))
+
+
 @pytest.mark.parametrize("source_path,png_path", PAIRS, ids=[png.relative_to(EMF_ROOT).as_posix() for _, png in PAIRS])
-def test_windows_pixels(source_path: Path, png_path: Path) -> None:
+def test_windows_pixels(source_path: Path, png_path: Path, fonts) -> None:
     assert png_path.is_file(), f"Missing Windows reference: {png_path.name}"
-    result = compare_reference(source_path, png_path)
+    result = compare_reference(source_path, png_path, fonts=fonts)
     assert result.differing_pixels == 0, (
         f"{source_path.name}: {result.differing_pixels} pixels differ from Windows; "
         f"first (x, y, actual, Windows): {result.first}"

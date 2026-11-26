@@ -16,6 +16,7 @@ from pillow_wmf.objects import (
     PaletteEntries,
     PaletteUpdate,
     RegionGeometry,
+    UnicodeText,
 )
 
 DIB = bytes.fromhex("28000000 01000000 01000000 0100 1800 00000000 04000000 00000000 00000000 00000000 00000000")
@@ -238,17 +239,14 @@ def test_palette_edits_name_their_palette():
     assert omissions == ()
 
 
-def test_unsupported_creations_are_reported_once_selected():
-    _, omissions = run(
+def test_creations_that_fail_natively_leave_their_slot_empty():
+    calls, omissions = run(
         [
             bitmaps.CreateMonoBrush(1, 0, 0, 0, 0, 0, b""),  # No bitmap header.
             fixed.SelectObject(1),
         ]
     )
-    assert [(o.record_index, o.reason) for o in omissions] == [
-        (0, "Monochrome brushes need a BITMAPINFOHEADER"),
-        (1, "Object creation was unsupported"),
-    ]
+    assert not calls and not omissions
 
 
 def ext_pen_call(style, width, color=0, entries=(), brush_style=0, hatch=0):
@@ -468,23 +466,60 @@ def test_offsets_outside_the_record_are_reported():
 
 
 def test_text():
+    # ETO_NO_RECT does not remove the rectangle: playback reads the fixed layout.
     narrow = text.ExtTextOutA(
-        (0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 2, 60, 0x0100, None, 64, b"ab\0\0" + struct.pack("<2i", 5, 6)
+        (0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 2, 76, 0x0100, (0, 0, 0, 0), 80, b"ab\0\0" + struct.pack("<2i", 5, 6)
     )
     opaque = text.ExtTextOutA((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 1, 76, 2, (1, 2, 3, 4), 80, b"a\0\0\0" + bytes(4))
     glyphs = text.ExtTextOutW((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 2, 76, 0x10, (1, 2, 3, 4), 0, struct.pack("<2H", 7, 8))
-    unicode = text.ExtTextOutW((0, 0, 0, 0), 1, 0.0, 0.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, "é\0".encode("utf-16-le"))
+    unicode = text.ExtTextOutW((0, 0, 0, 0), 2, 0.0, 0.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, "é\0".encode("utf-16-le"))
     advanced = text.ExtTextOutA((0, 0, 0, 0), 2, 1.0, 1.0, 3, 4, 1, 76, 0, (1, 2, 3, 4), 0, b"a\0\0\0")
     calls, omissions = run([narrow, opaque, glyphs, unicode, advanced])
+    # GM_COMPATIBLE records are bracketed by their font transform scales.
+    mark = Call.make("set_font_xform", x_scale=0.0, y_scale=0.0)
+    clear = Call.make("set_font_xform", x_scale=None, y_scale=None)
     assert calls == [
+        mark,
         Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"ab"), options=0, rectangle=None, advances=(5, 6)),
+        clear,
+        mark,
         Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"a"), options=2, rectangle=(1, 2, 3, 4), advances=(0,)),
+        clear,
+        mark,
         Call.make("ext_text_out", x=3, y=4, text=GlyphIndices((7, 8)), options=0x10, rectangle=None, advances=()),
+        clear,
+        Call.make("ext_text_out", x=3, y=4, text=UnicodeText("é"), options=0, rectangle=None, advances=()),
+        Call.make("ext_text_out", x=3, y=4, text=EncodedText(b"a"), options=0, rectangle=None, advances=()),
     ]
-    assert [o.reason for o in omissions] == [
-        "Unicode text is not yet supported",
-        "Advanced graphics-mode text is not yet supported",
+    assert not omissions
+
+
+def test_poly_and_small_text():
+    entries = (
+        text.EmrText(1, 2, 2, 200, 0, (0, 0, 0, 0), 204),
+        text.EmrText(5, 6, 0, 0, 2, (1, 2, 3, 4), 0),
+        # GDI fails an entry with ETO_NO_RECT, and the entries after it.
+        text.EmrText(1, 2, 2, 200, 0x100, (0, 0, 0, 0), 204),
+        text.EmrText(1, 2, 2, 200, 0, (0, 0, 0, 0), 204),
+    )
+    poly = text.PolyTextOutW((0, 0, 0, 0), 2, 0.0, 0.0, entries, "hi".encode("utf-16-le") + struct.pack("<2i", 7, 8))
+    small = text.SmallTextOut(1, 2, 0x302, 2, 0.0, 0.0, None, b"\xe9a")
+    wide = text.SmallTextOut(1, 2, 2, 2, 0.0, 0.0, (1, 2, 3, 4), "x".encode("utf-16-le"))
+    calls, omissions = run([poly, small, wide])
+    assert calls == [
+        Call.make("ext_text_out", x=1, y=2, text=UnicodeText("hi"), options=0, rectangle=None, advances=(7, 8)),
+        Call.make("ext_text_out", x=5, y=6, text=UnicodeText(""), options=2, rectangle=(1, 2, 3, 4), advances=()),
+        # 8-bit characters widen to code units; without a rectangle nothing is opaque.
+        Call.make("ext_text_out", x=1, y=2, text=UnicodeText("\xe9a"), options=2, rectangle=None, advances=()),
+        Call.make("ext_text_out", x=1, y=2, text=UnicodeText("x"), options=2, rectangle=(1, 2, 3, 4), advances=()),
     ]
+    assert not omissions
+
+
+def test_short_text_record_stops_playback():
+    short = text.ExtTextOutA((0, 0, 0, 0), 2, 0.0, 0.0, 3, 4, 3, 56, 0x0100, None, None, b"abc\0")
+    calls, omissions = run([short, fixed.MoveToEx(1, 2)])
+    assert calls == [] and not omissions
 
 
 def test_clip_regions_are_combined_from_device_rectangles():
@@ -529,17 +564,17 @@ def test_comments_reach_the_hook_and_never_draw():
     ]
 
 
-def test_unsupported_records_are_reported_or_raise_when_strict():
+def test_malformed_records_are_reported_or_raise_when_strict():
     adjustment = fixed.SetColorAdjustment(20, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 0, 0)
     records = [adjustment, UnknownRecord(0x7777, b""), UnknownRecord(103, b""), fixed.Rectangle(0, 0, 1, 1)]
     calls, omissions = run(records)
     assert calls == [Call.make("rectangle", left=0, top=0, right=1, bottom=1)]
+    # A bad COLORADJUSTMENT fails natively and unknown types are ignored; a
+    # malformed known record is reported.
     assert [(o.record_index, o.function, o.reason) for o in omissions] == [
-        (0, 23, "COLORADJUSTMENT with an unexpected size"),
-        (1, 0x7777, "Record type 0x7777 is not yet supported"),
-        (2, 103, "GLSBOUNDEDRECORD is not yet supported"),
+        (2, 103, "Malformed GLSBOUNDEDRECORD record")
     ]
-    with pytest.raises(UnsupportedOperation, match="Record 0: COLORADJUSTMENT"):
+    with pytest.raises(UnsupportedOperation, match="Record 2: Malformed GLSBOUNDEDRECORD"):
         run(records, strict=True)
 
 

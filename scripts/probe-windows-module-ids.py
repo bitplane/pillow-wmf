@@ -16,7 +16,18 @@ from pathlib import Path
 from windows_wmf_render import module_versions
 
 SYSTEM = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32"
-MODULES = ("gdi32.dll", "gdi32full.dll", "win32u.dll", "win32kfull.sys", "win32kbase.sys", "win32k.sys")
+MODULES = (
+    "gdi32.dll",
+    "gdi32full.dll",
+    "win32u.dll",
+    "win32kfull.sys",
+    "win32kbase.sys",
+    "win32k.sys",
+    # The user-mode font driver host and the TrueType driver it may load.
+    "fontdrvhost.exe",
+    "ttfd.dll",
+    "umpdc.dll",
+)
 
 
 def identity(path):

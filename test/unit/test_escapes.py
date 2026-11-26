@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pillow_wmf import Metafile, RasterContext, Recorder, UnsupportedOperation, play
+from pillow_wmf import Metafile, RasterContext, Recorder, play
 
 PROBE = runpy.run_path(str(Path(__file__).parents[2] / "scripts/escape_cases.py"))
 
@@ -36,8 +36,8 @@ def test_defined_printer_records_preserve_drawing_and_round_trip(name, code, pay
 
 
 @pytest.mark.parametrize("code", [0x0009, 0x101A, 0x7777])
-def test_unimplemented_escapes_are_not_blanket_ignored(code):
+def test_every_escape_leaves_a_bitmap_dc_unchanged(code):
     dc = RasterContext(8, 8)
-    with pytest.raises(UnsupportedOperation, match="escape"):
-        dc.escape(code, b"uninterpreted")
-    assert not dc.calls
+    before = dc.image.tobytes()
+    dc.escape(code, b"uninterpreted")
+    assert dc.image.tobytes() == before

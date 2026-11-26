@@ -14,8 +14,9 @@ import ctypes
 import platform
 import struct
 from ctypes import wintypes
+from pathlib import Path
 
-from windows_wmf_render import bind, module_versions, reference_surface
+from windows_wmf_render import bind, module_versions, private_fonts, reference_surface
 
 gdi = ctypes.WinDLL("gdi32", use_last_error=True)
 ptr, integer, boolean, dword = ctypes.c_void_p, ctypes.c_int, wintypes.BOOL, wintypes.DWORD
@@ -832,6 +833,101 @@ def gap_scenarios():
 
     yield "clip-path-widened-shapes", None, clip_path_widened_shapes
 
+    def clip_path_inside_frame(dc):
+        # SelectClipPath of paths built and widened with inside-frame pens,
+        # and of unwidened paths built with inside-frame and mitred pens.
+        frame = points((-60, -60), (120, -60), (120, 120), (-60, 120), (-60, -60))
+        brush = LogBrush(0, 0, 0)
+        pens = (
+            lambda: create_pen(6, 7, 0),
+            lambda: ext_create_pen(0x00010000 | 0x2000 | 6, 7, ctypes.byref(brush), 0, None),
+        )
+        shapes = (
+            lambda: (move_to(dc, 10, 10, None), line_to(dc, 40, 15), line_to(dc, 20, 35)),
+            lambda: (move_to(dc, 10, 10, None), line_to(dc, 40, 15), line_to(dc, 20, 35), close_figure(dc)),
+            lambda: rectangle(dc, 8, 8, 40, 30),
+            lambda: ellipse(dc, 5, 5, 40, 30),
+            lambda: round_rect(dc, 6, 4, 41, 33, 12, 9),
+            lambda: pie(dc, 5, 5, 41, 31, 40, 5, 5, 6),
+            lambda: rectangle(dc, 8, 8, 13, 30),
+            lambda: ellipse(dc, 8, 8, 13, 30),
+            lambda: pie(dc, 8, 8, 13, 30, 13, 8, 8, 20),
+            lambda: chord(dc, 3, 7, 44, 30, 2, 30, 44, 8),
+            lambda: (move_to(dc, 2, 2, None), arc_to(dc, 10, 10, 50, 35, 50, 20, 10, 12), line_to(dc, 2, 2)),
+            lambda: (arc(dc, 5, 5, 45, 35, 45, 10, 5, 30), close_figure(dc)),
+        )
+
+        def clipped(shape, widen=True):
+            save_dc(dc)
+            begin_path(dc)
+            shape()
+            end_path(dc)
+            if widen:
+                widen_path(dc)
+            select_clip_path(dc, 5)
+            polyline(dc, *frame)
+            restore_dc(dc, -1)
+
+        for pen in pens:
+            select(dc, pen())
+            for shape in shapes:
+                clipped(shape)
+            clipped(shapes[0], widen=False)
+            clipped(shapes[2], widen=False)
+            select(dc, stock(7))
+        select(dc, ext_create_pen(0x00010000 | 0x2000, 7, ctypes.byref(brush), 0, None))
+        clipped(shapes[0], widen=False)
+        select(dc, stock(7))
+        # Scaled, then rotated, inside-frame pens.
+        select(dc, create_pen(6, 5, 0))
+        save_dc(dc)
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 10, 10, None)
+        set_viewport_ext(dc, 15, 20, None)
+        clipped(shapes[2])
+        clipped(shapes[3])
+        restore_dc(dc, -1)
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(0.9, 0.4, -0.4, 0.9, 20, 0)))
+        clipped(shapes[2])
+        clipped(shapes[3])
+        clipped(shapes[0])
+
+    yield "clip-path-inside-frame", None, clip_path_inside_frame
+
+    def arc_to_inside_frame(dc):
+        # ArcTo with an inside-frame pen: clip paths and current positions,
+        # counterclockwise and clockwise, in a covered box, and in GM_ADVANCED.
+        frame = points((-60, -60), (120, -60), (120, 120), (-60, 120), (-60, -60))
+        select(dc, create_pen(6, 7, 0))
+        boxes = ((10, 10, 50, 35, 50, 20, 10, 12), (10, 10, 15, 35, 15, 20, 10, 12))
+
+        def run():
+            for box in boxes:
+                save_dc(dc)
+                begin_path(dc)
+                move_to(dc, 2, 2, None)
+                arc_to(dc, *box)
+                line_to(dc, 2, 2)
+                end_path(dc)
+                select_clip_path(dc, 5)
+                polyline(dc, *frame)
+                restore_dc(dc, -1)
+                move_to(dc, 0, 0, None)
+                arc_to(dc, *box)
+                polyline_to(dc, *points((300, 300)))
+
+        for direction in (1, 2):
+            set_arc_direction(dc, direction)
+            run()
+        set_arc_direction(dc, 1)
+        set_graphics_mode(dc, 2)
+        run()
+        set_world_transform(dc, ctypes.byref(XForm(0.9, 0.4, -0.4, 0.9, 20, 0)))
+        run()
+
+    yield "arc-to-inside-frame", None, arc_to_inside_frame
+
     def odd_arc_to(dc):
         # The clockwise ArcTo on an odd-sized box, then its current position.
         set_arc_direction(dc, 2)
@@ -892,6 +988,237 @@ def gap_scenarios():
 
     yield "path-readback", None, path_readback
 
+    def inside_frame_readback(dc):
+        # GetPath of curves built, then widened, with inside-frame and mitred
+        # pens, in sixteenths of a pixel, written into GDI comments.
+        api("GdiComment", boolean, ptr, wintypes.UINT, ctypes.c_char_p)
+        api("GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+
+        def comment_path():
+            count = gdi.GetPath(dc, None, None, 0)
+            pts, kinds = (wintypes.POINT * max(count, 1))(), (ctypes.c_ubyte * max(count, 1))()
+            gdi.GetPath(dc, pts, kinds, count)
+            data = b"PATH" + b"".join(
+                struct.pack("<iiB", p.x, p.y, k) for p, k in zip(pts[:count], kinds[:count], strict=True)
+            )
+            gdi.GdiComment(dc, len(data), data)
+
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 16, 16, None)
+        set_viewport_ext(dc, 1, 1, None)
+        brush = LogBrush(0, 0, 0)
+        pens = (
+            lambda: ext_create_pen(0x00010000 | 0x2000 | 6, 112, ctypes.byref(brush), 0, None),
+            lambda: ext_create_pen(0x00010000 | 0x2000, 112, ctypes.byref(brush), 0, None),
+            lambda: create_pen(6, 112, 0),
+        )
+        shapes = (
+            lambda: ellipse(dc, 80, 80, 640, 480),
+            lambda: pie(dc, 80, 80, 656, 496, 640, 80, 80, 96),
+        )
+        for pen in pens:
+            select(dc, pen())
+            for shape in shapes:
+                begin_path(dc)
+                shape()
+                end_path(dc)
+                comment_path()
+                widen_path(dc)
+                comment_path()
+                abort_path(dc)
+            select(dc, stock(7))
+
+    yield "inside-frame-readback", None, inside_frame_readback
+
+    def dashed_readback(dc):
+        # GetPath of styled geometric pens widened along curves and lines, in
+        # sixteenths of a pixel, written into GDI comments.
+        api("GdiComment", boolean, ptr, wintypes.UINT, ctypes.c_char_p)
+        api("GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer)
+
+        def comment_path():
+            count = gdi.GetPath(dc, None, None, 0)
+            pts, kinds = (wintypes.POINT * max(count, 1))(), (ctypes.c_ubyte * max(count, 1))()
+            gdi.GetPath(dc, pts, kinds, count)
+            data = b"PATH" + b"".join(
+                struct.pack("<iiB", p.x, p.y, k) for p, k in zip(pts[:count], kinds[:count], strict=True)
+            )
+            gdi.GdiComment(dc, len(data), data)
+
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 16, 16, None)
+        set_viewport_ext(dc, 1, 1, None)
+        brush = LogBrush(0, 0, 0)
+        user = (wintypes.DWORD * 4)(14 * 16, 4 * 16, 6 * 16, 4 * 16)
+        pens = (
+            lambda: ext_create_pen(0x00010000 | 0x2000 | 0x0200 | 1, 64, ctypes.byref(brush), 0, None),
+            lambda: ext_create_pen(0x00010000 | 0x2000 | 0x0200 | 7, 64, ctypes.byref(brush), 4, user),
+        )
+        shapes = (
+            lambda: ellipse(dc, 64, 64, 480, 352),
+            lambda: (move_to(dc, 32, 928, None), poly_bezier_to(dc, *points((128, 640), (384, 1120), (384, 768)))),
+            lambda: (move_to(dc, 32, 32, None), line_to(dc, 400, 96), line_to(dc, 160, 320)),
+        )
+        for pen in pens:
+            select(dc, pen())
+            for shape in shapes:
+                begin_path(dc)
+                shape()
+                end_path(dc)
+                flatten_path(dc)
+                comment_path()
+                widen_path(dc)
+                comment_path()
+                abort_path(dc)
+                # The same figure widened along its curves.
+                begin_path(dc)
+                shape()
+                end_path(dc)
+                comment_path()
+                widen_path(dc)
+                comment_path()
+                abort_path(dc)
+            select(dc, stock(7))
+
+    yield "dashed-readback", None, dashed_readback
+
+
+text_out_a = api("TextOutA", boolean, ptr, integer, integer, ctypes.c_char_p, integer)
+ext_text_out_a = api(
+    "ExtTextOutA", boolean, ptr, integer, integer, wintypes.UINT, ptr, ctypes.c_char_p, wintypes.UINT, ptr
+)
+ext_text_out_w = api("ExtTextOutW", boolean, ptr, integer, integer, wintypes.UINT, ptr, ptr, wintypes.UINT, ptr)
+poly_text_out_w = api("PolyTextOutW", boolean, ptr, ptr, integer)
+set_text_align = api("SetTextAlign", wintypes.UINT, ptr, wintypes.UINT)
+set_text_extra = api("SetTextCharacterExtra", integer, ptr, integer)
+set_text_justification = api("SetTextJustification", boolean, ptr, integer, integer)
+TEXT_FACE = "Pillow WMF Test"
+FONTS = sorted((Path(__file__).resolve().parents[1] / "test/fonts").glob("*.ttf"))
+
+
+def wide(dc, x, y, text, options=0, rect=None, dx=None, glyphs=False):
+    """ExtTextOutW of a string, or of glyph indices when ``glyphs``."""
+    units = list(text) if glyphs else [ord(c) for c in text]
+    buffer = (ctypes.c_ushort * max(1, len(units)))(*units)
+    advances = (integer * len(dx))(*dx) if dx else None
+    box = wintypes.RECT(*rect) if rect else None
+    return ext_text_out_w(dc, x, y, options, ctypes.byref(box) if box else None, buffer, len(units), advances)
+
+
+def text_font(dc, height=-12, face=TEXT_FACE, **fields):
+    values = dict(escapement=0, orientation=0, weight=400, italic=0, underline=0, strikeout=0, charset=0)
+    values.update(fields)
+    font = create_font_indirect(
+        ctypes.byref(
+            LogFontW(
+                height,
+                0,
+                values["escapement"],
+                values["orientation"],
+                values["weight"],
+                values["italic"],
+                values["underline"],
+                values["strikeout"],
+                values["charset"],
+                0,
+                0,
+                3,
+                0,
+                face,
+            )
+        )
+    )
+    select(dc, font)
+    return font
+
+
+def text_scenarios():
+    def text_calls(dc):
+        text_font(dc)
+        text_out_a(dc, 10, 20, b"AB A", 4)
+        ext_text_out_a(dc, 10, 40, 0, None, b"BA", 2, None)
+        wide(dc, 10, 60, "AB")
+        wide(dc, 60, 60, "A B", dx=(7, 3, 9))
+        # Glyph indices carry advances: measuring them would read the indices as
+        # characters the controlled face lacks, through font fallback.
+        wide(dc, 60, 80, (2, 3), glyphs=True, options=0x10, dx=(8, 6))
+        text_out_a(dc, 0, 0, b"", 0)
+
+    yield "text-calls", None, text_calls
+
+    def text_options(dc):
+        text_font(dc)
+        set_bk_mode(dc, 2)
+        set_bk_color(dc, 0x00C0E0F0)
+        wide(dc, 10, 20, "AB", options=2, rect=(8, 18, 40, 36))
+        wide(dc, 10, 40, "BA", options=4, rect=(8, 38, 20, 50))
+        wide(dc, 10, 60, "A", options=6, rect=(30, 58, 20, 70))
+        set_bk_mode(dc, 1)
+        wide(dc, 50, 20, "AB", options=0x2000, dx=(6, 2, 8, -3))
+        wide(dc, 50, 40, "", options=2, rect=(50, 40, 60, 48))
+
+    yield "text-options", None, text_options
+
+    def text_alignment(dc):
+        text_font(dc)
+        for index, align in enumerate((6, 2, 8, 24, 0x0E)):
+            set_text_align(dc, align)
+            wide(dc, 64, 12 + 16 * index, "AB A")
+        set_text_align(dc, 1)
+        move_to(dc, 10, 100, None)
+        wide(dc, 0, 0, "AB")
+        wide(dc, 0, 0, "B")
+        line_to(dc, 90, 120)
+        set_text_align(dc, 0)
+        set_text_extra(dc, 3)
+        wide(dc, 10, 110, "AB")
+        set_text_extra(dc, 0)
+        set_text_justification(dc, 6, 1)
+        wide(dc, 60, 110, "A A")
+
+    yield "text-alignment", None, text_alignment
+
+    def text_mapping(dc):
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 200, 200, None)
+        set_viewport_ext(dc, 128, 100, None)
+        text_font(dc, -20)
+        text_out_a(dc, 10, 20, b"AB A", 4)
+        wide(dc, 10, 60, "BA", dx=(13, 9))
+        wide(dc, 10, 100, "AB", options=2, rect=(8, 98, 60, 130))
+        text_font(dc, 16, face="Pillow WMF Encoding")
+        text_out_a(dc, 10, 140, b"A\xe9B", 3)
+
+    yield "text-mapping", None, text_mapping
+
+    def text_advanced(dc):
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(0.9, 0.4, -0.4, 0.9, 30.0, 10.0)))
+        text_font(dc, -10)
+        wide(dc, 0, 0, "AB A")
+        set_bk_mode(dc, 2)
+        wide(dc, 0, 20, "BA")
+        set_world_transform(dc, ctypes.byref(XForm(1.5, 0.0, 0.0, 0.75, 0.0, 60.0)))
+        wide(dc, 4, 4, "AB", dx=(9, 7))
+        set_graphics_mode(dc, 1)
+        set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
+        text_font(dc, -12, escapement=300, orientation=300, underline=1)
+        wide(dc, 20, 110, "AB A")
+
+    yield "text-advanced", None, text_advanced
+
+    def text_bounds(dc):
+        set_graphics_mode(dc, 2)
+        text_font(dc, -10)
+        for row, matrix in enumerate(((0.9, 0.4, -0.4, 0.9), (1.0, 0.0, 0.45, 1.0))):
+            set_world_transform(dc, ctypes.byref(XForm(*matrix, 10.0, 10.0 + 60.0 * row)))
+            for mode in (1, 2):
+                set_bk_mode(dc, mode)
+                for column, text in enumerate(("BA", "AB", "B", "A B")):
+                    wide(dc, 28 * column, 24 * (mode - 1), text)
+
+    yield "text-bounds", None, text_bounds
+
 
 def records(data):
     position = 0
@@ -904,8 +1231,8 @@ def records(data):
 def main():
     print(f"Windows EMF recording probe: {platform.platform()}")
     print(f"Module versions: {module_versions()}")
-    for name, frame, draw in (*scenarios(), *more_scenarios(), *gap_scenarios()):
-        with reference_surface(128, 128) as (_, reference, _bits):
+    for name, frame, draw in (*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios()):
+        with private_fonts(FONTS), reference_surface(128, 128) as (_, reference, _bits):
             rect = wintypes.RECT(*frame) if frame else None
             dc = create_emf(reference, None, ctypes.byref(rect) if rect else None, None)
             result = draw(dc)

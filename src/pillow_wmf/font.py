@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from importlib.resources import files
 from io import BytesIO
-from math import ceil
+from math import ceil, floor
 from pathlib import Path
 from threading import Lock, RLock
 
@@ -16,7 +16,7 @@ from PIL import Image
 from .binary import ResourceLimitError
 from .gdi import UnsupportedOperation
 from .mapping import fixed, rounded
-from .numeric import float32
+from .numeric import efloat_sqrt, float32
 from .symbol import WINDOWS_SYMBOL_BYTES
 from .text_math import text_rotation
 
@@ -42,6 +42,8 @@ class Glyph:
     channels: int = 1
     ink_span: tuple[int, int] = (0, 0)
     background_ink_span: tuple[int, int] = (0, 0)
+    # The exact left edge of the black box, in pixels from the origin.
+    ink_left: Fraction = Fraction(0)
 
 
 GLYPH_CACHE_BYTES = 4 << 20
@@ -98,6 +100,12 @@ class RasterFont:
     synthetic_italic: bool = False
     decorations: tuple[tuple[int, int], ...] = ()
     background_cell: tuple[int, int] = (0, 0)
+    # The horizontal pixels per design unit as the scaler quantizes it, 16.16.
+    advance_fixed: Fraction = Fraction(1)
+    # Monochrome glyphs of an unhinted face are drawn by the TrueType scan
+    # rules (and simulated styles by the scaler's emboldening): a transformed
+    # font supplies the mask.
+    scan_masks: object = None
     _glyphs: dict[int, Glyph] = field(default_factory=GlyphCache)
     # One FreeType face has one glyph slot: glyph realization is serialized.
     # Copies made with dataclasses.replace share the face, cache and lock.
@@ -145,7 +153,7 @@ class RasterFont:
             advance = (
                 (slot.advance.x + 32) // 64
                 if self.hinted
-                else rounded(self.design_advances[index] * self.advance_scale)
+                else rounded(self.design_advances[index] * self.advance_fixed)
             )
             if self.escapement % 900:
                 advance = self.design_advances[index] * Fraction(self.advance_scale)
@@ -186,15 +194,20 @@ class RasterFont:
             background_ink_span = (
                 (ink_bounds.xMin // 64, ceil(Fraction(ink_bounds.xMax, 64))) if self.escapement % 900 else ink_span
             )
+            size, bearing = (bitmap.width // channels, bitmap.rows), (slot.bitmap_left, -slot.bitmap_top)
+            if self.scan_masks is not None:
+                styled = self.scan_masks.glyph(index, max_pixels)
+                size, bearing, pixels = styled.size, styled.bearing, styled.pixels
             glyph = Glyph(
-                (bitmap.width // channels, bitmap.rows),
-                (slot.bitmap_left, -slot.bitmap_top),
+                size,
+                bearing,
                 pixels,
                 advance,
                 index,
                 channels,
                 ink_span=ink_span,
                 background_ink_span=background_ink_span,
+                ink_left=Fraction(ink_bounds.xMin, 64),
             )
             self._glyphs.store(index, glyph)
         if glyph.size[0] * glyph.size[1] > max_pixels:
@@ -219,6 +232,25 @@ def _unpack_bitmap(bitmap, *, mono):
     if pitch == width:
         return data
     return b"".join(data[row : row + width] for row in range(0, rows * pitch, pitch))
+
+
+def whole_em(size, units_per_em) -> int:
+    """The scaler's whole-pixel em: the pixels per notional unit held in
+    16.16, times the em square, rounded."""
+    per_unit = Fraction(floor(Fraction(size) * 65536 / units_per_em + Fraction(1, 2)), 65536)
+    return floor(per_unit * units_per_em + Fraction(1, 2))
+
+
+def default_em_height(m21, m22) -> Fraction:
+    """The logical em of a zero font height: the device's 16 pixel default
+    through the world y axis (whose device image is (m21, m22)), rounded to
+    whole logical units with GDI's single-precision arithmetic."""
+    a, b = float32(16 * m21), float32(16 * m22)
+    length = efloat_sqrt(float32(float32(a * a) + float32(b * b)))
+    if not length:
+        return Fraction(24)
+    value = float32(float32(1 / length) * 256)
+    return Fraction(int(abs(value) + 0.5) or 24)
 
 
 class FontFace:
@@ -248,6 +280,16 @@ class FontFace:
             first = font["OS/2"].usFirstCharIndex
             self.break_character = first + 2 if first <= 1 else 32
             self.design_advances = {i: font["hmtx"][name][0] for i, name in enumerate(font.getGlyphOrder())}
+            glyf = font["glyf"]
+            # Black boxes along the baseline: the left side bearing to it plus the box width.
+            # Black boxes across it: the box bottom and top.
+            self.ink_spans, self.ink_heights = {}, {}
+            for i, name in enumerate(font.getGlyphOrder()):
+                glyph = glyf[name]
+                if getattr(glyph, "numberOfContours", 0):
+                    bearing = font["hmtx"][name][1]
+                    self.ink_spans[i] = (bearing, bearing + glyph.xMax - glyph.xMin)
+                    self.ink_heights[i] = (glyph.yMin, glyph.yMax)
             self.hinted = "fpgm" in font or any(
                 getattr(glyph, "program", None) and glyph.program.getBytecode()
                 for glyph in (font["glyf"][name] for name in font.getGlyphOrder())
@@ -303,10 +345,16 @@ class FontFace:
         face.cmap = {0xF000 | byte: face.cmap[0xF000 | byte] for byte in WINDOWS_SYMBOL_BYTES}
         return face
 
-    def realize(self, request, scale, *, missing_glyph="error"):
-        """Classic compatible-mode realization; natural width follows height."""
+    def realize(self, request, scale, *, missing_glyph="error", advanced=False, aspect=1):
+        """Classic compatible-mode realization; natural width follows height.
+
+        In GM_ADVANCED the world transform stretches the glyphs: a natural
+        width follows the horizontal scale and the height the vertical one,
+        the width also multiplied by ``aspect`` (a metafile text record's
+        font transform).
+        """
         sx, sy = scale
-        height = abs(request.height) * sy if request.height else 16
+        height = abs(request.height) * sy if request.height else default_em_height(0, sy) * abs(sy)
         device_scale = 1
         if request.height > 0:
             # Cell-to-em conversion retains a fractional size for metrics;
@@ -325,6 +373,8 @@ class FontFace:
             if request.width
             else None
         )
+        if advanced and not request.width and (abs(sx) != abs(sy) or aspect != 1):
+            width = height * Fraction(abs(sx)) / Fraction(abs(sy)) * Fraction(aspect)
         return self.at_size(
             height,
             width=width,
@@ -335,6 +385,32 @@ class FontFace:
             synthetic_italic=bool(request.italic) and not self.italic,
             underline=bool(request.underline),
             strikeout=bool(request.strikeout),
+        )
+
+    def _scan_masks(self, size, width, quality, escapement, bold, italic):
+        if quality != 3 or escapement or self.hinted:
+            return None
+        from .text_transform import TransformedFont  # noqa: PLC0415 - text_transform builds on this module
+
+        return TransformedFont(
+            self.data,
+            self.index,
+            # An isotropic scale realizes both axes at the whole-pixel em.
+            (
+                Fraction(width)
+                * (whole_em(size, self.units_per_em) / Fraction(size) if width == size else 1)
+                / self.units_per_em,
+                0,
+                0,
+                -Fraction(whole_em(size, self.units_per_em)) / self.units_per_em,
+            ),
+            self.units_per_em,
+            self.ascent,
+            self.descent,
+            self.design_advances,
+            quality=3,
+            oblique=italic,
+            embolden=bold,
         )
 
     def _em_for_cell(self, height):
@@ -376,7 +452,7 @@ class FontFace:
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
         if size <= 0:
             raise ValueError("Font pixel size must be positive")
-        mask_width = rounded(size) if width is None else width
+        mask_width = whole_em(size, self.units_per_em) if width is None else width
         width = size if width is None else width
         escapement %= 3600
         key = (
@@ -403,16 +479,23 @@ class FontFace:
                     with _FREETYPE:
                         font = _Face.from_bytes(self.data, index=self.index)
                     # Glyph IDs come from the selected cmap; FreeType only rasterizes.
-                    font.set_char_size(max(1, int(mask_width * 64)), max(1, rounded(size) * 64), 72, 72)
+                    font.set_char_size(
+                        max(1, int(mask_width * 64)), max(1, whole_em(size, self.units_per_em) * 64), 72, 72
+                    )
                 except ft.FT_Exception as error:
                     raise UnsupportedOperation(
                         f"Cannot realize font {self.family!r} at {size} pixels: {error}"
                     ) from error
 
-                def metric(units):
-                    return (units * size * 2 + self.units_per_em) // (2 * self.units_per_em)
+                # The scaler holds the vertical pixels per design unit in 16.16.
+                vertical = Fraction(round(Fraction(size) * 65536 / self.units_per_em), 65536)
 
-                ascent, bottom = self.device_metrics.get(rounded(size), (metric(self.ascent), -metric(self.descent)))
+                def metric(units):
+                    return rounded(units * vertical)
+
+                ascent, bottom = self.device_metrics.get(
+                    whole_em(size, self.units_per_em), (metric(self.ascent), -metric(self.descent))
+                )
                 background_cell = ascent, -bottom
                 if escapement % 1800:
                     # General transforms bound the font's ink with an em/64
@@ -437,10 +520,12 @@ class FontFace:
                     self.symbol,
                     missing_glyph,
                     em_width=width,
+                    advance_fixed=Fraction(round(Fraction(width) * 65536 / self.units_per_em), 65536),
                     escapement=escapement,
                     background_cell=background_cell,
                     synthetic_bold=synthetic_bold,
                     synthetic_italic=synthetic_italic,
+                    scan_masks=self._scan_masks(size, width, quality, escapement, synthetic_bold, synthetic_italic),
                     decorations=tuple(
                         (
                             rounded(position * size / self.units_per_em),

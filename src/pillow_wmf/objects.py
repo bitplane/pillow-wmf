@@ -40,6 +40,35 @@ class GlyphIndices:
 
 
 @dataclass(frozen=True)
+class UnicodeText:
+    """UTF-16 text, as ExtTextOutW receives it.
+
+    ``text`` holds one character per UTF-16 code unit, so a supplementary
+    character is a surrogate pair; explicit advances index code units.
+    """
+
+    text: str
+
+    def __post_init__(self):
+        if not isinstance(self.text, str):
+            raise TypeError("Unicode text must be a str")
+        units = self.text.encode("utf-16-le", "surrogatepass")
+        object.__setattr__(
+            self, "text", "".join(chr(int.from_bytes(units[i : i + 2], "little")) for i in range(0, len(units), 2))
+        )
+
+    @classmethod
+    def from_utf16(cls, data: bytes) -> "UnicodeText":
+        return cls("".join(chr(int.from_bytes(data[i : i + 2], "little")) for i in range(0, len(data) - 1, 2)))
+
+    def utf16(self) -> bytes:
+        return b"".join(ord(unit).to_bytes(2, "little") for unit in self.text)
+
+    def __bool__(self):
+        return bool(self.text)
+
+
+@dataclass(frozen=True)
 class EncodedFaceName:
     """A legacy face name decoded using the caller's ANSI environment."""
 

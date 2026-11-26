@@ -48,7 +48,9 @@ from .constants import (
     WHITEONBLACK,
     WINDING,
 )
+from .dbcs import DecodedText
 from .ellipse import (
+    advanced_arc,
     advanced_ellipse_cubics,
     arc_figure,
     box_corners,
@@ -58,13 +60,14 @@ from .ellipse import (
     round_rect_figure,
 )
 from .execution import CREATED_KINDS, ExecutionContext
+from .font import default_em_height
 from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon, coverage_spans
 from .gradient import mesh_triangles
 from .limits import DEFAULT_LIMITS
 from .mapping import IDENTITY_TRANSFORM, Mapping
 from .numeric import float32
-from .objects import FontRequest, GlyphIndices
+from .objects import EncodedText, FontRequest, GlyphIndices, UnicodeText
 from .paint import pattern_rop2
 from .palette import DEFAULT_COLORS, LogicalPalette, PaletteIndex
 from .raster_paint import RasterPainter
@@ -77,6 +80,14 @@ from .stroke import frame_footprint
 from .surface import Surface
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
+from .text_math import text_rotation
+from .text_transform import (
+    TransformedFont,
+    baseline_vector,
+    decoration_areas,
+    opaque_area,
+    place_run,
+)
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
@@ -97,63 +108,13 @@ def logical_color(colorref):
     return PaletteIndex(colorref & 65535) if colorref & 0x01000000 else rgb(colorref)
 
 
-# MS-WMF's defined escape records are printer operations or embedded metadata.
-# They do not affect the native RGB memory device. Keep the verified set
-# explicit: other escape numbers, including callbacks and XPS, are unsupported.
-BITMAP_NOOP_ESCAPES = frozenset(
-    {
-        0x0001,  # NEWFRAME
-        0x0002,  # ABORTDOC
-        0x0003,  # NEXTBAND
-        0x0004,  # SETCOLORTABLE
-        0x0005,  # GETCOLORTABLE
-        0x0008,  # QUERYESCSUPPORT
-        0x000A,  # STARTDOC
-        0x000B,  # ENDDOC
-        0x000C,  # GETPHYSPAGESIZE
-        0x000D,  # GETPRINTINGOFFSET
-        0x000E,  # GETSCALINGFACTOR
-        0x000F,  # META_ESCAPE_ENHANCED_METAFILE
-        0x0011,  # SETCOPYCOUNT
-        0x0013,  # PASSTHROUGH
-        0x0015,  # SETLINECAP
-        0x0016,  # SETLINEJOIN
-        0x0017,  # SETMITERLIMIT
-        0x0019,  # DRAWPATTERNRECT
-        0x0021,  # EPSPRINTING
-        0x0025,  # POSTSCRIPT_DATA
-        0x0026,  # POSTSCRIPT_IGNORE
-        0x002A,  # GETDEVICEUNITS
-        0x0100,  # GETEXTENDEDTEXTMETRICS
-        0x0102,  # GETPAIRKERNTABLE
-        0x0200,  # EXTTEXTOUT (escape, not META_EXTTEXTOUT)
-        0x0201,  # GETFACENAME
-        0x0202,  # DOWNLOADFACE
-        0x0801,  # METAFILE_DRIVER
-        0x0C01,  # QUERYDIBSUPPORT
-        0x1000,  # BEGIN_PATH
-        0x1001,  # CLIP_TO_PATH
-        0x1002,  # END_PATH
-        0x100E,  # OPENCHANNEL
-        0x100F,  # DOWNLOADHEADER
-        0x1010,  # CLOSECHANNEL
-        0x1013,  # POSTSCRIPT_PASSTHROUGH
-        0x1014,  # ENCAPSULATED_POSTSCRIPT
-        0x1015,  # POSTSCRIPT_IDENTIFY
-        0x1016,  # POSTSCRIPT_INJECTION
-        0x1017,  # CHECKJPEGFORMAT
-        0x1018,  # CHECKPNGFORMAT
-        0x1019,  # GET_PS_FEATURESETTING
-        0x11D8,  # SPCLPASSTHROUGH2
-    }
-)
+# Escapes, printer operations and embedded metadata alike, have no effect on
+# the native RGB memory device: GDI fails the ones it does not support.
 
 
 SRCCOPY = 0x00CC0020
 
 
-# Operations whose GM_ADVANCED output has no native references yet. They
-# raise rather than reuse GM_COMPATIBLE rules that may not match.
 @dataclass(frozen=True)
 class ParallelogramTransfer:
     """A source rectangle bound for a 28.4 parallelogram, with an optional mask test."""
@@ -170,55 +131,21 @@ class ParallelogramTransfer:
     blend: object = None
 
 
-# Operations whose geometry assumes axis-aligned mapping. A rotating or
-# shearing world transform refuses them rather than drawing them unrotated.
-AXIS_ALIGNED_ONLY = frozenset(
-    {
-        "text_out",
-        "ext_text_out",
-    }
-)
+# The stock fonts' logical fonts on a 96 DPI display. Most name raster
+# faces; text with them is font-limited like any face the collection lacks.
+STOCK_FONTS = {
+    10: FontRequest(height=12, width=8, weight=400, charset=255, pitch_and_family=0x31, face_name="Terminal"),
+    11: FontRequest(height=12, width=9, weight=400, pitch_and_family=0x31, face_name="Courier"),
+    12: FontRequest(height=12, width=9, weight=400, pitch_and_family=0x22, face_name="MS Sans Serif"),
+    13: FontRequest(height=16, width=7, weight=700, pitch_and_family=0x22, face_name="System"),
+    14: FontRequest(height=16, width=7, weight=700, pitch_and_family=0x22, face_name="System"),
+    16: FontRequest(height=15, width=8, weight=400, pitch_and_family=0x31, face_name="Fixedsys"),
+    17: FontRequest(height=-11, weight=400, face_name="MS Shell Dlg"),
+}
 
-# Calls that stroke with the selected pen. Extended geometric pens build
-# their outlines from axis-aligned scales, so they are refused when rotated.
-PEN_STROKES = frozenset(
-    {
-        "arc",
-        "chord",
-        "ellipse",
-        "line_to",
-        "pie",
-        "poly_bezier",
-        "poly_bezier_to",
-        "poly_draw",
-        "poly_polygon",
-        "poly_polyline",
-        "polygon",
-        "polyline",
-        "polyline_to",
-        "rectangle",
-        "round_rect",
-        "stroke_and_fill_path",
-        "stroke_path",
-    }
-)
 
-UNVERIFIED_IN_ADVANCED_MODE = frozenset(
-    {
-        "text_out",
-        "ext_text_out",
-        "set_map_mode",
-        "set_window_origin",
-        "set_window_extent",
-        "set_viewport_origin",
-        "set_viewport_extent",
-        "offset_window_origin",
-        "offset_viewport_origin",
-        "scale_window_extent",
-        "scale_viewport_extent",
-        "set_layout",
-    }
-)
+# A preparation for a call that fails natively without effect.
+NATIVE_FAILURE = object()
 
 
 def _round_half_away(value) -> int:
@@ -242,6 +169,45 @@ def alpha_channel(source, destination, source_alpha, constant):
         return div255(source * constant + destination * (255 - constant))
     alpha = div255(source_alpha * constant)
     return min(255, div255(source * constant) + div255(destination * (255 - alpha)))
+
+
+@dataclass(frozen=True)
+class MaskedPattern:
+    """A source-less MaskBlt's arguments, mask and background ROP."""
+
+    arguments: dict
+    mask: object
+    background: int
+
+
+class _PaddedSource:
+    """Source samples that are black outside the bitmap, as a clipped read leaves them."""
+
+    def __init__(self, source):
+        self.source, self.width, self.height = source, source.width, source.height
+
+    def pixel(self, x, y):
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.source.pixel(x, y)
+        return (0, 0, 0)
+
+
+def _oriented(corners, rectangle):
+    """A source rectangle with positive extents and the corners rebound to match.
+
+    A negative extent mirrors the source onto the parallelogram; an empty one
+    transfers nothing (None).
+    """
+    (x, y, width, height), (p0, p1, p2) = rectangle, corners
+    if not width or not height:
+        return None
+    if width < 0:
+        x, width = x + width, -width
+        p0, p1, p2 = p1, p0, (p2[0] + p1[0] - p0[0], p2[1] + p1[1] - p0[1])
+    if height < 0:
+        y, height = y + height, -height
+        p0, p1, p2 = p2, (p1[0] + p2[0] - p0[0], p1[1] + p2[1] - p0[1]), p0
+    return (p0, p1, p2), (x, y, width, height)
 
 
 class RasterContext(ExecutionContext[DrawingState]):
@@ -277,6 +243,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         )
         # The DC starts with the stock default palette selected.
         self._default_palette: LogicalPalette | None = self._state.palette
+        self._font_xform = None
+        self._measuring = False  # Set while a recording DC measures text.
 
     @property
     def image(self):
@@ -320,10 +288,6 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_effect(self, call):
         """Preparation lives beside its handler; simple state calls need none."""
-        if self.mapping.graphics_mode == GM_ADVANCED and call.name in UNVERIFIED_IN_ADVANCED_MODE:
-            raise UnsupportedOperation(f"{call.name} in GM_ADVANCED is not yet verified")
-        if self.mapping.rotated and call.name in AXIS_ALIGNED_ONLY:
-            raise UnsupportedOperation(f"{call.name} under a rotating or shearing world transform")
         prepare = getattr(self, f"_prepare_{call.name}", None)
         return prepare(call.kwargs) if prepare is not None else None
 
@@ -350,9 +314,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         call = token.call
         handler, prepared = token.payload
         result = self._result(call)
+        failed = prepared is NATIVE_FAILURE or (isinstance(prepared, tuple) and prepared[:1] == (NATIVE_FAILURE,))
         # Input rejection belongs in prepare; execution failures are fatal.
         with self._geometry_budget.activate():
-            handler(call, prepared, result)
+            if not failed:
+                handler(call, prepared, result)
         self._commit(call)
         if isinstance(result, Handle) and self.is_null_object(result):
             # Intern failed creations so file-slot reuse cannot leak handles.
@@ -362,12 +328,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             self._objects[result] = None
         return result
 
-    def _prepare_escape(self, a):
-        if a["escape_function"] not in BITMAP_NOOP_ESCAPES:
-            raise UnsupportedOperation(f"escape {a['escape_function']:#06x}")
-
     def _apply_escape(self, call, prepared, result):
-        pass  # Accepted printer metadata has no effect on a bitmap DC.
+        pass  # Printer escapes have no effect on a bitmap DC.
 
     _apply_realize_palette = _apply_escape
 
@@ -419,13 +381,10 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         self._state.palette.resize(a["count"])
 
-    def _prepare_set_map_mode(self, a):
-        if a["mode"] not in range(MM_TEXT, MM_ANISOTROPIC + 1):
-            raise UnsupportedOperation(f"Map mode {a['mode']}")
-
     def _apply_set_map_mode(self, call, prepared, result):
         a = call.kwargs
-        self.mapping.set_mode(a["mode"])
+        if a["mode"] in range(MM_TEXT, MM_ANISOTROPIC + 1):  # Other modes fail natively.
+            self.mapping.set_mode(a["mode"])
 
     def _apply_set_brush_origin(self, call, prepared, result):
         self._state.brush_origin = (call.kwargs["x"], call.kwargs["y"])
@@ -437,40 +396,25 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_arc_direction(self, call, prepared, result):
         self._state.arc_direction = call.kwargs["direction"]
 
-    def _advanced_arc(self, box, start, end, closure="open", angles=None):
-        """A GM_ADVANCED arc figure in world orientation.
+    def _advanced_arc(self, box, start, end, closure="open", angles=None, *, inside_frame=False):
+        """A GM_ADVANCED arc figure in world orientation; see ``advanced_arc``.
 
-        A clockwise arc is the y-mirror image of a counterclockwise one,
-        as a mirroring transform gives. ``angles`` gives the arc's directions
-        in degrees in place of the radial points.
+        With ``inside_frame``, a wide inside-frame pen insets the box, and a
+        box narrower than the pen gives None.
         """
-        left, right = sorted(box[0::2])
-        top, bottom = sorted(box[1::2])
-        (x0, y0), (x1, y1) = self.mapping.fixed_point(left, top), self.mapping.fixed_point(right, bottom)
-        if self._state.arc_direction == 2:
-            y0, y1 = y1, y0
-            start, end = (start[0], top + bottom - start[1]), (end[0], top + bottom - end[1])
-            angles = angles and tuple(-value for value in angles)
-        ceil = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
-        corners = None
-        if self.mapping.rotated:
-            # The mirror image swaps the box's top and bottom corners.
-            near, far = (bottom, top) if self._state.arc_direction == 2 else (top, bottom)
-            lt, rt, lb = (self.mapping.fixed_point(*point) for point in ((left, near), (right, near), (left, far)))
-            corners = (lt, rt, (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1]), lb)
-        return arc_figure(
-            *ceil[:2],
-            ceil[2] + 1,
-            ceil[3] + 1,
+        width = 0
+        if inside_frame and self._state.pen.style == PS_INSIDEFRAME and not self._painter().realized_pen.cosmetic:
+            width = self._state.pen.width
+        return advanced_arc(
+            self.mapping,
+            box,
             start,
             end,
+            direction=self._state.arc_direction,
             closure=closure,
             null_pen=self._state.pen.style == PS_NULL,
-            drawing_bounds=(x0, y0, x1, y1),
-            radial_bounds=(left, top, right, bottom),
-            advanced=True,
-            corners=corners,
             angles=angles,
+            inside_frame=width,
         )
 
     def _stroke_from_position(self, path, end):
@@ -490,22 +434,20 @@ class RasterContext(ExecutionContext[DrawingState]):
             return self._state.fixed_position
         return self._path_point(*self._state.position)
 
-    def _prepare_arc_to(self, a):
-        if self.mapping.graphics_mode != GM_ADVANCED:
-            raise UnsupportedOperation("arc_to in GM_COMPATIBLE")
-
     def _apply_arc_to(self, call, prepared, result):
         a = call.kwargs
         box = (a["left"], a["top"], a["right"], a["bottom"])
         end = (a["end_x"], a["end_y"])
-        path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end)
+        path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end, inside_frame=True)
+        if path is None:
+            return  # A box narrower than an inside-frame pen: nothing happens.
         # The current position is the arc's 28.4 end, floored to a logical point.
         self._stroke_from_position(path, self._floor_logical(path.commands[-1][-1]))
 
     def _floor_logical(self, point):
         """The logical point at or below a 28.4 device point, as GetCurrentPositionEx reports it."""
         if self.mapping.rotated:
-            m11, m12, m21, m22, dx, dy = self.mapping.world
+            m11, m12, m21, m22, dx, dy = self.mapping.device_world
             x, y = point[0] / 16 - dx, point[1] / 16 - dy
             det = m11 * m22 - m12 * m21
             return math.floor((x * m22 - y * m21) / det), math.floor((y * m11 - x * m12) / det)
@@ -515,12 +457,13 @@ class RasterContext(ExecutionContext[DrawingState]):
         )
 
     def _prepare_angle_arc(self, a):
-        if self.mapping.graphics_mode != GM_ADVANCED:
-            raise UnsupportedOperation("angle_arc in GM_COMPATIBLE")
+        # GM_COMPATIBLE arcs take the same 28.4 geometry, without a world transform.
         if a["radius"] < 0:
-            raise UnsupportedOperation("angle_arc: negative radii")
+            return NATIVE_FAILURE  # A radius past 2^31 fails natively.
 
     def _apply_angle_arc(self, call, prepared, result):
+        if prepared is NATIVE_FAILURE:
+            return
         a = call.kwargs
         x, y, radius = a["x"], a["y"], a["radius"]
         box = (x - radius, y - radius, x + radius, y + radius)
@@ -574,20 +517,14 @@ class RasterContext(ExecutionContext[DrawingState]):
             raise InvalidOperation("World transforms require GM_ADVANCED")
         if transform[0] * transform[3] - transform[1] * transform[2] == 0:
             raise InvalidOperation("Singular world transform")
-        if (transform[1] or transform[2]) and not self.mapping.identity_page:
-            raise UnsupportedOperation("Rotated or sheared world transforms need an identity page mapping")
         return transform
 
     def _apply_set_world_transform(self, call, prepared, result):
         self.mapping.world = prepared
 
-    def _prepare_set_layout(self, a):
-        if a["layout"] & ~9:
-            raise UnsupportedOperation(f"Layout {a['layout']}")
-
     def _apply_set_layout(self, call, prepared, result):
-        a = call.kwargs
-        self.mapping.set_layout(a["layout"])
+        # Only right-to-left layout and bitmap orientation affect drawing.
+        self.mapping.set_layout(call.kwargs["layout"] & 9)
 
     def _apply_set_polygon_fill_mode(self, call, prepared, result):
         # Any value other than WINDING fills as ALTERNATE.
@@ -730,8 +667,11 @@ class RasterContext(ExecutionContext[DrawingState]):
             brush = self._prepare_create_dib_pattern_brush(arguments)
             if brush is None:
                 raise InvalidOperation("Unusable pattern pen bitmap")
+        elif a["brush_style"] == BS_NULL:
+            # A hollow brush makes a pen that draws nothing.
+            return Pen(color, 0, PS_NULL)
         elif a["brush_style"] != BS_SOLID:
-            raise UnsupportedOperation("Extended pen brush style is not supported")
+            return None  # Bitmap brushes need a handle a metafile cannot carry; creation fails.
         if brush is not None and not kind:
             raise InvalidOperation("Cosmetic pens need a solid brush")
         if not kind:
@@ -767,7 +707,10 @@ class RasterContext(ExecutionContext[DrawingState]):
             if self._default_palette is None:
                 self._default_palette = LogicalPalette.default()
             return self._default_palette
-        raise UnsupportedOperation(f"Stock font {index}")
+        font = STOCK_FONTS.get(index)
+        if font is None:
+            raise InvalidOperation(f"Stock object {index}")
+        return font
 
     _apply_get_stock_object = _store_object
 
@@ -775,7 +718,9 @@ class RasterContext(ExecutionContext[DrawingState]):
         if a["style"] not in (BS_SOLID, BS_NULL, BS_HATCHED) or (
             a["style"] == BS_HATCHED and a["hatch"] not in range(6)
         ):
-            raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
+            # Bitmap brushes need a bitmap handle a LOGBRUSH cannot carry here,
+            # and other hatches do not exist: creation fails.
+            return None
         return Brush(logical_color(a["color"]), a["style"], a["hatch"])
 
     _apply_create_brush = _store_object
@@ -1105,7 +1050,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         alpha = None
         if alpha_format:
             if layout.depth != 32 or layout.compression != 0 or not layout.complete:
-                raise UnsupportedOperation("alpha_blend: per-pixel alpha needs a 32-bit BI_RGB DIB")
+                return NATIVE_FAILURE  # Per-pixel alpha needs a 32-bit BI_RGB source.
             # The fourth byte of each BGRA sample, in top-down order.
             rows = [
                 layout.data[layout.offset + row * layout.stride : layout.offset + (row + 1) * layout.stride][3::4]
@@ -1204,12 +1149,16 @@ class RasterContext(ExecutionContext[DrawingState]):
                 mx, my = u - a["src_x"] + a["mask_x"], v - a["src_y"] + a["mask_y"]
                 return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
 
-        return ParallelogramTransfer(source, corners, self._source_rectangle(source, rectangle), sample)
+        normalized = _oriented(corners, rectangle)
+        if normalized is None:
+            return NATIVE_FAILURE
+        corners, rectangle = normalized
+        return ParallelogramTransfer(_PaddedSource(source), corners, rectangle, sample)
 
     def _plg_mask(self, a):
         mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
         if mask.depth != 1 or not mask.complete:
-            raise UnsupportedOperation("plg_blt: masks are complete 1-bpp DIBs")
+            raise InvalidOperation("Masks are complete 1-bpp DIBs")  # GDI fails the transfer.
         return mask
 
     def _prepare_rectangular_plg_blt(self, a, x, y, width, height):
@@ -1245,44 +1194,44 @@ class RasterContext(ExecutionContext[DrawingState]):
 
         return transfer, (sample, 0x00AA0029)
 
-    def _parallelogram_source(self, bitmap):
-        layout = read_dib(bitmap, max_pixels=self.max_bitmap_pixels)
-        if not accepts_dib(layout) or not layout.complete:
-            raise UnsupportedOperation("Parallelogram transfers need a complete, directly decodable DIB")
-        return layout.decode()
-
-    @staticmethod
-    def _source_rectangle(source, rectangle):
-        x, y, width, height = rectangle
-        if width <= 0 or height <= 0:
-            raise UnsupportedOperation("Parallelogram transfers of empty or mirrored source rectangles")
-        if x < 0 or y < 0 or x + width > source.width or y + height > source.height:
-            raise UnsupportedOperation("Parallelogram transfers of rectangles outside the source")
-        return rectangle
+    def _parallelogram_source(self, bitmap, color_usage=0):
+        """The source's samples; palette indices resolve through the DC palette and
+        unwritten (RLE or truncated) pixels are black."""
+        layout = read_dib(bitmap, color_usage=color_usage, max_pixels=self.max_bitmap_pixels)
+        if accepts_dib(layout) and layout.complete and not color_usage:
+            return layout.decode()
+        return layout.decode(palette=self._state.palette.colors(), gap_color=(0, 0, 0))
 
     def _prepare_rotated_transfer(self, name, a):
         """A rotating or shearing transform maps a destination rectangle to a
         parallelogram; see ``RasterPainter.transform_blt``."""
-        if a.get("color_usage", 0) != 0 or a["source"] is None:
-            raise UnsupportedOperation(f"{name}: only RGB transfers with a source under a rotating transform")
-        source = self._parallelogram_source(a["source"])
+        x, y = a["x"], a["y"]
+        corners = tuple(
+            self.mapping.fixed_point(*point) for point in ((x, y), (x + a["width"], y), (x, y + a["height"]))
+        )
+        if a["source"] is None:
+            # Without a source the brush fills the parallelogram.
+            return ParallelogramTransfer(None, corners, (0, 0, 0, 0), rop=a["rop"])
+        source = self._parallelogram_source(a["source"], a.get("color_usage", 0))
         width, height = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         top = a["src_y"]
         if name == "stretch_dib" and read_dib(a["source"], max_pixels=self.max_bitmap_pixels).top_down is False:
             # StretchDIBits measures a bottom-up source from its last row.
             top = source.height - a["src_y"] - height
-        x, y = a["x"], a["y"]
-        corners = tuple(
-            self.mapping.fixed_point(*point) for point in ((x, y), (x + a["width"], y), (x, y + a["height"]))
-        )
-        rectangle = self._source_rectangle(source, (a["src_x"], top, width, height))
-        return ParallelogramTransfer(source, corners, rectangle, rop=a["rop"])
+        normalized = _oriented(corners, (a["src_x"], top, width, height))
+        if normalized is None:
+            return NATIVE_FAILURE
+        corners, rectangle = normalized
+        return ParallelogramTransfer(_PaddedSource(source), corners, rectangle, rop=a["rop"])
 
     def _apply_plg_blt(self, call, prepared, result):
         if isinstance(prepared, tuple):
             transfer, mask = prepared
             if isinstance(transfer, SourceTransfer):
                 self._painter().source_blt(transfer.bitmap, transfer.horizontal, transfer.vertical, SRCCOPY, mask=mask)
+            return
+        if prepared.source is None:
+            self._painter().transform_pat_blt(prepared.corners, prepared.rop)
             return
         if prepared.rop is not None:
             self._painter().transform_blt(
@@ -1309,10 +1258,13 @@ class RasterContext(ExecutionContext[DrawingState]):
             arguments |= {"src_width": source_width, "src_height": source_height}
         if a["source"] is None:
             if pattern_rop2(foreground) is None or (a["mask"] is not None and pattern_rop2(background) is None):
-                raise UnsupportedOperation("mask_blt: source-less operation uses its source")
+                return NATIVE_FAILURE, foreground, None  # A ROP that reads the missing source fails.
             if a["mask"] is None:
                 return TransferAction.PATTERN, foreground, None
-            raise UnsupportedOperation("mask_blt: masked pattern transfers")
+            mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
+            if mask.depth != 1 or not mask.complete:
+                return NATIVE_FAILURE, foreground, None
+            return (MaskedPattern(a, mask, background), foreground, None)
         if self.mapping.rotated:
             return self._prepare_rotated_mask_blt(a, arguments, foreground, background), foreground, None
         if a["mask"] is None:
@@ -1332,7 +1284,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
         source = read_dib(a["source"], max_pixels=self.max_bitmap_pixels)
         if mask.depth != 1 or not mask.complete:
-            raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
+            return NATIVE_FAILURE, foreground, None
         # Source samples are top-down; place the mask's rectangle over the source's.
         source_top = a["src_y"] if source.top_down else source.height - a["src_y"] - source_height
         mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - source_height
@@ -1349,7 +1301,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             return transfer
         mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
         if mask.depth != 1 or not mask.complete:
-            raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
+            raise InvalidOperation("Masks are complete 1-bpp DIBs")  # GDI fails the transfer.
         mask_top = (
             a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - arguments.get("src_height", a["height"])
         )
@@ -1375,11 +1327,32 @@ class RasterContext(ExecutionContext[DrawingState]):
                 mask=mask,
                 pad_bounds=transfer.pad_bounds,
             )
+        elif isinstance(transfer, MaskedPattern):
+            self._masked_pattern(transfer, foreground)
         elif transfer is TransferAction.PATTERN:
             if self.mapping.rotated:
                 self._painter().transform_pat_blt(self._prepare_pat_blt(a), foreground)
                 return
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], foreground)
+
+    def _masked_pattern(self, transfer, foreground):
+        """A source-less MaskBlt: each mask bit picks the foreground or background pattern ROP."""
+        a, mask = transfer.arguments, transfer.mask
+        painter = self._painter()
+        brush = self._state.brush
+        (x0, y0), (x1, y1) = self._point(a["x"], a["y"]), self._point(a["x"] + a["width"], a["y"] + a["height"])
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
+        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - (y1 - y0)
+        for y in range(max(0, y0), min(self.surface.height, y1)):
+            for x in range(max(0, x0), min(self.surface.width, x1)):
+                mx, my = x - x0 + a["mask_x"], y - y0 + mask_top
+                chosen = 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
+                operation = pattern_rop2(foreground if chosen else transfer.background)
+                if operation is None or not self._state.clip.contains(x, y):
+                    continue
+                color = painter.brush_color_at(x, y, brush, opaque=True) or (0, 0, 0)
+                painter.pixel(x, y, color, operation=operation)
 
     def _apply_bit_blt(self, call, prepared, result):
         a = call.kwargs
@@ -1412,9 +1385,11 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_ext_flood_fill(self, a):
         if a["mode"] not in (FLOODFILLBORDER, FLOODFILLSURFACE):
-            raise UnsupportedOperation(f"Flood fill mode {a['mode']}")
+            return NATIVE_FAILURE
 
-    _apply_ext_flood_fill = _apply_flood_fill
+    def _apply_ext_flood_fill(self, call, prepared, result):
+        if prepared is not NATIVE_FAILURE:
+            self._apply_flood_fill(call, prepared, result)
 
     def _capture_saved_state(self):
         return self._state.snapshot()
@@ -1474,7 +1449,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         dx, dy = self.mapping.clip_displacement(a["x"], a["y"])
         if self.mapping.rotated:
             # The logical offset is mapped by the transform's linear part and rounded.
-            m11, m12, m21, m22 = self.mapping.world[:4]
+            m11, m12, m21, m22 = self.mapping.device_world[:4]
             dx, dy = (
                 (1 if value >= 0 else -1) * math.floor(abs(value) + 0.5)
                 for value in (a["x"] * m11 + a["y"] * m21, a["x"] * m12 + a["y"] * m22)
@@ -1532,7 +1507,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         """
         if width < 1 or height < 1:
             return RegionMask()
-        m11, m12, m21, m22, dx, dy = self.mapping.world
+        m11, m12, m21, m22, dx, dy = self.mapping.device_world
         ratio = float32(float32(2 * min(width, height)) / float32(2 * max(width, height)))
         if 2 * width < 2 * height:
             m11, m12 = float32(ratio * m11), float32(ratio * m12)
@@ -1571,10 +1546,10 @@ class RasterContext(ExecutionContext[DrawingState]):
                 self.mapping.fixed_point(logical_right, logical_top),
                 self.mapping.fixed_point(logical_left, logical_bottom),
             )
-            if self.mapping.rotated and self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
-                lt, rt, lb = self._inside_frame_corners(
-                    lt, rt, lb, self._state.pen.width, logical_right - logical_left, logical_bottom - logical_top
-                )
+            width = self._state.pen.width
+            covered = width > min(logical_right - logical_left, logical_bottom - logical_top)
+            if self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic and not covered:
+                lt, rt, lb = self.mapping.inside_frame_corners(lt, rt, lb, width)
             rb = (rt[0] + lb[0] - lt[0], rt[1] + lb[1] - lt[1])
             corners = (lt, rt, rb, lb) if self.mapping.rotated else None
             (x0, y0), (x1, y1) = lt, rb
@@ -1605,8 +1580,8 @@ class RasterContext(ExecutionContext[DrawingState]):
                     self._state.pen.width,
                     self.mapping.linear_scale,
                 )
-                if not corners:
-                    # Rotated boxes were inset at their transformed corners.
+                if advanced_bounds is None:
+                    # GM_ADVANCED boxes were inset at their transformed corners.
                     drawing_bounds = inset_bounds
                 if covered and name in {"arc", "chord", "pie"}:
                     return
@@ -1688,12 +1663,14 @@ class RasterContext(ExecutionContext[DrawingState]):
                         (a["start_x"], a["start_y"]),
                         (a["end_x"], a["end_y"]),
                         closure="open" if name == "arc" else name,
+                        inside_frame=True,
                     )
-            if covered:
+            if self._state.recording_path:
+                # A path keeps the box an inside-frame pen would fill.
+                self._record_figure(path if name == "arc" else replace(path, closed=True))
+            elif covered:
                 for x, y in painter.contour_pixels((path.vertices,)):
                     painter.pen_pixel(x, y)
-            elif self._state.recording_path:
-                self._record_figure(path if name == "arc" else replace(path, closed=True))
             elif name == "arc":
                 painter.stroke_path(path)
             else:
@@ -1704,30 +1681,6 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if rectangle and brush.style == BS_HATCHED and self._state.rop2 in (R2_BLACK, R2_NOT, R2_NOP, R2_WHITE):
                     brush = replace(brush, style=0)
                 painter.paint_polygons((path,), miter=rectangle, reserve_outline=rectangle, brush=brush)
-
-    def _inside_frame_corners(self, lt, rt, lb, width, box_width, box_height):
-        """Inset a transformed box for an inside-frame pen, as native EBOX does.
-
-        The vectors (-width, width) and (width, width) are mapped to 28.4 and
-        halved, rounding up; the upper-right corner moves by the first, the
-        upper-left by the second and the lower-left back by the first. A box
-        narrower than the pen keeps its corners: the pen fills it.
-        """
-        if width > min(box_width, box_height):
-            return lt, rt, lb
-        m11, m12, m21, m22 = self.mapping.world[:4]
-        f = float32
-
-        def vector(x, y):
-            return tuple(_round_half_away(16 * f(f(y * b) + f(x * a))) for a, b in ((m11, m21), (m12, m22)))
-
-        first = tuple((value + 1) >> 1 for value in vector(-width, width))
-        second = tuple((value + 1) >> 1 for value in vector(width, width))
-        return (
-            (lt[0] + second[0], lt[1] + second[1]),
-            (rt[0] + first[0], rt[1] + first[1]),
-            (lb[0] - first[0], lb[1] - first[1]),
-        )
 
     _apply_ellipse = _apply_rectangle
     _apply_arc = _apply_rectangle
@@ -1782,7 +1735,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             | ETO_GLYPH_INDEX
             | ETO_PDY
         ):
-            raise UnsupportedOperation("Text output options")
+            # GDI fails text output with options it neither uses nor ignores.
+            return TextLayout(), None
         rectangle = args.get("rectangle")
         if options & (ETO_OPAQUE | ETO_CLIPPED) and rectangle is None:
             raise InvalidOperation("Text output options require a rectangle")
@@ -1801,16 +1755,30 @@ class RasterContext(ExecutionContext[DrawingState]):
             request = replace(request, escapement=-request.escapement)
         # Mapper flags constrain physical-font selection, not drawing with an
         # already explicitly supplied TrueType face. Retain them in DC state.
-        origin = self._state.position if self._state.text_state.alignment & TA_UPDATECP else (args["x"], args["y"])
-        precise_origin = tuple(Fraction(value, 16) for value in self.mapping.fixed_point(*origin))
-        origin = self._point(*origin)
+        update = self._state.text_state.alignment & TA_UPDATECP
+        origin = self._state.position if update else (args["x"], args["y"])
+        continued = self._state.text_position
+        if update and continued is not None and continued[0] == self._state.position:
+            fixed_origin = continued[1]
+            origin = tuple((value + 8) >> 4 for value in fixed_origin)
+        else:
+            fixed_origin = self.mapping.fixed_point(*origin)
+            origin = self._point(*origin)
+        precise_origin = tuple(Fraction(value, 16) for value in fixed_origin)
         alignment = self._state.text_state.alignment
         # RTL layout swaps reference edges, not glyph masks or byte order.
         if self.mapping.rtl and alignment & 6 != 6:
             alignment ^= 2
         text = args["text"]
         glyph_indices = text.indices if isinstance(text, GlyphIndices) else None
-        data = text.data if glyph_indices is None else b""
+        unicode = text.text if isinstance(text, UnicodeText) else None
+        if unicode is not None and face.symbol:
+            # The symbol cmap places its glyphs at U+F020-U+F0FF; character
+            # codes below U+0100 reach them as ANSI bytes do.
+            unicode = "".join(chr(0xF000 | ord(c)) if ord(c) < 0x100 else c for c in unicode)
+        # Unicode text has one advance per code unit; stand-in bytes keep the
+        # layout's one-byte-per-character spans.
+        data = text.data if isinstance(text, EncodedText) else bytes(len(unicode or ""))
         advances = args.get("advances", ())
         vertical_advances = ()
         if options & ETO_PDY and not advances:
@@ -1819,10 +1787,25 @@ class RasterContext(ExecutionContext[DrawingState]):
         if options & ETO_PDY and advances:
             vertical_advances = advances[1::2]
             advances = advances[::2]
-        decoded = self.fonts.decode_run(request, face, data) if glyph_indices is None else None
+        if unicode is not None:
+            decoded = DecodedText.single_byte(unicode)
+        else:
+            decoded = self.fonts.decode_run(request, face, data) if glyph_indices is None else None
         characters = decoded.text if decoded is not None else None
+        if self._general_text(request):
+            layout = self._transformed_text(
+                request, face, characters, glyph_indices, fixed_origin, alignment, advances, options, vertical_advances
+            )
+            return layout, rectangle
         layout = layout_text(
-            self.fonts.layout_font(request, face, (abs(sx), abs(sy)), characters=characters),
+            self.fonts.layout_font(
+                request,
+                face,
+                (abs(sx), abs(sy)),
+                characters=characters,
+                advanced=self.mapping.graphics_mode == GM_ADVANCED,
+                aspect=self._font_aspect(),
+            ),
             data,
             *origin,
             alignment,
@@ -1841,19 +1824,303 @@ class RasterContext(ExecutionContext[DrawingState]):
             vertical_scale=abs(sy),
             mirrored_layout=self.mapping.rtl,
             precise_origin=precise_origin,
+            device_run=self.mapping.graphics_mode == GM_ADVANCED and self._font_xform is None and abs(sx) != abs(sy),
+            measured=self._measuring,
         )
         if layout.position is not None:
             layout = replace(
                 layout,
                 position=self.mapping.advance_logical_position(self._state.position, origin, layout.position),
+                fixed_position=tuple(
+                    start + math.floor((end - pixel) * 16)
+                    for start, end, pixel in zip(fixed_origin, layout.position, origin, strict=True)
+                ),
             )
         return layout, rectangle
+
+    def _linear_transform(self):
+        """The world-to-device linear part (m11, m12, m21, m22), page scaling included."""
+        if self.mapping.rotated:
+            return self.mapping.device_world[:4]
+        (sx, _), (sy, _) = self.mapping._transform()
+        return (sx, 0.0, 0.0, sy)
+
+    def _general_text(self, request):
+        """GM_ADVANCED text whose font transform is not a positive scale takes general placement.
+
+        So does escaped GM_COMPATIBLE text under a world transform left from
+        GM_ADVANCED, which the mode switch keeps.
+        """
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            return bool(request.escapement % 3600 and self.mapping.world[:4] != IDENTITY_TRANSFORM[:4])
+        m11, m12, m21, m22 = self._linear_transform()
+        return bool(m12 or m21 or m11 < 0 or m22 < 0 or request.escapement % 3600)
+
+    def _transformed_text(
+        self, request, face, characters, glyph_indices, fixed_origin, alignment, advances, options, vertical_advances
+    ):
+        """Realize and place a run from its 28.4 origin through its full notional-to-device matrix.
+
+        See ``text_transform``.
+        """
+        text_state = self._state.text_state
+        explicit_advances = bool(advances)
+        compatible = self._font_xform is not None or self.mapping.graphics_mode != GM_ADVANCED
+        upem = face.units_per_em
+        m11, m12, m21, m22 = (Fraction(value) for value in self._linear_transform())
+        if request.height < 0:
+            em_height = Fraction(-request.height)
+        elif request.height > 0:
+            em_height = Fraction(request.height * upem, face.ascent + face.descent)
+            em_height = Fraction(int(em_height * 65536), 65536)
+        else:
+            # The default height is a 16 pixel em on the device's y axis,
+            # rounded to whole logical units.
+            em_height = default_em_height(m21, m22)
+        if request.width:
+            em_width = Fraction(abs(request.width) * upem, face.average_width)
+        else:
+            em_width = em_height * self._font_aspect()
+
+        def notional_matrix(angle):
+            if compatible:
+                # A compatible-mode font rotates by its escapement in device
+                # space, after the world transform scales it.
+                # The device angle is the requested one, mirrored or not.
+                mirrored = m11 * m22 - m12 * m21 < 0
+                sine, cosine = (Fraction(value) for value in text_rotation(-angle if mirrored else angle))
+                t11, t12 = m11 * em_width / upem, -m21 * em_height / upem
+                t21, t22 = m12 * em_width / upem, -m22 * em_height / upem
+                return (
+                    cosine * t11 + sine * t21,
+                    cosine * t12 + sine * t22,
+                    cosine * t21 - sine * t11,
+                    cosine * t22 - sine * t12,
+                )
+            # Notional (u, v), y up, to logical (x, y), y down, rotated by the angle.
+            sine, cosine = text_rotation(angle)
+            l11, l12 = em_width / upem * Fraction(cosine), -em_height / upem * Fraction(sine)
+            l21, l22 = -em_width / upem * Fraction(sine), -em_height / upem * Fraction(cosine)
+            return (
+                m11 * l11 + m21 * l21,
+                m11 * l12 + m21 * l22,
+                m12 * l11 + m22 * l21,
+                m12 * l12 + m22 * l22,
+            )
+
+        # GM_ADVANCED rotates glyphs by the orientation and lays the baseline
+        # along the escapement; compatible records use the escapement for both.
+        if not compatible and m11 * m22 - m12 * m21 < 0:
+            # The world transform mirrors GM_ADVANCED angles itself; undo the
+            # compatible-mode reflection of the escapement.
+            request = replace(request, escapement=-request.escapement)
+        orientation = request.escapement if compatible else request.orientation
+        matrix = notional_matrix(orientation)
+        advance_matrix = notional_matrix(request.escapement) if orientation != request.escapement else None
+        sine, cosine = text_rotation(request.escapement)
+        font = TransformedFont(
+            face.data,
+            face.index,
+            matrix,
+            upem,
+            # Vertical alignment takes the cell for scale-only transforms and
+            # the font-wide outline bounds for rotating or shearing ones.
+            *(face.outline_cell if matrix[1] or matrix[2] else (face.ascent, face.descent)),
+            face.design_advances,
+            quality=request.quality,
+            ink_spans=face.ink_spans,
+            ink_heights=face.ink_heights,
+            advance_matrix=advance_matrix,
+            oblique=bool(request.italic) and not face.italic,
+            embolden=request.weight >= 700 > face.weight,
+        )
+        if glyph_indices is None:
+            indices = []
+            for character in characters:
+                codepoint = ord(character)
+                index = face.cmap.get(codepoint, 0)
+                if not index and face.symbol and 0xF000 <= codepoint <= 0xF0FF:
+                    index = face.cmap.get(codepoint - 0xF000, 0)
+                if not index and self.fonts.missing_glyph == "error":
+                    raise UnsupportedOperation(f"Missing glyph for U+{codepoint:04X}")
+                indices.append(index)
+        else:
+            indices = list(glyph_indices)
+        # The device baseline is the realized font's x axis; a logical unit
+        # along it spans 1 / |W^-1 d| device units for its unit vector d.
+        column_x, column_y = (advance_matrix or matrix)[0], (advance_matrix or matrix)[2]
+        device_em = math.hypot(float(column_x), float(column_y)) * upem
+        determinant = float(m11 * m22 - m12 * m21)
+        if device_em and determinant:
+            dx, dy = float(column_x) * upem / device_em, float(column_y) * upem / device_em
+            logical_length = math.hypot(
+                (float(m22) * dx - float(m21) * dy) / determinant, (float(m11) * dy - float(m12) * dx) / determinant
+            )
+        else:
+            logical_length = 1.0
+        world_baseline = (dx / logical_length, dy / logical_length) if device_em and determinant else (1.0, 0.0)
+        baseline = baseline_vector(advance_matrix or matrix, world_baseline)
+        world_side = (
+            -float(m11) * float(sine) - float(m21) * float(cosine),
+            -float(m12) * float(sine) - float(m22) * float(cosine),
+        )
+        side = baseline_vector((matrix[1], 0, matrix[3], 0), world_side)
+        scale = baseline[2]
+        extra = _round_half_away(float32(text_state.character_extra * scale))
+        break_count, break_total = text_state.justification
+        break_extra = int(_round_half_away(float32(break_total * scale)) / break_count) if break_count > 0 else 0
+        breaks = tuple(
+            number for number, index in enumerate(indices) if index and index == face.cmap.get(face.break_character)
+        )
+        rotating = bool(matrix[1] or matrix[2] or request.escapement % 3600)
+        # Logical extents take the em width as realized in 28.4 device units
+        # along the device baseline, converted back to logical units.
+        extent_em = (
+            Fraction(_round_half_away(Fraction(device_em) * 16), 16) * Fraction(logical_length)
+            if device_em and determinant
+            else em_width
+        )
+        if not advances and rotating and advance_matrix is None:
+            # Rotated or sheared glyphs take their logical extents: the 28.4
+            # device advances (fxD) accumulated, converted to logical units
+            # and rounded half up.
+            logical, previous, bold, device = [], 0, 0, 0
+            for index in indices:
+                bold += 1 if font.embolden and face.design_advances.get(index, 0) else 0
+                device += font.glyph_advance(index)[0]
+                position = _round_half_away(Fraction(device + 16 * bold) / Fraction(scale))
+                logical.append(position - previous)
+                previous = position
+            advances = tuple(logical)
+        if not advances and not rotating:
+            # A mirroring scale places glyphs as GDI's scale-only path does: the
+            # whole-pixel device advances accumulate and each origin rounds to
+            # a logical unit.
+            device_total, logical, previous = 0, [], 0
+            for index in indices:
+                ax, ay = font.advance(index)
+                device_total += Fraction(round(math.hypot(ax, ay)) >> 32, 16)
+                position = _round_half_away(device_total / Fraction(math.hypot(*world_baseline)))
+                logical.append(position - previous)
+                previous = position
+            advances = tuple(logical)
+        run = place_run(
+            font,
+            indices,
+            fixed_origin,
+            alignment,
+            advances=advances,
+            vertical_advances=vertical_advances,
+            baseline=baseline,
+            side=side,
+            extra=extra,
+            break_extra=break_extra,
+            breaks=breaks,
+            max_pixels=self.max_bitmap_pixels,
+        )
+
+        def pixels(points):
+            return tuple((Fraction(x, 16), Fraction(y, 16)) for x, y in points)
+
+        background = (
+            pixels(
+                opaque_area(
+                    font,
+                    run,
+                    indices,
+                    explicit=bool(explicit_advances) and not self._measuring,
+                    drawn=not self._measuring,
+                    recorded_scale=scale if self._measuring and not explicit_advances and rotating else None,
+                )
+            )
+            if self._state.background_mode == OPAQUE
+            else None
+        )
+        metrics = [
+            m
+            for m, on in ((face.underline_metrics, request.underline), (face.strikeout_metrics, request.strikeout))
+            if on
+        ]
+        decorations = tuple(pixels(area) for area in decoration_areas(font, run, metrics))
+        position = fixed_position = None
+        if alignment & TA_UPDATECP and alignment & 6 != 6:
+            # The current position moves by the run's advance, back for TA_RIGHT.
+            sign = -1 if alignment & 6 == 2 else 1
+            fixed_position = tuple(start + sign * step for start, step in zip(fixed_origin, run.advance, strict=True))
+            position = self.mapping.logical_from_fixed(*fixed_position)
+        # Logical extents follow the notional widths at the logical em, rounded
+        # half up. Rotated text records its accumulated fxD in logical units instead.
+        total, extents, device = 0, [], 0
+        for index in indices:
+            total += face.design_advances.get(index, 0)
+            device += font.glyph_advance(index)[0]
+            if rotating:
+                extents.append(math.floor(Fraction(device) / Fraction(scale) + Fraction(1, 2)))
+            else:
+                extents.append(math.floor(Fraction(total) * extent_em / upem + Fraction(1, 2)))
+        return TextLayout(run.glyphs, background, position, decorations, fixed_position, tuple(extents))
+
+    def measure_text(self, args):
+        """What a recording DC derives from text output.
+
+        Returns the UTF-16 text, the logical advance of each character (the
+        explicit advances when given), the exclusive device box the run
+        covers, and the logical and 28.4 current position it leaves.
+        """
+        mode = self._state.background_mode
+        self._state.background_mode = OPAQUE  # The covered box is the opaque cell.
+        self._measuring = True
+        try:
+            layout, _ = self._prepare_text(args)
+        finally:
+            self._state.background_mode = mode
+            self._measuring = False
+        text = args["text"]
+        if isinstance(text, EncodedText):
+            request = self._state.text_state.font or self.fonts.default_font
+            characters = self.fonts.decode_run(request, self.fonts.resolve(request), text.data).text
+        elif isinstance(text, UnicodeText):
+            characters = text.text
+        else:
+            characters = "".join(map(chr, text.indices))
+        extents = layout.extents
+        advances = tuple(b - a for a, b in zip((0, *extents), extents, strict=False))
+        box = None
+        if layout.background:
+            xs = [x for x, _ in layout.background]
+            ys = [y for _, y in layout.background]
+            if layout.glyphs and self._general_text(self._state.text_state.font or self.fonts.default_font):
+                # A parallelogram counts its 28.4 bounds widened by two pixels.
+                box = (
+                    math.floor(min(xs)) - 2,
+                    math.floor(min(ys)) - 2,
+                    math.ceil(max(xs)) + 2,
+                    math.ceil(max(ys)) + 2,
+                )
+            else:
+                box = (math.floor(min(xs)), math.floor(min(ys)), math.ceil(max(xs)), math.ceil(max(ys)))
+        return characters, advances, box, layout.position, layout.fixed_position
+
+    def _font_aspect(self):
+        """A metafile text record's font transform stretches the width by its y over x scale."""
+        if self._font_xform is None:
+            return 1
+        x_scale, y_scale = self._font_xform
+        if not x_scale or not y_scale:
+            return 1
+        return Fraction(abs(y_scale)) / Fraction(abs(x_scale))
+
+    def _apply_set_font_xform(self, call, prepared, result):
+        # A DC field, not saved by SaveDC: playback sets and clears it per record.
+        a = call.kwargs
+        self._font_xform = None if a["x_scale"] is None else (float32(a["x_scale"]), float32(a["y_scale"]))
 
     def _draw_text(self, layout, rectangle, options):
         painter = self._painter()
         painter.text(layout, rectangle, options)
         if layout.position is not None:
             self._state.position = layout.position
+            self._state.text_position = (layout.position, layout.fixed_position)
         painter.decorations(layout, rectangle, options)
 
     def _pixel(self, x, y, color, *, operation=None):
@@ -1977,6 +2244,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             return
         figures = self._path_figures(close=True)
         self._state.path = None
+        if not figures:
+            return  # A path without figures makes no region; the clip is kept.
         spans = self._painter().contour_spans(
             tuple(figure.flattened().vertices for figure in figures), fill_mode=self._state.polygon_fill_mode
         )

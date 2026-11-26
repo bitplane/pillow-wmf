@@ -11,9 +11,11 @@ from pathlib import Path
 import pytest
 
 from pillow_wmf.emf import Metafile, Recorder, play
+from pillow_wmf.font import FontFace
 from pillow_wmf.gdi import UnsupportedOperation
-from pillow_wmf.objects import BitmapData, FontRequest, PaletteEntries, PaletteUpdate, RegionGeometry
+from pillow_wmf.objects import BitmapData, FontRequest, GlyphIndices, PaletteEntries, PaletteUpdate, RegionGeometry
 from pillow_wmf.raster import RasterContext
+from pillow_wmf.text import FontCollection
 
 NATIVE = json.loads((Path(__file__).with_name("native_recordings.json")).read_text())
 
@@ -527,6 +529,100 @@ def gap_scenarios():
 
     yield "clip-path-widened-shapes", None, clip_path_widened_shapes
 
+    def clip_path_inside_frame(r):
+        # SelectClipPath of paths built and widened with inside-frame pens,
+        # and of unwidened paths built with inside-frame and mitred pens.
+        frame = ((-60, -60), (120, -60), (120, 120), (-60, 120), (-60, -60))
+        pens = (
+            lambda: r.create_pen(6, 7, 0),
+            lambda: r.ext_create_pen(style=0x00010000 | 0x2000 | 6, width=7, color=0),
+        )
+        shapes = (
+            lambda: (r.move_to(10, 10), r.line_to(40, 15), r.line_to(20, 35)),
+            lambda: (r.move_to(10, 10), r.line_to(40, 15), r.line_to(20, 35), r.close_figure()),
+            lambda: r.rectangle(8, 8, 40, 30),
+            lambda: r.ellipse(5, 5, 40, 30),
+            lambda: r.round_rect(6, 4, 41, 33, 12, 9),
+            lambda: r.pie(5, 5, 41, 31, 40, 5, 5, 6),
+            lambda: r.rectangle(8, 8, 13, 30),
+            lambda: r.ellipse(8, 8, 13, 30),
+            lambda: r.pie(8, 8, 13, 30, 13, 8, 8, 20),
+            lambda: r.chord(3, 7, 44, 30, 2, 30, 44, 8),
+            lambda: (r.move_to(2, 2), r.arc_to(10, 10, 50, 35, 50, 20, 10, 12), r.line_to(2, 2)),
+            lambda: (r.arc(5, 5, 45, 35, 45, 10, 5, 30), r.close_figure()),
+        )
+
+        def clipped(shape, widen=True):
+            r.save_dc()
+            r.begin_path()
+            shape()
+            r.end_path()
+            if widen:
+                r.widen_path()
+            r.select_clip_path(5)
+            r.polyline(frame)
+            r.restore_dc(-1)
+
+        for pen in pens:
+            r.select_object(pen())
+            for shape in shapes:
+                clipped(shape)
+            clipped(shapes[0], widen=False)
+            clipped(shapes[2], widen=False)
+            r.select_object(r.get_stock_object(7))
+        r.select_object(r.ext_create_pen(style=0x00010000 | 0x2000, width=7, color=0))
+        clipped(shapes[0], widen=False)
+        r.select_object(r.get_stock_object(7))
+        # Scaled, then rotated, inside-frame pens.
+        r.select_object(r.create_pen(6, 5, 0))
+        r.save_dc()
+        r.set_map_mode(8)
+        r.set_window_extent(10, 10)
+        r.set_viewport_extent(15, 20)
+        clipped(shapes[2])
+        clipped(shapes[3])
+        r.restore_dc(-1)
+        r.set_graphics_mode(2)
+        r.set_world_transform(0.9, 0.4, -0.4, 0.9, 20, 0)
+        clipped(shapes[2])
+        clipped(shapes[3])
+        clipped(shapes[0])
+
+    yield "clip-path-inside-frame", None, clip_path_inside_frame
+
+    def arc_to_inside_frame(r):
+        # ArcTo with an inside-frame pen: clip paths and current positions,
+        # counterclockwise and clockwise, in a covered box, and in GM_ADVANCED.
+        frame = ((-60, -60), (120, -60), (120, 120), (-60, 120), (-60, -60))
+        r.select_object(r.create_pen(6, 7, 0))
+        boxes = ((10, 10, 50, 35, 50, 20, 10, 12), (10, 10, 15, 35, 15, 20, 10, 12))
+
+        def run():
+            for box in boxes:
+                r.save_dc()
+                r.begin_path()
+                r.move_to(2, 2)
+                r.arc_to(*box)
+                r.line_to(2, 2)
+                r.end_path()
+                r.select_clip_path(5)
+                r.polyline(frame)
+                r.restore_dc(-1)
+                r.move_to(0, 0)
+                r.arc_to(*box)
+                r.polyline_to(((300, 300),))
+
+        for direction in (1, 2):
+            r.set_arc_direction(direction)
+            run()
+        r.set_arc_direction(1)
+        r.set_graphics_mode(2)
+        run()
+        r.set_world_transform(0.9, 0.4, -0.4, 0.9, 20, 0)
+        run()
+
+    yield "arc-to-inside-frame", None, arc_to_inside_frame
+
     def odd_arc_to(r):
         # The clockwise ArcTo on an odd-sized box, then its current position.
         r.set_arc_direction(2)
@@ -538,14 +634,125 @@ def gap_scenarios():
     yield "odd-arc-to", None, odd_arc_to
 
 
-SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios()]
+TEXT_FACE = "Pillow WMF Test"
+FONTS = FontCollection(FontFace.from_path(path) for path in sorted((Path(__file__).parents[2] / "fonts").glob("*.ttf")))
+
+
+def text_font(r, height=-12, face=TEXT_FACE, **fields):
+    font = r.create_font(FontRequest(height=height, weight=400, quality=3, face_name=face, **fields))
+    r.select_object(font)
+    return font
+
+
+def text_scenarios():
+    def text_calls(r):
+        text_font(r)
+        r.text_out(10, 20, b"AB A")
+        r.ext_text_out(10, 40, b"BA")
+        r.ext_text_out(10, 60, "AB")
+        r.ext_text_out(60, 60, "A B", advances=(7, 3, 9))
+        r.ext_text_out(60, 80, GlyphIndices((2, 3)), advances=(8, 6))
+        r.text_out(0, 0, b"")
+
+    yield "text-calls", None, text_calls
+
+    def text_options(r):
+        text_font(r)
+        r.set_background_mode(2)
+        r.set_background_color(0x00C0E0F0)
+        r.ext_text_out(10, 20, "AB", 2, (8, 18, 40, 36))
+        r.ext_text_out(10, 40, "BA", 4, (8, 38, 20, 50))
+        r.ext_text_out(10, 60, "A", 6, (30, 58, 20, 70))
+        r.set_background_mode(1)
+        r.ext_text_out(50, 20, "AB", 0x2000, advances=(6, 2, 8, -3))
+        r.ext_text_out(50, 40, "", 2, (50, 40, 60, 48))
+
+    yield "text-options", None, text_options
+
+    def text_alignment(r):
+        text_font(r)
+        for index, align in enumerate((6, 2, 8, 24, 0x0E)):
+            r.set_text_alignment(align)
+            r.ext_text_out(64, 12 + 16 * index, "AB A")
+        r.set_text_alignment(1)
+        r.move_to(10, 100)
+        r.ext_text_out(0, 0, "AB")
+        r.ext_text_out(0, 0, "B")
+        r.line_to(90, 120)
+        r.set_text_alignment(0)
+        r.set_text_character_extra(3)
+        r.ext_text_out(10, 110, "AB")
+        r.set_text_character_extra(0)
+        r.set_text_justification(1, 6)
+        r.ext_text_out(60, 110, "A A")
+
+    yield "text-alignment", None, text_alignment
+
+    def text_mapping(r):
+        r.set_map_mode(8)
+        r.set_window_extent(200, 200)
+        r.set_viewport_extent(128, 100)
+        text_font(r, -20)
+        r.text_out(10, 20, b"AB A")
+        r.ext_text_out(10, 60, "BA", advances=(13, 9))
+        r.ext_text_out(10, 100, "AB", 2, (8, 98, 60, 130))
+        text_font(r, 16, face="Pillow WMF Encoding")
+        r.text_out(10, 140, b"A\xe9B")
+
+    yield "text-mapping", None, text_mapping
+
+    def text_advanced(r):
+        r.set_graphics_mode(2)
+        r.set_world_transform(0.9, 0.4, -0.4, 0.9, 30.0, 10.0)
+        text_font(r, -10)
+        r.ext_text_out(0, 0, "AB A")
+        r.set_background_mode(2)
+        r.ext_text_out(0, 20, "BA")
+        r.set_world_transform(1.5, 0.0, 0.0, 0.75, 0.0, 60.0)
+        r.ext_text_out(4, 4, "AB", advances=(9, 7))
+        r.set_graphics_mode(1)
+        r.set_world_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        text_font(r, -12, escapement=300, orientation=300, underline=1)
+        r.ext_text_out(20, 110, "AB A")
+
+    yield "text-advanced", None, text_advanced
+
+    def text_bounds(r):
+        r.set_graphics_mode(2)
+        text_font(r, -10)
+        for row, matrix in enumerate(((0.9, 0.4, -0.4, 0.9), (1.0, 0.0, 0.45, 1.0))):
+            r.set_world_transform(*matrix, 10.0, 10.0 + 60.0 * row)
+            for mode in (1, 2):
+                r.set_background_mode(mode)
+                for column, text in enumerate(("BA", "AB", "B", "A B")):
+                    r.ext_text_out(28 * column, 24 * (mode - 1), text)
+
+    yield "text-bounds", None, text_bounds
+
+
+SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios()]
 
 
 @pytest.mark.parametrize(("name", "frame", "draw"), SCENARIOS, ids=[name for name, _, _ in SCENARIOS])
 def test_recordings_match_native_bytes(name, frame, draw):
-    recorder = Recorder()
+    recorder = Recorder(fonts=FONTS)
     draw(recorder)
-    assert recorder.to_bytes(frame=frame).hex() == NATIVE[name]
+    assert recorder.to_bytes(frame=frame).hex() == defined_bytes(bytes.fromhex(NATIVE[name])).hex()
+
+
+def defined_bytes(data: bytes) -> bytes:
+    """Zero what GDI leaves uninitialized: the padding after an odd-length text string."""
+    data = bytearray(data)
+    position = 0
+    while position < len(data):
+        kind, size = struct.unpack_from("<II", data, position)
+        if kind == 84:  # EMR_EXTTEXTOUTW
+            chars, offset = struct.unpack_from("<II", data, position + 44)
+            if chars % 2:
+                start = position + offset + 2 * chars
+                data[start : start + 2] = bytes(2)
+        position += size
+    return bytes(data)
 
 
 def test_every_native_recording_has_a_scenario():
@@ -570,8 +777,9 @@ def test_recordings_play_back():
     ]
 
 
-def test_unrecorded_calls_are_refused_before_anything_is_written():
-    recorder = Recorder()
+def test_font_limited_text_is_refused_before_anything_is_written():
+    # Without the face, the recording DC cannot measure the text it records.
+    recorder = Recorder(fonts=FontCollection([]))
     with pytest.raises(UnsupportedOperation):
         recorder.text_out(0, 0, b"x")
     assert recorder.records == []

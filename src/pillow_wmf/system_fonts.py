@@ -283,14 +283,12 @@ class SystemFontCollection(FontCollection):
         Native GDI discards the requested ordinary family, selecting the default
         from pitch/family hints. An explicitly named symbol face keeps its symbol
         encoding. MAC_CHARSET follows this path unless the caller opts into a
-        legacy Macintosh decoding environment. Charset 254 is a UTF-8 extension,
-        not an unknown charset that can safely be treated as ANSI.
+        legacy Macintosh decoding environment. Charset 254 is the UTF-8
+        extension, decoded as UTF-8.
         """
         charset = self._charset(request)
-        if charset == 254:
-            raise UnsupportedOperation("Unsupported text charset: 254 (Windows UTF-8 extension)")
         name = self._name(request).casefold()
-        unknown = charset not in TEXT_CHARSETS and charset not in (1, 2, 255)
+        unknown = charset not in TEXT_CHARSETS and charset not in (1, 2, 254, 255)
         if charset == 77 and self.mac_codepage is not None:
             unknown = False
         if unknown:
@@ -361,7 +359,7 @@ class SystemFontCollection(FontCollection):
         # a substitute's OS/2 charset flags must not reinterpret the input.
         return decode_codepage(data, codepage)
 
-    def layout_font(self, request, face, scale, *, characters=None):
+    def layout_font(self, request, face, scale, *, characters=None, advanced=False, aspect=1):
         if characters is None:
             if face is self._symbol_face or (face.family.casefold(), face.weight, face.italic) != (
                 self._name(request).casefold(),
@@ -369,7 +367,7 @@ class SystemFontCollection(FontCollection):
                 bool(request.italic),
             ):
                 raise UnsupportedOperation("Glyph-index text requires the requested font, not a substitute")
-            return self.realize(request, face, scale)
+            return self.realize(request, face, scale, advanced=advanced, aspect=aspect)
         missing = {ord(c) for c in characters if ord(c) >= 32 and not face.cmap.get(ord(c))}
         linked = []
         if not face.symbol:
@@ -381,9 +379,14 @@ class SystemFontCollection(FontCollection):
                 fallback = self._load(entry)
                 if fallback is None or fallback is face:
                     continue
-                linked.append(fallback.realize(request, scale, missing_glyph=self.missing_glyph))
+                linked.append(
+                    fallback.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced, aspect=aspect)
+                )
                 missing.difference_update(c for c, glyph in fallback.cmap.items() if glyph)
                 self._report(request, fallback, "glyph coverage")
         if missing:
             self._report(request, face, "missing glyph")
-        return FontRun(face.realize(request, scale, missing_glyph=self.missing_glyph), tuple(linked))
+        return FontRun(
+            face.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced, aspect=aspect),
+            tuple(linked),
+        )

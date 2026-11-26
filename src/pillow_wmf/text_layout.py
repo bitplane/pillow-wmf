@@ -2,12 +2,11 @@
 
 from dataclasses import dataclass
 from fractions import Fraction
-from math import ceil
+from math import ceil, floor
 
-from .constants import TA_RTLREADING
 from .dbcs import collapse_advances
 from .font import Glyph
-from .gdi import InvalidOperation, UnsupportedOperation
+from .gdi import InvalidOperation
 from .mapping import fixed, rounded
 from .numeric import float32
 from .text_encoding import decode_single_byte
@@ -20,6 +19,11 @@ class TextLayout:
     background: tuple[tuple[int | Fraction, int | Fraction], ...] | None = None
     position: tuple[int | Fraction | float, int | Fraction | float] | None = None
     decorations: tuple[tuple[tuple[int, int], ...], ...] = ()
+    # The 28.4 device current position a TA_UPDATECP run leaves.
+    fixed_position: tuple[int, int] | None = None
+    # Logical partial extents of the run, as GetTextExtentExPoint reports
+    # them; empty when explicit advances place the glyphs.
+    extents: tuple[int, ...] = ()
 
 
 def _horizontal_script_offsets(characters, glyphs, offsets):
@@ -66,6 +70,8 @@ def layout_text(
     precise_origin=None,
     byte_lengths=(),
     byte_indexed_advances=True,
+    device_run=False,
+    measured=False,
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if characters is None and glyph_indices is None:
@@ -88,9 +94,9 @@ def layout_text(
         )
         return (x + rounded(dx), y + rounded(dy)) if snap else (x + dx, y + dy)
 
-    horizontal, vertical = alignment & 6, alignment & 24
-    if alignment & ~(31 | TA_RTLREADING) or horizontal not in (0, 2, 6) or vertical not in (0, 8, 24):
-        raise UnsupportedOperation("Text alignment")
+    # GDI reads TA_CENTER, then TA_RIGHT; TA_BASELINE, then TA_BOTTOM; other bits are ignored.
+    horizontal = 6 if alignment & 6 == 6 else alignment & 2
+    vertical = 24 if alignment & 24 == 24 else alignment & 8
     count = len(characters) if glyph_indices is None else len(glyph_indices)
     if advances and len(advances) != count:
         raise InvalidOperation("Text advance count must match the byte count")
@@ -130,14 +136,21 @@ def layout_text(
     run_width = total * scale if advances else rounded((total // 65536) / scale) * scale
     if escapement % 900 and not advances:
         run_width = Fraction(total, 65536)
+    if device_run and not advances and horizontal != 2:
+        # A non-uniform GM_ADVANCED scale centres by the device advance,
+        # without logical rounding.
+        run_width = Fraction(total // 65536)
     width = rounded(run_width)
     # Monochrome GDI places cached glyphs at integer origins. Centering an
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
-    center_offset = (width + (not mirrored_layout)) // 2
+    center_offset = floor(run_width / 2 + Fraction(1, 2)) if not mirrored_layout else width // 2
     origin_x = x - (width if horizontal == 2 else center_offset if horizontal == 6 else 0)
-    if horizontal == 2 and precise_origin is not None:
+    if horizontal == 2 and precise_origin is not None and not (device_run and not advances):
         # Subtract the advance before rounding the aligned reference point.
         origin_x = rounded(precise_origin[0] - run_width)
+    elif horizontal == 6 and precise_origin is not None and device_run:
+        # Half the 28.4 advance, toward zero, before rounding the reference point.
+        origin_x = rounded(precise_origin[0] - Fraction(int(run_width * 16) // 2, 16))
     baseline = y + (font.ascent if vertical == 0 else -font.descent if vertical == 8 else 0)
     run_height = vertical_offsets[-1]
     if mirrored_layout:
@@ -154,13 +167,23 @@ def layout_text(
     )
     if position is not None:
         position = project(*position, snap=False)
+    if device_run and not advances and precise_origin is not None and horizontal == 0:
+        # Each glyph rounds from the precise reference point.
+        start = precise_origin[0]
+        offsets = [rounded(start + mapped) - rounded(start) for mapped in mapped_offsets]
     positioned = []
     for glyph, offset, dy in zip(glyphs, offsets[:-1], vertical_offsets[:-1], strict=True):
         gx, gy = project(origin_x + offset, baseline + rounded(dy))
         positioned.append((gx + glyph.bearing[0], gy + glyph.bearing[1], glyph))
-    background_width = ceil(total * scale) if advances else ceil((Fraction(total, 65536) // scale) * scale)
-    # An opaque run must also cover protruding ink, even with negative spacing
-    # or a final explicit advance smaller than the glyph's black box.
+    if advances:
+        background_width = ceil(total * scale)
+    elif measured:
+        # A recording DC bounds the run by its rounded logical extent.
+        background_width = ceil(rounded(Fraction(total, 65536) / scale) * scale)
+    else:
+        background_width = ceil((Fraction(total, 65536) // scale) * scale)
+    # An opaque run must also cover protruding ink on either side, even with
+    # negative spacing or a final explicit advance smaller than the black box.
     right = max(
         [origin_x + background_width]
         + [
@@ -168,7 +191,16 @@ def layout_text(
             for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
         ]
     )
-    left = origin_x
+    # With explicit advances the cell also widens left to the first pixel
+    # whose centre protruding ink strictly covers, from the glyph's pixel origin.
+    left = min(
+        [origin_x]
+        + [
+            origin_x + rounded(offset) + floor(glyph.ink_left - Fraction(1, 2)) + 1
+            for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
+            if advances and glyph.size[0]
+        ]
+    )
     top, bottom = baseline - font.ascent, baseline + font.descent
     if vertical_advances:
         # PDY uses the positioned glyph bounds rather than one horizontal
@@ -224,7 +256,8 @@ def layout_text(
         for offset, thickness in font.decorations
         for span_x, span_y, span_width in decoration_spans
     )
-    return TextLayout(tuple(positioned), background, position, decorations)
+    extents = () if advances else tuple(rounded(offset / scale) for offset in mapped_offsets[1:])
+    return TextLayout(tuple(positioned), background, position, decorations, extents=extents)
 
 
 def paired_background(glyphs, offsets, vertical_offsets, origin_x, baseline, cell, x, y, escapement):

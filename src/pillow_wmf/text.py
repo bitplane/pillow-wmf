@@ -18,6 +18,7 @@ from .text_encoding import CODEPAGE_BITS as CODEPAGE_BITS
 from .text_encoding import SINGLE_BYTE_CHARSETS as SINGLE_BYTE_CHARSETS
 from .text_encoding import TEXT_CHARSETS as TEXT_CHARSETS
 from .text_encoding import UNDEFINED_BYTE_MAPPINGS as UNDEFINED_BYTE_MAPPINGS
+from .text_encoding import UTF8_CODEPAGE
 from .text_encoding import decode_codepage as decode_codepage
 from .text_encoding import decode_single_byte as decode_single_byte
 from .text_layout import TextLayout as TextLayout
@@ -40,7 +41,7 @@ class FontCollection:
         aliases=None,
         fallbacks=None,
         missing_glyph="error",
-        synthesize_styles=False,
+        synthesize_styles=True,
         wingdings_fallback=False,
         symbol_fallback=False,
         default_font: FontRequest | None = None,
@@ -79,8 +80,8 @@ class FontCollection:
             except UnsupportedOperation as error:
                 raise ValueError(f"Invalid default font: {error}") from error
 
-    def realize(self, request, face, scale):
-        primary = face.realize(request, scale, missing_glyph=self.missing_glyph)
+    def realize(self, request, face, scale, *, advanced=False, aspect=1):
+        primary = face.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced, aspect=aspect)
         fallback_faces = []
         for family in self.fallbacks.get(face.family.casefold(), ()):
             key = family.casefold(), request.weight or 400, bool(request.italic)
@@ -90,7 +91,10 @@ class FontCollection:
             if fallback.symbol:
                 raise UnsupportedOperation("A symbol face cannot be a Unicode fallback")
             fallback_faces.append(fallback)
-        linked = tuple(f.realize(request, scale, missing_glyph=self.missing_glyph) for f in fallback_faces)
+        linked = tuple(
+            f.realize(request, scale, missing_glyph=self.missing_glyph, advanced=advanced, aspect=aspect)
+            for f in fallback_faces
+        )
         control_fallback = None
         if fallback_faces:
             # Shaping fallback preserves the realized cell, not the original
@@ -113,9 +117,9 @@ class FontCollection:
             control_fallback = FontRun(raw, raw_links)
         return FontRun(primary, linked, control_fallback)
 
-    def layout_font(self, request, face, scale, *, characters=None):
+    def layout_font(self, request, face, scale, *, characters=None, advanced=False, aspect=1):
         """Prepare a run; controlled fonts never depend on host discovery."""
-        return self.realize(request, face, scale)
+        return self.realize(request, face, scale, advanced=advanced, aspect=aspect)
 
     def resolve(self, request):
         request = self.default_font if request is None else request
@@ -157,9 +161,16 @@ class FontCollection:
         self._lock = Lock()
 
     def _select_face(self, key):
+        """The exact face, else, as GDI's mapper does, the family's nearest
+        face: the requested slant first, then the closest weight. Realization
+        simulates the missing bold or italic."""
         face = self._faces.get(key)
-        if face is None and self.synthesize_styles and key[1] in (400, 700):
-            face = self._faces.get((key[0], 400, False))
+        if face is None and self.synthesize_styles:
+            family, weight, italic = key
+            candidates = [k for k in self._faces if k[0] == family]
+            if candidates:
+                best = min(candidates, key=lambda k: (k[2] != italic, abs(k[1] - weight), k[1] > weight))
+                face = self._faces[best]
         return face
 
     def _charset(self, request):
@@ -184,6 +195,8 @@ class FontCollection:
             return self.oem_codepage, 30
         if charset == 77 and self.mac_codepage is not None:
             return self.mac_codepage, 29
+        if charset == 254:
+            return UTF8_CODEPAGE, None  # The Windows UTF-8 extension.
         if encoding := TEXT_CHARSETS.get(charset):
             return encoding
         raise UnsupportedOperation(f"Unsupported text charset: {charset}")
@@ -202,6 +215,8 @@ class FontCollection:
                 raise UnsupportedOperation("Unsupported symbol font charset request")
             return DecodedText.single_byte("".join(chr(0xF000 | byte) for byte in data))
         codepage, bit = self._encoding(request)
+        if bit is None:
+            return decode_codepage(data, codepage)  # UTF-8 needs no code-page coverage.
         coverage = 1 << bit
         if charset == 255:
             page_bit = OEM_COVERAGE_BITS.get(codepage, CODEPAGE_BITS.get(codepage))

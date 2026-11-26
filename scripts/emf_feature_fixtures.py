@@ -8,7 +8,8 @@ non-integer frame scale.
 import math
 import struct
 
-from pillow_wmf.emf import Metafile, bitmaps, fixed, system, variable
+from pillow_wmf.emf import Metafile, bitmaps, fixed, system, text, variable
+from pillow_wmf.emf.objects import LogFont
 from pillow_wmf.mapping import ReferenceDevice
 
 PS_SOLID, PS_DASH, PS_DOT, PS_USERSTYLE, PS_ALTERNATE, PS_NULL = 0, 1, 2, 7, 8, 5
@@ -969,6 +970,335 @@ def rotated_insideframe(d):
     d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
 
 
+def widened_curves(d):
+    """Wide pens along curves, widened paths filled by alternation, inside-frame paths."""
+
+    def pts(*values):
+        return tuple((d.u(x), d.u(y)) for x, y in values)
+
+    def ext_pen(style, width, color):
+        d.select(lambda slot: bitmaps.ExtCreatePen(slot, 0, 0, 0, 0, PS_GEOMETRIC | style, d.u(width), 0, color, 0))
+
+    d.brush(BS_NULL, 0, 0)
+    styles = (
+        PS_JOIN_MITER | PS_ENDCAP_FLAT,
+        PS_JOIN_BEVEL | PS_ENDCAP_SQUARE,
+        PS_JOIN_MITER | PS_ENDCAP_ROUND,
+        PS_JOIN_ROUND | PS_ENDCAP_FLAT,
+    )
+    for column, style in enumerate(styles):
+        left = 4 + 31 * column
+        ext_pen(style, 5, (0x800000, 0x008000, 0x000080, 0x808000)[column])
+        d.add(fixed.Ellipse(*d.rect(left, 4, left + 26, 22)))
+        d.add(fixed.Pie(*d.rect(left, 24, left + 26, 44), *d.rect(left + 26, 30, left, 26)))
+        d.add(variable.PolyBezier((0, 0, 0, 0), pts((left + 2, 58), (left + 8, 40), (left + 24, 70), (left + 24, 48))))
+    # Widened paths filled and clipped by alternation keep the widener's
+    # self-overlapping contours.
+    d.add(fixed.SetPolyFillMode(ALTERNATE))
+    d.brush(BS_SOLID, 0x2060C0)
+    for column, style in enumerate((PS_JOIN_MITER | PS_ENDCAP_FLAT, PS_JOIN_ROUND | PS_ENDCAP_ROUND)):
+        left = 4 + 32 * column
+        ext_pen(style, 7, 0)
+        d.add(fixed.BeginPath(), fixed.Ellipse(*d.rect(left, 72, left + 28, 92)), fixed.EndPath(), fixed.WidenPath())
+        d.add(fixed.FillPath(0, 0, 0, 0))
+    d.pen(PS_SOLID, d.u(7), 0)
+    d.add(fixed.BeginPath(), variable.PolyBezier((0, 0, 0, 0), pts((70, 76), (76, 64), (96, 100), (100, 74))))
+    d.add(fixed.EndPath(), fixed.WidenPath(), fixed.FillPath(0, 0, 0, 0))
+    d.add(fixed.SaveDC())
+    ext_pen(PS_JOIN_MITER | PS_ENDCAP_FLAT, 6, 0)
+    d.add(fixed.BeginPath(), fixed.Pie(*d.rect(104, 70, 126, 94), *d.rect(126, 82, 104, 70)), fixed.EndPath())
+    d.add(fixed.WidenPath(), fixed.SelectClipPath(RGN_COPY))
+    d.brush(BS_HATCHED, 0xC02020, HS_DIAGCROSS)
+    d.add(fixed.Rectangle(*d.rect(100, 66, 128, 98)))
+    d.add(fixed.RestoreDC(-1))
+    # Inside-frame pens inset the shapes a path is built from; a box narrower
+    # than the pen keeps its full size, and a covered pie adds nothing, so
+    # SelectClipPath fails and keeps the clip.
+    d.pen(6, d.u(7), 0x008080)  # PS_INSIDEFRAME
+    d.brush(BS_SOLID, 0xC0C000)
+    d.add(fixed.BeginPath(), fixed.Rectangle(*d.rect(4, 100, 30, 124)), fixed.Ellipse(*d.rect(34, 100, 60, 124)))
+    d.add(fixed.Rectangle(*d.rect(64, 100, 69, 124)), fixed.EndPath(), fixed.StrokeAndFillPath(0, 0, 0, 0))
+    d.add(fixed.SaveDC(), fixed.IntersectClipRect(*d.rect(72, 98, 126, 126)))
+    d.add(fixed.BeginPath(), fixed.Pie(*d.rect(80, 100, 85, 124), *d.rect(85, 100, 80, 110)), fixed.EndPath())
+    d.add(fixed.SelectClipPath(RGN_AND))
+    d.brush(BS_HATCHED, 0x404040, HS_BDIAGONAL)
+    d.add(fixed.Rectangle(*d.rect(70, 96, 128, 128)))
+    d.add(fixed.RestoreDC(-1))
+
+
+def dashed_curves(d):
+    """Styled wide pens along curves, widened dashes filled by alternation, inside-frame ArcTo."""
+
+    def pts(*values):
+        return tuple((d.u(x), d.u(y)) for x, y in values)
+
+    def ext_pen(style, width, color, user=()):
+        d.select(
+            lambda slot: bitmaps.ExtCreatePen(
+                slot, 0, 0, 0, 0, PS_GEOMETRIC | style, d.u(width), 0, color, 0, tuple(d.u(v) for v in user)
+            )
+        )
+
+    d.brush(BS_NULL, 0, 0)
+    styles = (
+        (PS_DASH | PS_JOIN_MITER | PS_ENDCAP_FLAT, ()),
+        (PS_DOT | PS_JOIN_BEVEL | PS_ENDCAP_SQUARE, ()),
+        (PS_USERSTYLE | PS_JOIN_MITER | PS_ENDCAP_FLAT, (14, 4, 6, 4)),
+        (PS_USERSTYLE | PS_JOIN_ROUND | PS_ENDCAP_ROUND, (10, 6)),
+    )
+    for column, (style, user) in enumerate(styles):
+        left = 4 + 31 * column
+        ext_pen(style, 4, (0x800000, 0x008000, 0x000080, 0x808000)[column], user)
+        d.add(fixed.Ellipse(*d.rect(left, 4, left + 26, 22)))
+        d.add(fixed.Pie(*d.rect(left, 24, left + 26, 44), *d.rect(left + 26, 30, left, 26)))
+        d.add(variable.PolyBezier((0, 0, 0, 0), pts((left + 2, 58), (left + 8, 40), (left + 24, 70), (left + 24, 48))))
+    d.add(fixed.SetPolyFillMode(ALTERNATE))
+    d.brush(BS_SOLID, 0x2060C0)
+    ext_pen(PS_USERSTYLE | PS_JOIN_MITER | PS_ENDCAP_SQUARE, 6, 0, (20, 8))
+    d.add(fixed.BeginPath(), fixed.Ellipse(*d.rect(4, 70, 40, 96)), fixed.EndPath(), fixed.WidenPath())
+    d.add(fixed.FillPath(0, 0, 0, 0))
+    # ArcTo in a path with an inside-frame pen, both directions, then a box
+    # narrower than the pen.
+    d.pen(6, d.u(6), 0x008080)  # PS_INSIDEFRAME
+    d.brush(BS_SOLID, 0xC0C000)
+    for column, direction in enumerate((1, 2)):
+        left = 46 + 28 * column
+        d.add(fixed.SetArcDirection(direction))
+        d.add(fixed.BeginPath(), fixed.MoveToEx(d.u(left), d.u(70)))
+        d.add(fixed.ArcTo(*d.rect(left + 2, 70, left + 26, 96), *d.rect(left + 26, 80, left + 2, 72)))
+        d.add(fixed.CloseFigure(), fixed.EndPath(), fixed.StrokeAndFillPath(0, 0, 0, 0))
+    d.add(fixed.SetArcDirection(1))
+    d.add(fixed.BeginPath(), fixed.MoveToEx(d.u(104), d.u(70)))
+    d.add(fixed.ArcTo(*d.rect(106, 70, 110, 96), *d.rect(110, 80, 106, 72)), fixed.LineTo(d.u(124), d.u(96)))
+    d.add(fixed.EndPath(), fixed.StrokePath(0, 0, 0, 0))
+    # Inside-frame chords and arcs in a path, and a covered ellipse.
+    d.add(fixed.BeginPath(), fixed.Chord(*d.rect(4, 100, 34, 124), *d.rect(34, 104, 4, 120)))
+    d.add(fixed.Arc(*d.rect(38, 100, 68, 124), *d.rect(68, 112, 38, 112)), fixed.CloseFigure())
+    d.add(fixed.Ellipse(*d.rect(72, 100, 76, 124)), fixed.EndPath(), fixed.StrokeAndFillPath(0, 0, 0, 0))
+
+
+TEXT_FACE = "Pillow WMF Test"
+# Page units to 0.01 mm on the reference device in MM_TEXT, as GM_COMPATIBLE
+# text records carry them.
+TEXT_SCALES = (100 * 271 / 1024, 100 * 203 / 768)
+
+
+def text_font(d, height, **fields):
+    """Select the controlled layout font."""
+    face = TEXT_FACE.encode("utf-16-le").ljust(64, b"\0")
+    font = LogFont(height=height, quality=3, face_name=face, **{"weight": 400} | fields)
+    return d.select(
+        lambda slot: variable.ExtCreateFontIndirectW(slot, font, bytes(256) + struct.pack("<II", 0x08007664, 0))
+    )
+
+
+def ext_text_a(d, x, y, data, *, options=0, rectangle=None, advances=(), mode=1, scales=TEXT_SCALES):
+    """An EMR_EXTTEXTOUTA record: bytes, then advances, after the fixed fields.
+
+    Native playback always reads the rectangle field, so it is always written.
+    """
+    rectangle = rectangle if rectangle is not None else (0, 0, -1, -1)
+    start = 8 + 52 + 16
+    padded = data + bytes(-len(data) % 4)
+    dx_offset = start + len(padded) if advances else 0
+    blob = padded + b"".join(struct.pack("<i", value) for value in advances)
+    return text.ExtTextOutA((0, 0, -1, -1), mode, *scales, x, y, len(data), start, options, rectangle, dx_offset, blob)
+
+
+def text_modes(d):
+    """Controlled-font ExtTextOutA in compatible and advanced records, with rectangles, advances and alignment."""
+    text_font(d, -d.u(12))
+    d.add(fixed.SetTextColor(0x802000), fixed.SetBkColor(0xC0E0F0))
+    rows = (
+        dict(mode=1),
+        dict(mode=1, scales=(0.0, 0.0)),
+        dict(mode=2, scales=(0.0, 0.0)),
+    )
+    for row, kwargs in enumerate(rows):
+        y = d.u(4 + 18 * row)
+        d.add(ext_text_a(d, d.u(4), y, b"AB BA", **kwargs))
+        d.add(fixed.SetBkMode(2))  # OPAQUE
+        rectangle = d.rect(60, 4 + 18 * row, 120, 18 + 18 * row)
+        d.add(
+            ext_text_a(
+                d,
+                d.u(64),
+                y,
+                b"ABBA",
+                options=0x06,
+                rectangle=rectangle,
+                advances=tuple(d.u(v) for v in (10, 4, 13, 7)),
+                **kwargs,
+            )
+        )
+        d.add(fixed.SetBkMode(1))  # TRANSPARENT
+    for column, alignment in enumerate((0x18, 0x06, 0x0A)):  # baseline; centre; right bottom
+        x = d.u(20 + 40 * column)
+        d.add(fixed.SetTextAlign(alignment))
+        d.add(fixed.Rectangle(x - d.u(1), d.u(68), x + d.u(1), d.u(70)))
+        d.add(ext_text_a(d, x, d.u(70), b"AB"))
+    d.add(fixed.SetTextAlign(0))
+    # Advanced records follow a non-uniform world scale.
+    d.add(fixed.SetWorldTransform(1.5, 0.0, 0.0, 0.75, float(d.u(4)), float(d.u(84))))
+    d.add(ext_text_a(d, 0, 0, b"ABA B", mode=2, scales=(0.0, 0.0)))
+    d.add(fixed.SetBkMode(2))
+    d.add(
+        ext_text_a(
+            d, d.u(40), d.u(20), b"BA", options=0x02, rectangle=d.rect(38, 18, 60, 40), mode=2, scales=(0.0, 0.0)
+        )
+    )
+    d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+
+
+def ext_text_w(d, x, y, string, *, options=0, rectangle=None, advances=(), mode=1, scales=TEXT_SCALES):
+    """An EMR_EXTTEXTOUTW record with its fixed rectangle field."""
+    rectangle = rectangle if rectangle is not None else (0, 0, -1, -1)
+    data = string.encode("utf-16-le")
+    start = 8 + 52 + 16
+    padded = data + bytes(-len(data) % 4)
+    dx_offset = start + len(padded) if advances else 0
+    blob = padded + b"".join(struct.pack("<i", value) for value in advances)
+    chars = len(data) // 2
+    return text.ExtTextOutW((0, 0, -1, -1), mode, *scales, x, y, chars, start, options, rectangle, dx_offset, blob)
+
+
+def poly_text(cls, entries, *, mode=1, scales=TEXT_SCALES, unit=2):
+    """A PolyTextOut record; each entry is (x, y, data, options, rectangle, advances or None for offset 0).
+
+    Playback always reads an entry's advances.
+    """
+    cursor = 8 + 32 + 40 * len(entries)
+    blob = b""
+    texts = []
+    for x, y, data, options, rectangle, advances in entries:
+        string_offset = cursor + len(blob) if data else 0
+        blob += data + bytes(-len(data) % 4)
+        dx_offset = 0
+        if advances is not None:
+            dx_offset = cursor + len(blob)
+            blob += b"".join(struct.pack("<i", value) for value in advances)
+        texts.append(text.EmrText(x, y, len(data) // unit, string_offset, options, rectangle, dx_offset))
+    return cls((0, 0, -1, -1), mode, *scales, tuple(texts), blob)
+
+
+def text_records(d):
+    """Unicode ExtTextOutW, PolyTextOutA/W and SmallTextOut with the controlled encoding font."""
+    face = "Pillow WMF Encoding".encode("utf-16-le").ljust(64, b"\0")
+    font = LogFont(height=-d.u(12), weight=400, quality=3, face_name=face)
+    d.select(lambda slot: variable.ExtCreateFontIndirectW(slot, font, bytes(256) + struct.pack("<II", 0x08007664, 0)))
+    d.add(fixed.SetTextColor(0x802000), fixed.SetBkColor(0xC0E0F0), fixed.SetBkMode(1))
+    word = "A\u00e9\u20ac\u0416B"
+    d.add(ext_text_w(d, d.u(4), d.u(4), word))
+    d.add(ext_text_w(d, d.u(64), d.u(4), word, advances=tuple(d.u(v) for v in (12, 6, 14, 9, 10))))
+    d.add(ext_text_w(d, d.u(4), d.u(20), word, mode=2, scales=(0.0, 0.0)))
+    # ETO_NO_RECT leaves the fixed layout, rectangle included, in place.
+    narrow = ext_text_a(d, d.u(64), d.u(20), b"A\xe9B", options=0x100, advances=tuple(d.u(v) for v in (9, 13, 9)))
+    d.add(narrow)
+    w = lambda value: value.encode("utf-16-le")  # noqa: E731
+    d.add(fixed.SetBkMode(2))
+    d.add(
+        poly_text(
+            text.PolyTextOutW,
+            (
+                (d.u(4), d.u(36), w("B\u0416A"), 0, (0, 0, -1, -1), tuple(d.u(v) for v in (8, 12, 8))),
+                (d.u(40), d.u(36), w("\u20acA"), 0x02, d.rect(38, 36, 60, 50), tuple(d.u(v) for v in (14, 9))),
+                (d.u(64), d.u(36), b"", 0x02, d.rect(64, 38, 72, 46), ()),
+            ),
+        )
+    )
+    d.add(fixed.SetBkMode(1))
+    d.add(
+        poly_text(
+            text.PolyTextOutA,
+            (
+                (d.u(80), d.u(36), b"\xe9A", 0x100, (0, 0, -1, -1), (d.u(8), d.u(8))),
+                (d.u(100), d.u(36), b"BA", 0, (0, 0, -1, -1), (d.u(9), d.u(9))),
+            ),
+            unit=1,
+        )
+    )
+    # Small records widen 8-bit characters to UTF-16 code units.
+    small = text.SmallTextOut
+    d.add(small(d.u(4), d.u(54), 0x300, 1, *TEXT_SCALES, None, b"A\xe9B", None))
+    d.add(fixed.SetBkMode(2))
+    d.add(small(d.u(40), d.u(54), 0x002, 1, *TEXT_SCALES, d.rect(40, 54, 70, 68), w("\u0416\u20ac")))
+    d.add(fixed.SetBkMode(1))
+    d.add(small(d.u(80), d.u(54), 0x100, 2, 0.0, 0.0, None, w("BA\u00e9")))
+    # Current-position output: ExtTextOutW, then PolyTextOutW.
+    d.add(fixed.SetTextAlign(1), fixed.MoveToEx(d.u(4), d.u(72)))
+    d.add(ext_text_w(d, 0, 0, "AB"))
+    d.add(
+        poly_text(
+            text.PolyTextOutW,
+            (
+                (0, 0, w("BA"), 0, (0, 0, -1, -1), (d.u(9), d.u(9))),
+                (d.u(90), d.u(90), w("A"), 0, (0, 0, -1, -1), (d.u(9),)),
+            ),
+        )
+    )
+    d.add(ext_text_w(d, 0, 0, "\u0416"))
+    d.add(fixed.SetTextAlign(0))
+    # A zero advance offset addresses the record's own header.
+    d.add(poly_text(text.PolyTextOutW, ((d.u(4), d.u(88), w("AB"), 0, (0, 0, -1, -1), None),)))
+
+
+def text_transforms(d):
+    """Controlled-font text under non-uniform, mirrored and rotating world transforms, in both record modes."""
+    d.add(fixed.SetTextColor(0x802000), fixed.SetBkMode(1))
+    transforms = (
+        (1.5, 0.0, 0.0, 0.75),  # non-uniform
+        (-1.0, 0.0, 0.0, 1.0),  # mirrored
+        (0.9, 0.4, -0.4, 0.9),  # rotating
+        (1.0, 0.0, 0.45, 1.0),  # shearing
+    )
+    for row, matrix in enumerate(transforms):
+        for column, (mode, scales, escapement) in enumerate(
+            ((1, TEXT_SCALES, 0), (1, (13.0, 40.0), 0), (2, (0.0, 0.0), 0), (1, TEXT_SCALES, 300))
+        ):
+            text_font(d, -d.u(10), escapement=escapement, orientation=escapement)
+            x = 6 + 31 * column + (24 if matrix[0] < 0 else 0)
+            d.add(fixed.SetWorldTransform(*matrix, float(d.u(x)), float(d.u(6 + 31 * row))))
+            d.add(ext_text_a(d, 0, 0, b"AB A", mode=mode, scales=scales))
+            d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+
+
+def text_transform_styles(d):
+    """Opaque, decorated, current-position, paired-advance and synthetic text under rotation, shear and mirroring."""
+    d.add(fixed.SetTextColor(0x802000), fixed.SetBkColor(0xC0E0F0))
+    transforms = ((0.9, 0.4, -0.4, 0.9), (1.0, 0.0, 0.45, 1.0), (-1.0, 0.0, 0.0, 1.0))
+    rows = (
+        ("opaque", {}, 1),
+        ("decorated", {"underline": 1, "strikeout": 1}, 1),
+        ("current-position", {}, 1),
+        ("paired", {}, 1),
+        ("synthetic", {"weight": 700, "italic": 1}, 1),
+        ("escapement", {"escapement": 300}, 2),
+        ("default-height", {}, 1),
+    )
+    for column, matrix in enumerate(transforms):
+        for row, (kind, fields, mode) in enumerate(rows):
+            scales = TEXT_SCALES if mode == 1 else (0.0, 0.0)
+            height = 0 if kind == "default-height" else -d.u(8)
+            text_font(d, height, **fields)
+            x = 6 + 42 * column + (30 if matrix[0] < 0 else 0)
+            d.add(fixed.SetWorldTransform(*matrix, float(d.u(x)), float(d.u(4 + 17 * row))))
+            if kind == "opaque":
+                d.add(fixed.SetBkMode(2))
+                d.add(ext_text_a(d, 0, 0, b"AB A", mode=mode, scales=scales))
+                d.add(fixed.SetBkMode(1))
+            elif kind == "current-position":
+                d.add(fixed.SetTextAlign(1), fixed.MoveToEx(0, 0))
+                d.add(ext_text_a(d, 0, 0, b"AB", mode=mode, scales=scales))
+                d.add(ext_text_a(d, 0, 0, b"BA", mode=mode, scales=scales))
+                d.add(fixed.SetTextAlign(0))
+            elif kind == "paired":
+                pairs = tuple(d.u(v) for v in (7, 2, 9, -3, 6, 4))
+                d.add(ext_text_a(d, 0, 0, b"ABA", options=0x2000, advances=pairs, mode=mode, scales=scales))
+            else:
+                d.add(ext_text_a(d, 0, 0, b"AB A", mode=mode, scales=scales))
+            d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
+
+
 def rotated_color_adjustment(d):
     """HALFTONE stretches with colour adjustment under a rotating transform."""
     transfer_background(d)
@@ -1233,6 +1563,12 @@ FEATURES = (
     ("gradient-rop2", gradient_rop2, (128,)),
     ("rotated-insideframe", rotated_insideframe, (128, 51)),
     ("rotated-color-adjustment", rotated_color_adjustment, (128,)),
+    ("widened-curves", widened_curves, (128, 51)),
+    ("dashed-curves", dashed_curves, (128, 51)),
+    ("text-modes", text_modes, (128, 51)),
+    ("text-transforms", text_transforms, (128, 51)),
+    ("text-records", text_records, (128, 51)),
+    ("text-transform-styles", text_transform_styles, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),

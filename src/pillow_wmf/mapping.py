@@ -28,6 +28,11 @@ def fixed(value: float) -> int:
     return -magnitude if value < 0 else magnitude
 
 
+def _round_half_away(value) -> int:
+    magnitude = floor(abs(value) + 0.5)
+    return magnitude if value >= 0 else -magnitude
+
+
 def _int32(value: int) -> int:
     return (value + 2**31) % 2**32 - 2**31
 
@@ -115,9 +120,29 @@ class Mapping:
         return bool(self.world[1] or self.world[2])
 
     @property
+    def device_world(self) -> tuple:
+        """The world transform followed by the page mapping, as one float32 matrix.
+
+        GDI composes the two before mapping; with an identity page this is
+        the world transform itself.
+        """
+        (sx, ox), (sy, oy) = ((float32(v / w), o) for v, w, o in self._axes())
+        m11, m12, m21, m22, dx, dy = self.world
+        if (sx, sy, ox, oy) == (1, 1, 0, 0):
+            return self.world
+        return (
+            float32(m11 * sx),
+            float32(m12 * sy),
+            float32(m21 * sx),
+            float32(m22 * sy),
+            float32(float32(dx * sx) + ox),
+            float32(float32(dy * sy) + oy),
+        )
+
+    @property
     def uniform_rotation(self) -> bool:
         """Whether the world transform keeps circles round: orthogonal axes of equal length."""
-        m11, m12, m21, m22 = self.world[:4]
+        m11, m12, m21, m22 = self.device_world[:4]
         lengths = (hypot(m11, m12), hypot(m21, m22))
         return (
             abs(m11 * m21 + m12 * m22) <= 1e-3 * lengths[0] * lengths[1]
@@ -131,7 +156,7 @@ class Mapping:
         rounds both components to 28.4 and truncates its length, so a pen
         narrows slightly at oblique angles.
         """
-        m11, m12, m21, m22 = self.world[:4]
+        m11, m12, m21, m22 = self.device_world[:4]
         if not width:
             return self.linear_scale
         return tuple(
@@ -156,7 +181,7 @@ class Mapping:
         transformed unit vectors, which a rotation preserves.
         """
         if self.rotated:
-            m11, m12, m21, m22 = (Fraction(value) for value in self.world[:4])
+            m11, m12, m21, m22 = (Fraction(value) for value in self.device_world[:4])
             return tuple(Fraction(hypot(a, b)) for a, b in ((m11, m12), (m21, m22)))
         x, y = (Fraction(v, w) for v, w in zip(self.viewport_extent, self.window_extent, strict=True))
         x, y = x * Fraction(self.world[0]), y * Fraction(self.world[3])
@@ -252,7 +277,7 @@ class Mapping:
         translation.
         """
         if self.rotated:
-            m11, m12, m21, m22, dx, dy = self.world
+            m11, m12, m21, m22, dx, dy = self.device_world
             return (
                 fixed(float32(float32(x * m11) + float32(y * m21))) + fixed(dx),
                 fixed(float32(float32(x * m12) + float32(y * m22))) + fixed(dy),
@@ -264,12 +289,48 @@ class Mapping:
             result.append(coordinate)
         return tuple(result)
 
+    def inside_frame_corners(self, lt, rt, lb, width):
+        """Inset a box's 28.4 corners for an inside-frame pen, as native EBOX does.
+
+        The vectors (-width, width) and (width, width) are mapped through the
+        linear world-to-device transform to 28.4 and halved, rounding up; the
+        upper-right corner moves by the first, the upper-left by the second and
+        the lower-left back by the first.
+        """
+        if self.rotated:
+            m11, m12, m21, m22 = self.device_world[:4]
+        else:
+            (m11, _), (m22, _) = self._transform()
+            m12 = m21 = 0.0
+        f = float32
+
+        def vector(x, y):
+            return tuple(_round_half_away(16 * f(f(y * b) + f(x * a))) for a, b in ((m11, m21), (m12, m22)))
+
+        first = tuple((value + 1) >> 1 for value in vector(-width, width))
+        second = tuple((value + 1) >> 1 for value in vector(width, width))
+        return (
+            (lt[0] + second[0], lt[1] + second[1]),
+            (rt[0] + first[0], rt[1] + first[1]),
+            (lb[0] - first[0], lb[1] - first[1]),
+        )
+
     def rotated_logical_point(self, x, y) -> tuple[int, int]:
         """The nearest logical point to a 28.4 device point under a rotating transform."""
-        m11, m12, m21, m22, dx, dy = self.world
+        m11, m12, m21, m22, dx, dy = self.device_world
         x, y = x / 16 - dx, y / 16 - dy
         det = m11 * m22 - m12 * m21
         return rounded((x * m22 - y * m21) / det), rounded((y * m11 - x * m12) / det)
+
+    def logical_from_fixed(self, x: int, y: int) -> tuple[float, float]:
+        """The exact logical point a 28.4 device point maps back to."""
+        x, y = x / 16, y / 16
+        if self.rotated:
+            m11, m12, m21, m22, dx, dy = self.device_world
+            x, y = x - dx, y - dy
+            det = m11 * m22 - m12 * m21
+            return (x * m22 - y * m21) / det, (y * m11 - x * m12) / det
+        return tuple((value - origin) / scale for value, (scale, origin) in zip((x, y), self._transform(), strict=True))
 
     def logical_point(self, x, y) -> tuple[int, int]:
         """DPtoLP: the nearest logical point to a device point."""

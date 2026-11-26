@@ -3,7 +3,9 @@
 import pytest
 
 from pillow_wmf import FormatError, PlaceableHeader, RasterContext, Recorder, UnsupportedOperation
+from pillow_wmf.objects import FontRequest
 from pillow_wmf.plugin import LOADERS
+from pillow_wmf.text import FontCollection
 from pillow_wmf.wmf import loader
 
 
@@ -54,6 +56,7 @@ def test_play_into_maps_the_placement_onto_the_context():
 
 def test_play_into_is_strict():
     recorder = Recorder()
-    recorder.escape(0x7777, b"")
+    recorder.select_object(recorder.create_font(FontRequest(height=-12, face_name="Unavailable Face")))
+    recorder.text_out(0, 0, b"x")
     with pytest.raises(UnsupportedOperation):
-        loader.play_into(RasterContext(4, 4), recorder.to_bytes(), None)
+        loader.play_into(RasterContext(4, 4, fonts=FontCollection([])), recorder.to_bytes(), None)

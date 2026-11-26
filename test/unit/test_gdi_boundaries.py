@@ -20,7 +20,6 @@ from pillow_wmf import (
     Recorder,
     RegionGeometry,
     TraceContext,
-    UnsupportedOperation,
     binary,
     play,
 )
@@ -80,9 +79,9 @@ def test_font_resolution_accepts_unicode_names_without_an_ansi_round_trip(face):
     fonts = FontCollection([face], aliases={"字体": face.family})
     assert fonts.resolve(FontRequest(face_name="字体")) is face
     recorder = Recorder()
-    with pytest.raises(UnsupportedOperation, match="explicitly encoded"):
-        recorder.create_font(FontRequest(face_name="字体"))
-    assert not recorder.records
+    recorder.create_font(FontRequest(face_name="字体"))
+    # WMF face names are ANSI: characters the code page lacks become "?".
+    assert recorder.records[0].font.face_name.rstrip(b"\0") == b"??"
 
 
 def test_wmf_region_conversion_owns_signed_words_and_null_creation():
@@ -150,7 +149,7 @@ def test_encoded_text_keeps_bytes_for_selected_font_decoding():
 
 def test_explicit_text_payload_rejects_conflicting_encoding_flags():
     trace = TraceContext()
-    with pytest.raises(InvalidOperation, match="EncodedText"):
+    with pytest.raises(InvalidOperation, match="Character text"):
         trace.ext_text_out(0, 0, EncodedText(b"A"), ETO_GLYPH_INDEX)
     with pytest.raises(InvalidOperation, match="ext_text_out"):
         trace.text_out(0, 0, GlyphIndices((1,)))

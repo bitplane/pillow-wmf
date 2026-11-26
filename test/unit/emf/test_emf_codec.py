@@ -112,9 +112,9 @@ def examples():
     for cls in (bitmaps.MaskBlt, bitmaps.PlgBlt, bitmaps.AlphaBlend, bitmaps.TransparentBlt):
         offset = 8 + struct.calcsize("<" + cls.wire_layout)
         yield zeroed(cls, **blit_source(offset))
-    entry = text.EmrText(1, 2, 2, 108, 0x100, None, 112)
+    entry = text.EmrText(1, 2, 2, 80, 0x100, (0, 0, 0, 0), 84)
     yield text.PolyTextOutA((0, 0, 9, 9), 1, 0.0, 0.0, (entry,), b"hi\0\0" + bytes(8))
-    entry = text.EmrText(1, 2, 1, 108, 0, (0, 0, 9, 9), 0)
+    entry = text.EmrText(1, 2, 1, 80, 0, (0, 0, 9, 9), 0)
     yield text.PolyTextOutW((0, 0, 9, 9), 1, 0.0, 0.0, (entry,), "x\0".encode("utf-16-le"))
     yield text.SmallTextOut(1, 2, 0x300, 1, 0.0, 0.0, None, b"abc", b"\xa5")
     yield text.SmallTextOut(1, 2, 0, 1, 0.0, 0.0, (0, 0, 9, 9), "hi".encode("utf-16-le"))
@@ -130,7 +130,8 @@ def examples():
     yield system.ExtEscape(2, b"")
     yield system.NamedEscape(3, b"drv\0", b"data")
     yield system.SetLinkedUFIs(((1, 2), (3, 4)))
-    yield text.ExtTextOutA((0, 0, 9, 9), 1, 0.0, 0.0, 3, 4, 3, 60, 0x0100, None, 64, b"abc\0" + bytes(12))
+    # Too short for the rectangle and advance offset that playback requires.
+    yield text.ExtTextOutA((0, 0, 9, 9), 1, 0.0, 0.0, 3, 4, 3, 56, 0x0100, None, None, b"abc\0" + bytes(12))
 
 
 CASES = tuple(examples())
@@ -316,7 +317,7 @@ def test_writer_validates_eof_placement():
         UnknownRecord(1, b"abc"),
         variable.Comment(b"abc", b""),
         variable.PolyDraw((0, 0, 0, 0), ((0, 0),), b""),
-        text.ExtTextOutW((0, 0, 0, 0), 1, 1.0, 1.0, 0, 0, 0, 0, 0x0100, (0, 0, 0, 0), 0),
+        text.ExtTextOutW((0, 0, 0, 0), 1, 1.0, 1.0, 0, 0, 0, 0, 0x0100, (0, 0, 0, 0), None),
         variable.ExtCreateFontIndirectW(1, LogFont(face_name=b"short")),
     ],
 )
@@ -374,8 +375,9 @@ def test_offset_addressed_data():
     assert wide.text.decode("utf-16-le") == "hi"
     assert wide.advances == (0, 0)
     narrow = next(case for case in CASES if isinstance(case, text.ExtTextOutA))
-    assert narrow.data_offset() == 60
+    assert narrow.data_offset() == 56
     assert narrow.text == b"abc"
+    assert not narrow.playable()
     pen = next(case for case in CASES if isinstance(case, bitmaps.ExtCreatePen) and case.data)
     assert pen.data_offset() == 52
     assert (pen.bitmap_info, pen.bits) == (DIB, PIXEL)

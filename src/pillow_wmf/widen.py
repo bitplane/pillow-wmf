@@ -1,10 +1,8 @@
-"""Geometric pen outlines: end caps, joins and the cap perpendicular.
+"""Geometric pen geometry: the pen perpendicular, square caps, miter limits
+and mitred Rectangle frame outlines.
 
-Extended geometric pens widen each figure into closed outlines that are
-filled with the winding rule. Round caps with round joins keep the support
-vertex construction shared with wide CreatePen strokes. Every other
-combination places the body edges on a perpendicular vector chosen from the
-realized pen polygon, so flat and square caps, bevels and miters share it.
+Paths and wide strokes are widened by ``widener``; this module holds the pen
+vector arithmetic it shares and the frame outline mitred Rectangle frames use.
 """
 
 from __future__ import annotations
@@ -12,7 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from fractions import Fraction
-from math import atan2, floor, hypot, pi
+from math import atan2, floor, pi
 
 from .geometry import Point, Polygon, StrokeSegment
 from .numeric import float32
@@ -181,7 +179,13 @@ def _perpendicular(pen: PenGeometry, direction: Point) -> Point:
 
 
 def _world_vector(shape: PenShape, vector: Point) -> tuple[int, int]:
-    """A 28.4 device vector taken back through the pen's world transform, in whole world units."""
+    """A 28.4 device vector taken back through the pen's world transform, in whole world units.
+
+    An identity transform converts the 28.4 components directly, rounding
+    down; others round the transformed components half away from zero.
+    """
+    if shape.transform is None and shape.scale == (1.0, 1.0):
+        return (vector[0] >> 4, vector[1] >> 4)
     vx, vy = vector[0] / 16, vector[1] / 16
     if shape.transform is not None:
         m11, m12, m21, m22 = shape.transform
@@ -278,17 +282,6 @@ def _miter_in_limit(shape: PenShape, vertex: Point, tip: Point) -> bool:
     wx, wy = _world_vector(shape, (tip[0] - vertex[0], tip[1] - vertex[1]))
     threshold = float32(float32(float32(shape.width * 0.5) * float32(shape.miter_limit)) ** 2)
     return float32(float32(float32(wy) * float32(wy)) + float32(float32(wx) * float32(wx))) <= threshold
-
-
-def _miter_fits(first_direction, second_direction, limit) -> bool:
-    # Miter length over line width is 1 / sin(half the interior angle).
-    dot = -_dot(first_direction, second_direction)
-    lengths = hypot(*first_direction) * hypot(*second_direction)
-    if not lengths:
-        return False
-    cosine = max(-1.0, min(1.0, dot / lengths))
-    half_sine_squared = (1 - cosine) / 2
-    return half_sine_squared > 0 and 1 / half_sine_squared <= limit * limit
 
 
 def _sweep(shape: PenShape, origin: Point, start: Point, start_edge, end_edge, through: Point, *, join=True) -> Polygon:
@@ -441,79 +434,3 @@ def outline(
     points += _cap_points(shape, last.end, last.direction, perps[-1], start=False)
     points += side(1, range(count - 1, seam, -1))
     return [side(1, range(seam, 0, -1)) + points]
-
-
-def dash_figures(segments, pattern, scale, *, shorten=0, closed=False, logical=None):
-    """Split a figure into dashes measured in logical units along its segments.
-
-    Lengths divide the device segment by ``scale``, or with ``logical``,
-    measure between the logical points it maps each device point back to.
-    Returns ``(segments, seam)`` pairs. On a ``closed`` figure a dash still
-    drawing at the closing vertex runs on into the first dash; ``seam`` is
-    the index of the closing vertex's joint in that merged dash, else zero.
-
-    ``pattern`` alternates dash and gap lengths, starting with a dash at the
-    figure's start; an odd pattern swaps roles on each repeat. Each dash end
-    is pulled back by ``shorten`` (the pen width, for caps that extend past
-    the end), leaving at least a zero-length dash. Dash ends are interpolated
-    along the device segment and rounded to 28.4 points; a dash keeps the
-    direction of the segment it lies on.
-    """
-    sx, sy = (abs(float(value)) * 16 for value in scale)
-    lengths = [float(value) for value in pattern]
-    if sum(lengths) <= 0:
-        return [(tuple(segments), 0)]
-
-    def measure(start, end):
-        if logical is not None:
-            (x0, y0), (x1, y1) = logical(*start), logical(*end)
-            return hypot(x1 - x0, y1 - y0)
-        (x0, y0), (x1, y1) = start, end
-        return hypot((x1 - x0) / sx if sx else 0.0, (y1 - y0) / sy if sy else 0.0)
-
-    spans, offset = [], 0.0
-    for segment in segments:
-        length = measure(segment.start, segment.end)
-        spans.append((offset, length, segment))
-        offset += length
-    total = offset
-    intervals, position, index, drawing = [], 0.0, 0, True
-    wraps = False
-    while position < total:
-        length = lengths[index]
-        if drawing:
-            intervals.append((position, min(total, max(position, position + length - shorten))))
-            wraps = position + length >= total
-        position += length
-        # Roles alternate through the pattern, so an odd pattern swaps them on repeat.
-        drawing, index = not drawing, (index + 1) % len(lengths)
-    figures = []
-
-    def point(span, at):
-        start, length, segment = span
-        if at <= start:
-            return segment.start
-        if at >= start + length:
-            return segment.end
-        t = (at - start) / length
-        (x0, y0), (x1, y1) = segment.start, segment.end
-        return (floor(x0 + (x1 - x0) * t + 0.5), floor(y0 + (y1 - y0) * t + 0.5))
-
-    for low, high in intervals:
-        figure = []
-        for span in spans:
-            start, length, segment = span
-            if start + length < low or start > high or (length and start + length == low):
-                continue
-            a, b = point(span, low), point(span, high)
-            if a != b or not figure and low == high:
-                figure.append(StrokeSegment(a, b, segment.direction))
-            if start + length >= high:
-                break
-        if figure:
-            figures.append(tuple(figure))
-    pairs = [(figure, 0) for figure in figures]
-    if closed and wraps and len(figures) > 1:
-        tail = figures.pop()
-        pairs = [(tail + figures[0], len(tail))] + pairs[1:-1]
-    return pairs

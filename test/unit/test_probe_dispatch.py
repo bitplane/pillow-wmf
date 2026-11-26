@@ -178,6 +178,7 @@ EXPECTED = {
     "module-ids": ("scripts/probe-windows-module-ids.py", "module-ids", True, True),
     "color-engine-phase": ("scripts/probe-windows-color-engine-phase.py", "color-engine-phase", True, True),
     "coordinate-limits": ("scripts/probe-windows-coordinate-limits.py", "coordinate-limits", True, True),
+    "glyph-transforms": ("scripts/probe-windows-glyph-transforms.py", "glyph-transforms", True, True),
 }
 
 

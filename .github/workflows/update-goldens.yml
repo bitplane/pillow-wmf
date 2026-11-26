@@ -90,6 +90,7 @@ on:
           - module-ids
           - color-engine-phase
           - coordinate-limits
+          - glyph-transforms
   push:
     branches: [master]
     paths:

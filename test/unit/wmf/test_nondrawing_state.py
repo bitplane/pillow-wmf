@@ -25,11 +25,10 @@ def test_comment_payload_is_opaque_to_bitmap_device(data):
     assert context.calls[-1].kwargs["data"] == data
 
 
-def test_unknown_escape_is_still_rejected_without_committing_call():
+def test_unknown_escape_has_no_effect():
     context = RasterContext(8, 8)
-    with pytest.raises(UnsupportedOperation, match="escape"):
-        context.escape(0x7777, b"opaque")
-    assert context.calls == []
+    context.escape(0x7777, b"opaque")
+    assert context.image.getextrema() == ((255, 255),) * 3
 
 
 def test_text_setup_is_recorded_and_saved_without_rendering_text():

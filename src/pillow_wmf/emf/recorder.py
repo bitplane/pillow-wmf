@@ -16,8 +16,8 @@ header summarizes the drawing.
   bounds. Regions are written inline as region data, never as objects.
 
 The recording DC starts in MM_TEXT and GM_COMPATIBLE on ``device``. Text
-output waits for the font work and is refused, as are the few cases
-``docs/emf.md`` lists.
+records as EMR_EXTTEXTOUTW, measured with the recorder's fonts; see
+``docs/emf.md``.
 """
 
 from __future__ import annotations
@@ -27,18 +27,31 @@ import struct
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from math import ceil, cos, floor, radians, sin
+from math import cos, floor, radians, sin
 
-from ..bitmap import read_dib
-from ..constants import GM_ADVANCED, GM_COMPATIBLE, MM_TEXT, PS_INSIDEFRAME, PS_NULL
-from ..ellipse import arc_figure
+from ..bitmap import encode_dib24, read_dib
+from ..bitmap16 import read_bitmap16
+from ..constants import (
+    ETO_CLIPPED,
+    ETO_GLYPH_INDEX,
+    ETO_OPAQUE,
+    GM_ADVANCED,
+    GM_COMPATIBLE,
+    MM_TEXT,
+    PS_INSIDEFRAME,
+    PS_NULL,
+)
+from ..ellipse import advanced_arc, arc_figure
 from ..gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from ..geometry import DevicePath, coverage_spans
 from ..limits import DEFAULT_LIMITS
-from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice
-from ..objects import FontRequest, RegionGeometry
+from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice, _round_half_away
+from ..mapping import fixed as to_fixed
+from ..numeric import float32
+from ..objects import EncodedText, FontRequest, RegionGeometry
+from ..stroke import realize_pen
 from ..trace import TraceContext
-from . import bitmaps, fixed, variable
+from . import bitmaps, fixed, text, variable
 from .file import Metafile
 from .objects import FACE_NAME_BYTES, LogFont
 
@@ -121,7 +134,8 @@ def device_bitmap(bitmap) -> tuple[bytes, bytes]:
     """
     layout = read_dib(bitmap)
     if layout.compression not in (0, 3) or not layout.complete or layout.depth not in (1, 4, 8, 16, 24, 32):
-        raise UnsupportedOperation("EMF transfer sources are uncompressed or bit-field DIBs")
+        # The source DC holds the decoded bitmap: unwritten pixels are black.
+        return device_bitmap(encode_dib24(layout.decode(gap_color=(0, 0, 0))))
     rows = _rows(layout)
     if layout.depth <= 8:
         count = 1 << layout.depth
@@ -167,7 +181,7 @@ def mask_bitmap(bitmap) -> tuple[bytes, bytes]:
     """A 1-bpp mask as written: no colour table, bottom-up, DIB_PAL_INDICES."""
     layout = read_dib(bitmap, color_usage=2)
     if layout.depth != 1 or layout.compression != 0 or not layout.complete:
-        raise UnsupportedOperation("EMF masks are 1-bpp DIBs")
+        return False
     bits = b"".join(reversed(_rows(layout)))
     return _dib_header(layout.width, layout.height, 1, 0, len(bits)), bits
 
@@ -175,8 +189,10 @@ def mask_bitmap(bitmap) -> tuple[bytes, bytes]:
 def packed_bitmap(bitmap) -> tuple[bytes, bytes]:
     """A packed DIB re-encoded as CreateDIBPatternBrushPt records it."""
     layout = read_dib(bitmap)
-    if layout.compression != 0 or not layout.complete:
-        raise UnsupportedOperation("EMF recording of compressed DIB pattern brushes is not yet supported")
+    if not layout.complete:
+        # Missing samples are recorded as zeros.
+        bitmap = replace(bitmap, data=bitmap.data.ljust(layout.offset + layout.stride * abs(layout.height), b"\0"))
+        layout = read_dib(bitmap)
     bits = b"".join(reversed(_rows(layout)))
     info = bytearray(bitmap.data[: layout.offset])
     struct.pack_into("<i", info, 8, abs(layout.height))
@@ -232,7 +248,9 @@ def _box(points) -> Rect | None:
 def _log_font(request: FontRequest) -> LogFont:
     name = request.face_name
     if not isinstance(name, str):
-        raise UnsupportedOperation("EMF fonts record face names as text")
+        # CreateFontIndirectA converts the face name through the ANSI code page.
+        data = name.data if hasattr(name, "data") else bytes(name)
+        name = data.split(b"\0", 1)[0].decode("cp1252", "replace")
     encoded = name.encode("utf-16-le")[: FACE_NAME_BYTES - 2]
     values = {key: getattr(request, key) for key in LogFont.__dataclass_fields__ if key != "face_name"}
     return LogFont(**values, face_name=encoded.ljust(FACE_NAME_BYTES, b"\0"))
@@ -249,10 +267,13 @@ class _Object:
     width: int = 0
     style: int = 0
     miter: bool = False
+    square: bool = False
     # Pens: the creating call's name and arguments, to realize it for WidenPath.
     realize: tuple | None = None
     # A creation that fails natively: selecting it records nothing.
     null: bool = False
+    # Fonts: the logical font, to lay out recorded text.
+    request: FontRequest | None = None
 
 
 @dataclass
@@ -264,6 +285,9 @@ class _State:
     capacity: int = 1
     pen: _Object = field(default_factory=lambda: _Object("pen"))
     position: tuple[int, int] = (0, 0)
+    # The exact 28.4 device point an arc left the current position at, which
+    # the next *To call starts from; None once a logical point sets it.
+    fixed_position: tuple[int, int] | None = None
     bounds: Rect | None = None
     path: Rect | None = None
     recording_path: bool = False
@@ -273,6 +297,7 @@ class _State:
     # A raster DC building the same path, for figures the recorder does not
     # trace; None once it cannot follow the path.
     shadow: object | None = None
+    shadow_pen: _Object | None = None
     widened: bool = False
     fill_mode: int = 1
     miter_limit: float = 10.0
@@ -286,6 +311,14 @@ class _State:
     # Arc direction: what the program set, and what the file last recorded.
     arc_direction: int = 1
     recorded_arc_direction: int = 1
+    # Text state the recorded advances and bounds follow.
+    font: _Object | None = None
+    text_alignment: int = 0
+    background_mode: int = 2
+    character_extra: int = 0
+    justification: tuple[int, int] = (0, 0)
+    # (logical position, 28.4 device position) after current-position text.
+    text_position: tuple | None = None
     saved: list = field(default_factory=list)
 
 
@@ -300,8 +333,11 @@ class Recorder(TraceContext):
         max_objects: int = DEFAULT_LIMITS.max_objects,
         max_saved_states: int = DEFAULT_LIMITS.max_saved_states,
         trace_calls: bool = True,
+        fonts=None,
     ):
         super().__init__(max_objects=max_objects, max_saved_states=max_saved_states, trace_calls=trace_calls)
+        # Fonts lay out recorded text: its advances and bounds.
+        self.fonts = fonts
         self.device = device
         self.micrometres = micrometres
         self.records: list = []
@@ -385,29 +421,66 @@ class Recorder(TraceContext):
         steps = (Fraction(w, v) for w, v in zip(mapping.window_extent, mapping.viewport_extent, strict=True))
         return tuple(round(edge - step) for edge, step in zip((right, bottom), steps, strict=True))
 
-    def _inflation(self, state: _State, *, frame: bool = False) -> int:
-        """How far a stroke reaches past its figure's device bounds.
+    def _extent(self, state: _State, *, frame: bool = False) -> tuple[int, int]:
+        """How far a wide stroke reaches past its figure, per axis in 28.4.
 
-        Mitred strokes (Rectangle frames, and geometric pens with miter
-        joins) reach the miter limit times the half width plus one; others
-        reach the half width, rounded up, plus one. One-pixel pens add
-        nothing.
+        The pen width's (w, w) and (w, -w) vectors are mapped to the device;
+        each axis takes the larger magnitude, halved, plus one pixel. Square
+        caps add half of that again; mitred strokes (Rectangle frames, and
+        geometric pens with miter joins) take it times the miter limit. Null
+        and one-pixel pens reach nothing.
         """
         pen = state.pen
-        if pen.style == PS_NULL:
-            return 0
-        width = abs(pen.width * state.mapping.linear_scale[0])
-        if width <= 1:
-            return 0
+        if pen.style == PS_NULL or abs(pen.width * state.mapping.linear_scale[0]) <= 1:
+            return (0, 0)
+        mapping, width = state.mapping, pen.width
+        if mapping.rotated:
+            m11, m12, m21, m22 = mapping.world[:4]
+        else:
+            (m11, _), (m22, _) = mapping._transform()
+            m12 = m21 = 0.0
+        vectors = [
+            tuple(to_fixed(float32(float32(x * a) + float32(y * b))) for a, b in ((m11, m21), (m12, m22)))
+            for x, y in ((width, width), (width, -width))
+        ]
+        extent = [(max(abs(vector[axis]) for vector in vectors) >> 1) + 16 for axis in (0, 1)]
+        if pen.square:
+            extent = [value + (value >> 1) for value in extent]
         if frame or pen.miter:
-            return floor(state.miter_limit * (width / 2 + 1))
-        return ceil(width / 2) + 1
+            extent = [_round_half_away(float32(float32(value) * float32(state.miter_limit))) for value in extent]
+        return extent[0], extent[1]
 
-    def _stroked(self, state: _State, box: Rect | None, *, frame: bool = False) -> Rect | None:
-        if box is None or state.recording_path:
+    def _stroked(self, state: _State, box: Rect | None, *, frame: bool = False, fixed_points=()) -> Rect | None:
+        """A figure's device box, as a stroke reaches past it.
+
+        A wide stroke reaches its 28.4 extent past the figure, here the device
+        box with any exact 28.4 points; the low edges round down and the high
+        edges up.
+        """
+        if box is None and not fixed_points:
+            return None
+        if state.recording_path:
             return box  # Path figures are measured unstroked.
-        grow = self._inflation(state, frame=frame)
-        return (box[0] - grow, box[1] - grow, box[2] + grow, box[3] + grow)
+        ex, ey = self._extent(state, frame=frame)
+        corners = [*(point for point in fixed_points)]
+        if box is not None:
+            corners += [(box[0] * 16, box[1] * 16), (box[2] * 16, box[3] * 16)]
+        if not (ex or ey):
+            if not fixed_points:
+                return box
+            return _union(box, _box((x >> 4, y >> 4) for x, y in fixed_points))
+        xs, ys = [x for x, _ in corners], [y for _, y in corners]
+        return ((min(xs) - ex) >> 4, (min(ys) - ey) >> 4, -((-(max(xs) + ex)) >> 4), -((-(max(ys) + ey)) >> 4))
+
+    def _start(self, state: _State) -> tuple[tuple, tuple]:
+        """The current position for a *To call's bounds: logical points, then exact 28.4 points.
+
+        After an arc a wide pen starts from the exact 28.4 point; one-pixel
+        pens from its floored logical point.
+        """
+        if state.fixed_position is not None and self._extent(state) != (0, 0):
+            return (), (state.fixed_position,)
+        return (state.position,), ()
 
     def _clipped(self, state: _State, box: Rect | None) -> Rect | None:
         """Record bounds are clipped like the header's, outside path brackets."""
@@ -440,6 +513,10 @@ class Recorder(TraceContext):
         simple = _SIMPLE.get(name)
         if simple is not None:
             records.append(simple(a))
+            if name == "set_background_mode":
+                state.background_mode = a["mode"]
+            elif name == "set_text_alignment":
+                state.text_alignment = a["alignment"]
             if name == "save_dc":
                 state.saved.append({key: deepcopy(getattr(state, key)) for key in _SAVED})
             elif name == "restore_dc":
@@ -500,6 +577,10 @@ class Recorder(TraceContext):
         padding = b"" if entries else bytes(4)
         info = bits = b""
         if a["bitmap"] is not None:
+            if read_dib(a["bitmap"]).compression in (1, 2):
+                # As for DIB pattern brushes, creation from an RLE DIB fails.
+                self._created(state, _Object("pen", null=True))
+                return
             info, bits = packed_bitmap(a["bitmap"])
             info = BRUSH_MARKER + info[4:]  # The marker takes the header size's place.
 
@@ -528,6 +609,7 @@ class Recorder(TraceContext):
                 width=width if geometric else 0,
                 style=style & 15,
                 miter=geometric and style & 0x0000F000 == 0x00002000,
+                square=geometric and style & 0x00000F00 == 0x00000100,
                 realize=("ext_create_pen", dict(a)),
             ),
         )
@@ -542,7 +624,12 @@ class Recorder(TraceContext):
 
     def _record_create_font(self, a, state, records):
         font = _log_font(a["font"])
-        self._created(state, _Object("font", lambda slot: variable.ExtCreateFontIndirectW(slot, font, FONT_EXTENSION)))
+        self._created(
+            state,
+            _Object(
+                "font", lambda slot: variable.ExtCreateFontIndirectW(slot, font, FONT_EXTENSION), request=a["font"]
+            ),
+        )
 
     def _record_create_pattern_brush(self, a, state, records):
         from ..bitmap16 import read_bitmap16
@@ -563,8 +650,10 @@ class Recorder(TraceContext):
             self._created(state, _Object("brush", create_colour))
             return
         if layout.depth != 1:
-            # Native CreateBitmap only makes 1-bpp and display-depth bitmaps.
-            raise UnsupportedOperation("Pattern brushes are 1-bpp or 32-bpp device bitmaps")
+            # Native CreateBitmap only makes 1-bpp and display-depth bitmaps:
+            # creation fails.
+            self._created(state, _Object("brush", null=True))
+            return
         used = (layout.width + 7) // 8
         stride = ((layout.width + 31) // 32) * 4
         rows = [
@@ -620,6 +709,108 @@ class Recorder(TraceContext):
             state.pen = entry
         elif entry.kind == "brush":
             state.brush_null = entry.style == BS_NULL
+        elif entry.kind == "font":
+            state.font = entry
+
+    def _record_set_text_justification(self, a, state, records):
+        state.justification = (a["break_count"], a["break_extra"])  # Not recorded; advances include it.
+
+    def _record_set_text_character_extra(self, a, state, records):
+        state.character_extra = a["extra"]  # EMF has no record; recorded advances include it.
+
+    def _record_text_out(self, a, state, records):
+        self._record_ext_text_out({**a, "options": 0, "rectangle": None, "advances": ()}, state, records)
+
+    def _text_shadow(self, state: _State):
+        """A raster DC in the recording DC's text state, to lay out text."""
+        from ..raster import RasterContext
+
+        shadow = RasterContext(1, 1, trace_calls=False, fonts=self.fonts)
+        shadow.mapping = deepcopy(state.mapping)
+        shadow.mapping.graphics_mode = state.graphics_mode
+        if state.font is not None and state.font.request is not None:
+            shadow.select_object(shadow.create_font(state.font.request))
+        shadow.set_text_alignment(state.text_alignment)
+        shadow.set_background_mode(state.background_mode)
+        shadow.set_text_character_extra(state.character_extra)
+        shadow.set_text_justification(*state.justification)
+        shadow._state.position = state.position
+        shadow._state.text_position = state.text_position
+        return shadow
+
+    def _text_scales(self, state: _State) -> tuple[float, float]:
+        """A GM_COMPATIBLE record's font transform: 0.01 mm per logical unit on the reference device."""
+        if state.graphics_mode == GM_ADVANCED:
+            return 0.0, 0.0
+        # The page transform alone: a world transform left from GM_ADVANCED
+        # still places the text but does not enter the scales.
+        mapping = state.mapping
+        sx, sy = (float32(v / w) for v, w in zip(mapping.viewport_extent, mapping.window_extent, strict=True))
+        (px, py), (mx, my) = self.device.pixels, self.device.millimetres
+        return tuple(
+            float32(float32(float32(float32(mm) * float32(scale)) * 100) / float32(pixels))
+            for mm, scale, pixels in ((mx, sx, px), (my, sy, py))
+        )
+
+    def _text_record(self, state, x, y, units, options, rectangle, advances, bounds):
+        data = b"".join(ord(unit).to_bytes(2, "little") for unit in units)
+        data += bytes(-len(data) % 4)
+        dx_offset = 0x4C + len(data)
+        data += b"".join(struct.pack("<i", value) for value in advances)
+        return text.ExtTextOutW(
+            bounds or (0, 0, -1, -1),
+            state.graphics_mode,
+            *self._text_scales(state),
+            x,
+            y,
+            len(units),
+            0x4C,
+            options,
+            tuple(rectangle) if options & (ETO_OPAQUE | ETO_CLIPPED) else (0, 0, -1, -1),
+            dx_offset,
+            data,
+        )
+
+    def _text_rectangle(self, state, rectangle) -> Rect | None:
+        """A text rectangle as the inclusive device box it fills."""
+        (x0, y0), (x1, y1) = (state.mapping.device_point(*rectangle[:2]), state.mapping.device_point(*rectangle[2:]))
+        left, right, top, bottom = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        return (left, top, right - 1, bottom - 1) if left < right and top < bottom else None
+
+    def _record_ext_text_out(self, a, state, records):
+        content, options = a["text"], a.get("options", 0)
+        rectangle, advances = a.get("rectangle"), tuple(a.get("advances", ()))
+        opaque = self._text_rectangle(state, rectangle) if rectangle is not None and options & ETO_OPAQUE else None
+        if not content:
+            if opaque is not None:
+                # GDI records the empty call, then fills the rectangle as glyph output.
+                records.append(self._text_record(state, a["x"], a["y"], "", options, rectangle, (), None))
+                bounds = self._clipped(state, opaque)
+                records.append(
+                    self._text_record(state, a["x"], a["y"], "", options | ETO_GLYPH_INDEX, rectangle, (), bounds)
+                )
+                self._draw(state, bounds)
+            return
+        shadow = self._text_shadow(state)
+        units, measured, box, position, fixed_position = shadow.measure_text(a)
+        if isinstance(content, EncodedText) and advances:
+            advances = shadow_advances = advances  # noqa: F841 - byte-indexed advances map per character below.
+        recorded = advances or measured
+        bounds = None
+        if box is not None:
+            bounds = (box[0], box[1], box[2] - 1, box[3] - 1)
+        if options & ETO_CLIPPED and rectangle is not None:
+            clip = self._text_rectangle(state, rectangle)
+            bounds = _intersection(bounds, clip) if bounds is not None and clip is not None else None
+        if opaque is not None:
+            bounds = _union(bounds, opaque)
+        bounds = self._clipped(state, bounds)
+        records.append(self._text_record(state, a["x"], a["y"], units, options, rectangle, recorded, bounds))
+        self._draw(state, bounds)
+        if position is not None:
+            state.position = position
+            state.text_position = (position, fixed_position)
+            state.fixed_position = None
 
     def _record_select_palette(self, a, state, records):
         handle = a["handle"]
@@ -728,20 +919,21 @@ class Recorder(TraceContext):
         state.miter_limit = float(a["limit"])
 
     def _record_set_world_transform(self, a, state, records):
-        if state.graphics_mode != GM_ADVANCED:
-            raise InvalidOperation("World transforms require GM_ADVANCED")
         values = tuple(a[key] for key in ("m11", "m12", "m21", "m22", "dx", "dy"))
-        state.mapping.world = values
-        # Native recording follows SetWorldTransform with MWT_SET of the same matrix.
+        # Native recording follows SetWorldTransform with MWT_SET of the same
+        # matrix, even in GM_COMPATIBLE, where the call itself then fails.
         records.append(fixed.SetWorldTransform(*values))
         records.append(fixed.ModifyWorldTransform(*values, 4))
+        if state.graphics_mode == GM_ADVANCED:
+            state.mapping.world = values
 
     # Drawing
 
     def _record_box(self, a, state, records, record_type, *extra):
         left, top = a["left"], a["top"]
         right, bottom = self._inclusive(state, a["right"], a["bottom"])
-        if record_type is fixed.Rectangle and state.recording_path:
+        if record_type is fixed.Rectangle and state.recording_path and state.pen.style != PS_INSIDEFRAME:
+            # Inside-frame pens inset the box; the shadow DC follows that.
             box = self._device_rect(state, left, top, a["right"], a["bottom"])
             corners = ((box[2], box[1]), (box[0], box[1]), (box[0], box[3]), (box[2], box[3]))
             if state.figures is not None:
@@ -803,30 +995,20 @@ class Recorder(TraceContext):
     def _record_pie(self, a, state, records):
         self._radial(a, state, records, fixed.Pie)
 
-    def _arc_path(self, state, box, start, end, *, direction, radial_box=None):
+    def _arc_path(self, state, box, start, end, *, direction, radial_box=None, inside_frame=False):
         """The GM_ADVANCED arc a metafile DC strokes for ArcTo and AngleArc.
 
         ``radial_box`` normalizes the radials when it differs from the drawn box.
+        With ``inside_frame``, a wide inside-frame pen insets the radial box at
+        its corners, and a box narrower than the pen gives None.
         """
-        left, right = sorted(box[0::2])
-        top, bottom = sorted(box[1::2])
-        radial_left, radial_right = sorted((radial_box or box)[0::2])
-        radial_top, radial_bottom = sorted((radial_box or box)[1::2])
-        (x0, y0), (x1, y1) = state.mapping.fixed_point(left, top), state.mapping.fixed_point(right, bottom)
-        if direction == 2:
-            y0, y1 = y1, y0
-            mirror = radial_top + radial_bottom
-            start, end = (start[0], mirror - start[1]), (end[0], mirror - end[1])
-        ceil_box = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
-        return arc_figure(
-            *ceil_box[:2],
-            ceil_box[2] + 1,
-            ceil_box[3] + 1,
-            start,
-            end,
-            drawing_bounds=(x0, y0, x1, y1),
-            radial_bounds=(radial_left, radial_top, radial_right, radial_bottom),
-            advanced=True,
+        width, pen = 0, state.pen
+        if inside_frame and pen.style == PS_INSIDEFRAME:
+            geometric = pen.realize is not None and pen.realize[0] == "ext_create_pen"
+            if not realize_pen(pen.width, *state.mapping.linear_scale, geometric=geometric).cosmetic:
+                width, box = pen.width, radial_box or box
+        return advanced_arc(
+            state.mapping, box, start, end, direction=direction, inside_frame=width, radial_box=radial_box
         )
 
     @staticmethod
@@ -849,10 +1031,15 @@ class Recorder(TraceContext):
         The current position is the exact logical end point, floored.
         """
         points = [point for command in path.commands for point in command]
-        box = _box(((x + 15) // 16, (y + 15) // 16) for x, y in points)
-        box = _union(box, self._device_box(state, (state.position,)))
-        self._draw(state, self._stroked(state, box))
+        logical, exact = self._start(state)
+        if self._extent(state) != (0, 0):
+            box = self._stroked(state, self._device_box(state, logical), fixed_points=(*exact, *points))
+        else:
+            box = _box(((x + 15) // 16, (y + 15) // 16) for x, y in points)
+            box = self._stroked(state, _union(box, self._device_box(state, logical)), fixed_points=exact)
+        self._draw(state, box)
         state.position = (floor(end[0]), floor(end[1]))
+        state.fixed_position = path.commands[-1][-1]
 
     def _record_arc_to(self, a, state, records):
         self._untraced(state)
@@ -869,20 +1056,25 @@ class Recorder(TraceContext):
             end,
             direction=state.arc_direction,
             radial_box=(left, top, a["right"], a["bottom"]),
+            inside_frame=True,
         )
+        if path is None:
+            return  # A box narrower than an inside-frame pen: the call does nothing.
         # The current position is the arc's 28.4 end, floored to a logical point.
         self._stroke_from_position(state, path, self._floor_logical(state, path.commands[-1][-1]))
 
     def _record_move_to(self, a, state, records):
         records.append(fixed.MoveToEx(a["x"], a["y"]))
-        state.position = (a["x"], a["y"])
+        state.position, state.fixed_position = (a["x"], a["y"]), None
         self._trace(state, ((a["x"], a["y"]),))
 
     def _record_line_to(self, a, state, records):
         records.append(fixed.LineTo(a["x"], a["y"]))
         self._trace(state, (state.position, (a["x"], a["y"])), extend=True)
-        self._draw(state, self._stroked(state, self._device_box(state, (state.position, (a["x"], a["y"])))))
-        state.position = (a["x"], a["y"])
+        logical, exact = self._start(state)
+        box = self._device_box(state, (*logical, (a["x"], a["y"])))
+        self._draw(state, self._stroked(state, box, fixed_points=exact))
+        state.position, state.fixed_position = (a["x"], a["y"]), None
 
     def _points(self, a, state, records, wide, narrow, *, key="points", to=False):
         points = tuple(tuple(point) for point in a[key])
@@ -896,8 +1088,9 @@ class Recorder(TraceContext):
         # The *To forms start from the current position, unless PolyDraw
         # opens with a move.
         moves = "types" in a and a["types"][:1] == bytes((PT_MOVETO,))
-        reached = (state.position, *points) if to and not moves else points
-        bounds = self._clipped(state, self._stroked(state, self._device_box(state, reached)))
+        logical, exact = self._start(state) if to and not moves else ((), ())
+        box = self._device_box(state, (*logical, *points))
+        bounds = self._clipped(state, self._stroked(state, box, fixed_points=exact))
         record_type = narrow if _fits16(points) else wide
         extra = (a["types"],) if "types" in a else ()
         # Inside a path bracket the record's own bounds are empty.
@@ -905,7 +1098,7 @@ class Recorder(TraceContext):
         records.append(record_type(written or (0, 0, -1, -1), points, *extra))
         self._draw(state, bounds)
         if to and points:
-            state.position = points[-1]
+            state.position, state.fixed_position = points[-1], None
 
     def _record_polyline(self, a, state, records):
         self._points(a, state, records, variable.Polyline, variable.Polyline16)
@@ -1012,8 +1205,24 @@ class Recorder(TraceContext):
         records.append(fixed.BeginPath())
         state.recording_path, state.path = True, None
         state.figures, state.widened = [], False
-        state.shadow = RasterContext(1, 1, trace_calls=False)
+        state.shadow, state.shadow_pen = RasterContext(1, 1, trace_calls=False), None
         state.shadow.begin_path()
+
+    def _shadow_pen(self, state: _State) -> None:
+        """Select the recording DC's pen into the shadow DC.
+
+        Inside-frame pens inset the shapes a path is built from.
+        """
+        shadow, pen = state.shadow, state.pen
+        if state.shadow_pen is pen:
+            return
+        if pen.realize is not None:
+            name, arguments = pen.realize
+            handle = shadow.invoke(Call.make(name, **arguments))
+        else:
+            handle = shadow.get_stock_object(pen.stock if pen.stock is not None else BLACK_PEN)
+        shadow.select_object(handle)
+        state.shadow_pen = pen
 
     def _follow_path(self, call: Call, state: _State) -> None:
         """Replay a path-building call on the shadow DC from the current state.
@@ -1034,10 +1243,14 @@ class Recorder(TraceContext):
                 (a["end_x"], a["end_y"]),
                 direction=state.arc_direction,
                 radial_box=(a["left"], a["top"], a["right"], a["bottom"]),
+                inside_frame=True,
             )
+            if path is None:
+                return
             try:
                 if not shadow._state.path:
                     shadow._state.position = state.position
+                    shadow._state.fixed_position = state.fixed_position
                 shadow.mapping = deepcopy(state.mapping)
                 shadow._stroke_from_position(path, self._floor_logical(state, path.commands[-1][-1]))
             except (UnsupportedOperation, InvalidOperation):
@@ -1046,12 +1259,14 @@ class Recorder(TraceContext):
         if call.name == "angle_arc" and graphics_mode != GM_ADVANCED:
             graphics_mode = GM_ADVANCED
         try:
+            self._shadow_pen(state)
             shadow.mapping = deepcopy(state.mapping)
             shadow.mapping.graphics_mode = graphics_mode
             if not shadow._state.path:
                 # The path starts at the DC's current position; afterwards the
                 # shadow keeps its own, so figures continue across curves.
                 shadow._state.position = state.position
+                shadow._state.fixed_position = state.fixed_position
             shadow._state.arc_direction = state.arc_direction
             shadow.invoke(call)
         except (UnsupportedOperation, InvalidOperation):
@@ -1073,13 +1288,7 @@ class Recorder(TraceContext):
             return
         try:
             # The shadow DC widens the path with the selected pen, as natively.
-            pen = state.pen
-            if pen.realize is not None:
-                name, arguments = pen.realize
-                handle = shadow.invoke(Call.make(name, **arguments))
-            else:
-                handle = shadow.get_stock_object(pen.stock if pen.stock is not None else BLACK_PEN)
-            shadow.select_object(handle)
+            self._shadow_pen(state)
             shadow.mapping = deepcopy(state.mapping)
             shadow.mapping.graphics_mode = state.graphics_mode
             shadow.set_miter_limit(state.miter_limit)
@@ -1087,64 +1296,44 @@ class Recorder(TraceContext):
         except (UnsupportedOperation, InvalidOperation):
             state.shadow = None
 
-    def _clip_path_box(self, state) -> Rect:
+    def _clip_path_box(self, state) -> Rect | None:
         """The bounding box of the region SelectClipPath makes from the path.
 
-        A path is filled by the polygon fill mode; a widened one covers its
-        pen's stroke footprint.
+        A path, widened or not, is filled by the polygon fill mode. None for a
+        path without figures, which makes no region and keeps the clip.
         """
         figures = state.figures
         if figures is None and not state.widened and state.shadow is not None:
             # Shapes and arcs: the shadow DC's flattened figures, closed.
             figures = [(list(path.flattened().vertices), True) for path in state.shadow._path_figures(close=True)]
-        if state.widened and (figures is None or state.pen.realize and state.pen.realize[0] == "ext_create_pen"):
-            # Shapes, arcs and extended pens: the shadow DC's widened outlines,
-            # filled with the DC's polygon fill mode, as any clip path.
+        if state.widened:
+            # The shadow DC's widened outlines, filled with the DC's polygon
+            # fill mode, as any clip path.
             if state.shadow is None:
                 raise UnsupportedOperation("SelectClipPath of this widened path is not recorded")
             contours = tuple(
                 list(path.flattened().vertices) for path in state.shadow._path_figures(close=True) if path.vertices
             )
             if not contours:
-                return (0, 0, -1, -1)
+                return None
             xs = [x for points in contours for x, _ in points]
             ys = [y for points in contours for _, y in points]
             left, top, right, bottom = min(xs) // 16 - 1, min(ys) // 16 - 1, max(xs) // 16 + 2, max(ys) // 16 + 2
             spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
             return _box(point for y, start, end in spans for point in ((start, y), (end - 1, y))) or (0, 0, -1, -1)
-        if figures is None or state.pen.miter or state.pen.style == PS_INSIDEFRAME:
-            raise UnsupportedOperation("SelectClipPath of widened inside-frame paths is not yet recorded")
+        if figures is None:
+            raise UnsupportedOperation("SelectClipPath of this path is not recorded")
         figures = [(points, closed) for points, closed in figures if points]
         if not figures:
-            return (0, 0, -1, -1)
+            return None
         xs = [x for points, _ in figures for x, _ in points]
         ys = [y for points, _ in figures for _, y in points]
         margin = 16 * (abs(state.pen.width) * max(1, max(abs(v) for v in state.mapping.linear_scale)) + 4)
         left, top = (min(xs) - margin) // 16, (min(ys) - margin) // 16
         right, bottom = (max(xs) + margin) // 16 + 1, (max(ys) + margin) // 16 + 1
-        if state.widened:
-            from ..raster_paint import RasterPainter
-            from ..raster_state import DrawingState, Pen
-            from ..surface import Surface
-
-            width, height = right - left, bottom - top
-            shifted = [
-                DevicePath.polyline([(x - 16 * left, y - 16 * top) for x, y in points], closed=closed)
-                for points, closed in figures
-            ]
-            drawing = DrawingState(
-                mapping=deepcopy(state.mapping), pen=Pen((0, 0, 0), state.pen.width, state.pen.style)
-            )
-            painter = RasterPainter(Surface(width, height), drawing)
-            pixels = set(painter._stroke_pixels(tuple(shifted)))
-            if painter.realized_pen.cosmetic:
-                # A widened hairline also covers the figure ends a drawn one omits.
-                pixels |= {((x + 8) // 16 - left, (y + 8) // 16 - top) for points, _ in figures for x, y in points}
-            box = _box((x + left, y + top) for x, y in pixels)
-        else:
-            contours = tuple(list(points) for points, _ in figures)
-            spans = list(coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode))
-            box = _box(point for y, start, end in spans for point in ((start, y), (end - 1, y)))
+        contours = tuple(list(points) for points, _ in figures)
+        spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
+        box = _box(point for y, start, end in spans for point in ((start, y), (end - 1, y)))
         return box or (0, 0, -1, -1)
 
     def _record_end_path(self, a, state, records):
@@ -1172,7 +1361,8 @@ class Recorder(TraceContext):
     def _record_select_clip_path(self, a, state, records):
         box = self._clip_path_box(state)
         records.append(fixed.SelectClipPath(a["mode"]))
-        self._combine_clip(state, box, a["mode"])
+        if box is not None:
+            self._combine_clip(state, box, a["mode"])
         state.path, state.figures, state.shadow = None, [], None
 
     # Regions and clipping
@@ -1303,6 +1493,23 @@ class Recorder(TraceContext):
     def _record_pat_blt(self, a, state, records):
         self._blit(bitmaps.BitBlt, a, state, records, source=False, extra={"rop": a["rop"]})
 
+    def _record_bit_blt(self, a, state, records):
+        """A legacy-bitmap BitBlt records as a DIB transfer; without a source, as PatBlt."""
+        if a["source"] is None:
+            self._record_pat_blt(a, state, records)
+            return
+        layout = read_bitmap16(a["source"])
+        source = encode_dib24(layout.decode())
+        self._record_dib_bit_blt({**a, "source": source}, state, records)
+
+    def _record_escape(self, a, state, records):
+        # An EMF DC keeps only metafile comments; other escapes leave no record.
+        if a["escape_function"] == MFCOMMENT:
+            records.append(variable.Comment(a["data"]))
+
+    def _record_set_font_xform(self, a, state, records):
+        pass  # Playback's per-record font scales; a recording DC derives its own.
+
     def _record_dib_bit_blt(self, a, state, records):
         self._blit(bitmaps.BitBlt, a, state, records, extra={"rop": a["rop"]})
 
@@ -1321,10 +1528,13 @@ class Recorder(TraceContext):
     def _record_mask_blt(self, a, state, records):
         if a["source"] is None:
             return  # Native recording writes nothing for a source-less MaskBlt.
-        if a.get("src_size") is not None:
-            raise UnsupportedOperation("EMF recording of MaskBlt with a stretched source is not yet supported")
         mask = mask_bitmap(a["mask"]) if a["mask"] is not None else None
+        if mask is False:
+            return  # GDI fails a MaskBlt whose mask is not a 1-bpp bitmap.
         extra = {"rop": a["rop"], "mask_x": a["mask_x"], "mask_y": a["mask_y"], "mask_usage": 2}
+        if a.get("src_size") is not None:
+            # A stretched source is a scaling source transform.
+            extra |= {"src_m11": a["src_size"][0] / a["width"], "src_m22": a["src_size"][1] / a["height"]}
         self._blit(bitmaps.MaskBlt, a, state, records, extra=extra, mask=mask)
 
     def _record_plg_blt(self, a, state, records):
@@ -1341,6 +1551,8 @@ class Recorder(TraceContext):
         values |= {"src_m11": 1.0, "src_m22": 1.0, "mask_usage": 2}
         values["background"] = _source_background(a["source"], state)
         mask = mask_bitmap(a["mask"]) if a["mask"] is not None else None
+        if mask is False:
+            return  # GDI fails a PlgBlt whose mask is not a 1-bpp bitmap.
         records.append(_offset_record(bitmaps.PlgBlt, values, device_bitmap(a["source"]), mask))
         self._draw(state, bounds)
 
@@ -1459,16 +1671,25 @@ _PATH_CALLS = frozenset(
     )
 )
 
+MFCOMMENT = 15
+
 _SAVED = (
     "mapping",
     "graphics_mode",
     "pen",
     "position",
+    "fixed_position",
     "clip",
     "miter_limit",
     "brush_null",
     "background",
     "arc_direction",
+    "font",
+    "text_alignment",
+    "background_mode",
+    "character_extra",
+    "justification",
+    "text_position",
 )
 
 _SIMPLE = {
@@ -1484,7 +1705,6 @@ _SIMPLE = {
     "set_brush_origin": lambda a: fixed.SetBrushOrgEx(a["x"], a["y"]),
     "set_meta_region": lambda a: fixed.SetMetaRgn(),
     "set_layout": lambda a: fixed.SetLayout(a["layout"]),
-    "set_text_justification": lambda a: fixed.SetTextJustification(a["break_extra"], a["break_count"]),
     "set_color_adjustment": lambda a: fixed.SetColorAdjustment(
         24,
         a["flags"],

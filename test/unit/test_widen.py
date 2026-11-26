@@ -11,11 +11,11 @@ from pillow_wmf.widen import (
     JOIN_BEVEL,
     JOIN_MITER,
     PenShape,
-    dash_figures,
     outline,
     perpendicular,
     square_vector,
 )
+from pillow_wmf.widener import dashes
 
 
 def shape(width, cap, join, limit=10.0):
@@ -99,23 +99,25 @@ def test_round_caps_walk_from_the_edge_holding_the_perpendicular():
 
 def test_dashes_are_logical_lengths_with_round_cap_ends_pulled_back():
     line = figure((6, 6), (46, 14))
-    flat = [dash for dash, _ in dash_figures(line, (9, 3), (1, 1))]
+    pen = shape(3, CAP_FLAT, JOIN_MITER)
+    flat = [dash for dash, *_ in dashes(pen, line, (9, 3))]
     assert [(dash[0].start, dash[-1].end) for dash in flat][:2] == [((96, 96), (237, 124)), ((284, 134), (425, 162))]
-    rounded = [dash for dash, _ in dash_figures(line, (9, 3), (1, 1), shorten=3)]
+    # Round caps pull each predefined dash end back by the width.
+    rounded = [dash for dash, *_ in dashes(pen, line, (6, 6))]
     assert rounded[0][-1].end == (190, 115)
     # Dots with extending caps become zero-length dashes.
-    dots = dash_figures(figure((6, 6), (46, 6)), (3, 3), (1, 1), shorten=3)
-    assert dots[1] == ((StrokeSegment((192, 96), (192, 96), (640, 0)),), 0)
+    dots = dashes(pen, figure((6, 6), (46, 6)), (0, 6))
+    assert dots[1] == ((StrokeSegment((192, 96), (192, 96), (640, 0), chord=(640, 0)),), False, 0, True)
 
 
 def test_closed_dashes_run_on_across_the_closing_vertex():
     square = figure((0, 0), (10, 0), (10, 10), (0, 10), (0, 0))
-    dashes = dash_figures(square, (7, 2), (1, 1), closed=True)
+    figures = dashes(shape(3, CAP_FLAT, JOIN_MITER), square, (7, 2), closed=True)
     # The dash drawing at the close joins the first; its seam is that joint.
-    merged, seam = dashes[0]
+    merged, _, seam, _ = figures[0]
     assert seam == 1
     assert (merged[0].start, merged[0].end, merged[1].start) == ((0, 64), (0, 0), (0, 0))
-    assert all(seam == 0 for _, seam in dashes[1:])
+    assert all(seam == 0 for _, _, seam, _ in figures[1:])
 
 
 def test_axis_symmetric_pens_mirror_their_perpendiculars():
@@ -153,10 +155,17 @@ def test_hatched_pens_fill_their_footprint_with_the_hatch():
     assert marks and all((x + y) % 8 == 7 and 2 <= x < 22 and 3 <= y < 9 for x, y in marks)
 
 
+def test_bitmap_brush_pens_fail_creation():
+    from pillow_wmf.raster import RasterContext
+
+    context = RasterContext(4, 4)
+    pen = context.ext_create_pen(style=0x00010000, width=6, color=0, brush_style=3)
+    assert context.is_null_object(pen)
+
+
 @pytest.mark.parametrize(
     ("pen", "error"),
     [
-        ({"style": 0x00010000, "width": 6, "color": 0, "brush_style": 3}, "UnsupportedOperation"),
         ({"style": 0x00000000, "width": 1, "color": 0, "brush_style": 2, "hatch": 1}, "InvalidOperation"),
         ({"style": 0x00010008, "width": 3, "color": 0}, "InvalidOperation"),  # Geometric alternate.
         ({"style": 0x00000007, "width": 1, "color": 0}, "InvalidOperation"),  # User style without entries.

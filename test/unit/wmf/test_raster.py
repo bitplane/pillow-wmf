@@ -1,6 +1,6 @@
 import pytest
 
-from pillow_wmf import Metafile, RasterContext, Recorder, UnsupportedOperation, play
+from pillow_wmf import Metafile, RasterContext, Recorder, play
 from pillow_wmf.ellipse import ellipse_path
 from pillow_wmf.stroke import cosmetic_line, dash_is_foreground
 
@@ -196,11 +196,9 @@ def test_nonstandard_background_mode_is_retained() -> None:
     assert context.calls[-1].kwargs["mode"] == 3
 
 
-def test_invalid_hatch_does_not_create_an_object() -> None:
+def test_invalid_hatch_creates_a_null_object() -> None:
     context = RasterContext(8, 8)
-    with pytest.raises(UnsupportedOperation, match="hatch brushes"):
-        context.create_brush(2, 0, 6)
-    assert context.calls == []
+    assert context.is_null_object(context.create_brush(2, 0, 6))
 
 
 def test_hatch_background_mode_and_color_are_saved_and_restored() -> None:

@@ -21,9 +21,10 @@ def test_render_returns_rgb_at_requested_size():
 
 def test_render_never_silently_returns_partial_output():
     source = Recorder()
-    source.escape(0x7777, b"")
+    source.select_object(source.create_font(Font(height=-12, face_name=b"Unavailable Face".ljust(32, b"\0"))))
+    source.text_out(0, 0, b"x")
     with pytest.raises(UnsupportedOperation):
-        render(source.to_bytes(), (10, 10))
+        render(source.to_bytes(), (10, 10), fonts=FontCollection([]))
     with pytest.raises(FormatError):
         render(source.to_bytes(), (10, 10), limits=Limits(max_bytes=1))
 

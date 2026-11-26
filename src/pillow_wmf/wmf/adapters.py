@@ -2,8 +2,7 @@
 
 from ..clip import RegionMask
 from ..constants import ETO_PDY
-from ..gdi import UnsupportedOperation
-from ..objects import EncodedFaceName, EncodedText, GlyphIndices
+from ..objects import EncodedFaceName, EncodedText, GlyphIndices, UnicodeText
 from .objects import Font, Palette, Region, Scan
 
 
@@ -15,10 +14,8 @@ def font_record(request):
     else:
         # ASCII is independent of the eventual playback ANSI environment.
         # Non-ASCII export must explicitly select its encoded representation.
-        try:
-            values["face_name"] = name.encode("ascii").ljust(32, b"\0")
-        except UnicodeEncodeError as error:
-            raise UnsupportedOperation("WMF font export requires an explicitly encoded non-ASCII face name") from error
+        # The ANSI code page encodes it, unmappable characters becoming "?".
+        values["face_name"] = name.encode("cp1252", "replace").ljust(32, b"\0")
     return Font(**values)
 
 
@@ -50,6 +47,10 @@ def wire_arguments(name, arguments):
         text = arguments["text"]
         if isinstance(text, EncodedText):
             arguments["text"] = text.data
+        elif isinstance(text, UnicodeText):
+            # WMF text is ANSI: the ANSI code page encodes it, as a recording
+            # DC's WideCharToMultiByte does, unmappable characters becoming "?".
+            arguments["text"] = text.text.encode("cp1252", "replace")
         elif isinstance(text, GlyphIndices):
             arguments["text"] = b"".join(index.to_bytes(2, "little") for index in text.indices)
             advances = arguments.get("advances", ())

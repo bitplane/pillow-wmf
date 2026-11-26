@@ -61,8 +61,42 @@ def decode_single_byte(data, codepage):
     )
 
 
+UTF8_CODEPAGE = 65001
+
+
+def decode_utf8(data):
+    """CP_UTF8 text: each malformed sequence becomes U+FFFD; advances index characters."""
+    text, lengths, position = [], [], 0
+    while position < len(data):
+        for size in (1, 2, 3, 4):
+            chunk = data[position : position + size]
+            try:
+                character = chunk.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            break
+        else:
+            character, size = "\ufffd", 1
+        text.append(character)
+        lengths.append(size)
+        position += size
+    units = "".join(text).encode("utf-16-le", "surrogatepass")
+    if len(units) // 2 != len(text):
+        # A supplementary character is a surrogate pair of code units.
+        expanded_text, expanded_lengths = [], []
+        for character, size in zip(text, lengths, strict=True):
+            pair = character.encode("utf-16-le", "surrogatepass")
+            codes = [chr(int.from_bytes(pair[i : i + 2], "little")) for i in range(0, len(pair), 2)]
+            expanded_text += codes
+            expanded_lengths += [size] + [0] * (len(codes) - 1)
+        text, lengths = expanded_text, expanded_lengths
+    return DecodedText("".join(text), tuple(lengths), byte_indexed_advances=False)
+
+
 def decode_codepage(data, codepage):
     """Decode characters and their source spans through one code-page policy."""
+    if codepage == UTF8_CODEPAGE:
+        return decode_utf8(data)
     if codepage in LEAD_RANGES:
         return decode_dbcs(data, codepage)
     return DecodedText.single_byte(decode_single_byte(data, codepage))

@@ -145,12 +145,14 @@ def test_explicit_mac_override_does_not_use_native_ansi_fallback():
     assert not fonts.substitutions
 
 
-def test_direct_gdi_utf8_remains_distinct_from_wmf_charset_normalization():
-    fonts = SystemFontCollection(paths=[FONT])
-    for name in (b"Arial", b"Symbol", b"Wingdings"):
-        request = Font(face_name=name, charset=254)
-        with pytest.raises(UnsupportedOperation, match="UTF-8"):
-            fonts.resolve(request)
+def test_direct_gdi_utf8_charset_decodes_utf8():
+    # WMF playback normalizes charset 254 to DEFAULT_CHARSET; the direct API decodes UTF-8.
+    face = FontFace.from_path(FONT.with_name("utf8.ttf"))
+    fonts = FontCollection([face])
+    request = Font(face_name=face.family.encode(), charset=254)
+    decoded = fonts.decode_run(request, fonts.resolve(request), "A\u00e9\u4e00".encode() + b"\xff")
+    assert decoded.text == "A\u00e9\u4e00\ufffd"
+    assert decoded.byte_lengths == (1, 2, 3, 1)
 
 
 def test_charset_extension_font_is_reproducible(load_script):
