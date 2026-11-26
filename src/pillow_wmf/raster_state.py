@@ -65,6 +65,9 @@ class DrawingState:
     pen: Pen = field(default_factory=lambda: Pen((0, 0, 0), width=0))
     brush: Brush = field(default_factory=lambda: Brush((255, 255, 255)))
     position: tuple[int, int] = (0, 0)
+    # The exact 28.4 current point after ArcTo or AngleArc, which the next
+    # LineTo, PolylineTo or PolyBezierTo starts from; None otherwise.
+    fixed_position: tuple[int, int] | None = None
     clip: ClipRegion = field(default_factory=ClipRegion)
     polygon_fill_mode: int = ALTERNATE
     rop2: int = R2_COPYPEN

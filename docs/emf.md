@@ -71,6 +71,9 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   turns) and then, for each turn, the arc from the remainder's end round to
   the start followed by the remainder again; a zero remainder is one
   zero-length Bezier. The current position ends at the final angle.
+- After `ArcTo` and `AngleArc` the DC keeps the arc's exact 28.4 end, and
+  the next `LineTo`, `PolylineTo` or `PolyBezierTo` starts from it, so a
+  path figure continues across the arc.
 - Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
   `PlgBlt`, `AlphaBlend`, `TransparentBlt`) map their logical source
   rectangle through the recorded source transform, rounding each edge half
@@ -259,16 +262,20 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   a header as a 40-byte one.
 - Fonts are written as `LOGFONTEXDV`: the LOGFONT, empty full name, style and
   script, and a design vector with no axes.
-- `AngleArc` and `ArcTo` leave the current position at the exact end point,
-  floored; `ArcTo` measures it on the recorded, inclusive box's ellipse.
+- `AngleArc` leaves the current position at the exact end point, floored.
+  `ArcTo` leaves it at the arc's 28.4 end, floored to a logical point; in
+  `GM_COMPATIBLE` its ellipse fills the recorded, inclusive box while its
+  radials are measured against the box as given.
 - Header bounds count what reaches the device: drawing inside a path bracket
   only measures the path, which `StrokePath` and `FillPath` then add, and a
   point-list record inside the bracket has empty bounds of its own. An
   excluded clip rectangle shrinks the clip box to what it leaves, and
   `SelectClipPath` clips to the bounding box of the path's fill coverage, or
-  of the pen's stroke footprint once widened. Shapes and arcs in the path
-  take the playback figures; in `GM_COMPATIBLE`, `ArcTo` and `AngleArc`
-  build them as in `GM_ADVANCED`, `ArcTo` from its inclusive box.
+  of the pen's stroke footprint once widened. Shapes, arcs and extended pens
+  in a widened path take the widened outlines, filled with the DC's polygon
+  fill mode, so overlapping caps can cancel. Shapes and arcs take the
+  playback figures; in `GM_COMPATIBLE`, `AngleArc` builds them as in
+  `GM_ADVANCED`, and `ArcTo` as described above.
 - Without an explicit frame, the frame is the bounds in 0.01 mm of the
   reference device; the header's micrometre extension is the reference
   display's size at 96 DPI.
@@ -279,10 +286,9 @@ waits for the font work. Refused: pattern brushes from device bitmaps other
 than 1- and 32-bpp (native `CreateBitmap` cannot make them), compressed
 transfer sources (a recorded transfer carries uncompressed samples, which
 cannot keep an RLE source's unwritten pixels), and `SelectClipPath` of
-widened paths holding shapes or arcs. Null object and palette selections
-fail without a record, as natively. Unverified: the `ArcTo` end
-position for one clockwise arc on an odd-sized box lands a pixel earlier
-natively than the ellipse rule gives.
+widened inside-frame paths. Null object and palette selections fail without
+a record, as natively; so do DIB pattern brushes from RLE DIBs, whose
+creation fails, and source-less `MaskBlt`, which records nothing.
 
 ## Geometric pens
 

@@ -27,7 +27,7 @@ import struct
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from math import atan2, ceil, cos, floor, radians, sin
+from math import ceil, cos, floor, radians, sin
 
 from ..bitmap import read_dib
 from ..constants import GM_ADVANCED, GM_COMPATIBLE, MM_TEXT, PS_INSIDEFRAME, PS_NULL
@@ -45,6 +45,7 @@ from .objects import FACE_NAME_BYTES, LogFont
 STOCK_OBJECT = 0x80000000
 DEFAULT_PALETTE = 15
 NULL_PEN = 8
+BLACK_PEN = 7
 # Native recording marks bitmap brushes with this DWORD before their
 # BitmapInfo; a DIB pattern pen carries it in place of the header size.
 BRUSH_MARKER = struct.pack("<I", 0x20000000)
@@ -248,6 +249,10 @@ class _Object:
     width: int = 0
     style: int = 0
     miter: bool = False
+    # Pens: the creating call's name and arguments, to realize it for WidenPath.
+    realize: tuple | None = None
+    # A creation that fails natively: selecting it records nothing.
+    null: bool = False
 
 
 @dataclass
@@ -323,6 +328,10 @@ class Recorder(TraceContext):
 
     def _object(self, state: _State, handle: Handle) -> _Object:
         return state.objects[handle.serial]
+
+    def is_null_object(self, handle: Handle) -> bool:
+        entry = self._state.objects.get(handle.serial)
+        return entry is not None and entry.null
 
     def _collect(self, state: _State, entries) -> None:
         for red, green, blue, _ in entries:
@@ -472,7 +481,13 @@ class Recorder(TraceContext):
             return
         self._created(
             state,
-            _Object("pen", lambda slot: fixed.CreatePen(slot, style, width, 0, color), width=width, style=style & 15),
+            _Object(
+                "pen",
+                lambda slot: fixed.CreatePen(slot, style, width, 0, color),
+                width=width,
+                style=style & 15,
+                realize=("create_pen", dict(a)),
+            ),
         )
 
     def _record_ext_create_pen(self, a, state, records):
@@ -513,6 +528,7 @@ class Recorder(TraceContext):
                 width=width if geometric else 0,
                 style=style & 15,
                 miter=geometric and style & 0x0000F000 == 0x00002000,
+                realize=("ext_create_pen", dict(a)),
             ),
         )
 
@@ -567,6 +583,10 @@ class Recorder(TraceContext):
         self._created(state, _Object("brush", create))
 
     def _record_create_dib_pattern_brush(self, a, state, records):
+        if read_dib(a["bitmap"]).compression in (1, 2):
+            # Native creation from an RLE DIB fails, leaving nothing to record.
+            self._created(state, _Object("brush", null=True))
+            return
         block = packed_bitmap(a["bitmap"])
         usage = a["color_usage"]
 
@@ -590,6 +610,8 @@ class Recorder(TraceContext):
         if handle is None:
             return  # Selecting a null object fails natively without a record.
         entry = self._object(state, handle)
+        if entry.null:
+            return  # As a null object selection.
         if entry.kind == "region":
             self._record_ext_select_clip_region({"region": handle, "mode": RGN_COPY}, state, records)
             return
@@ -781,14 +803,20 @@ class Recorder(TraceContext):
     def _record_pie(self, a, state, records):
         self._radial(a, state, records, fixed.Pie)
 
-    def _arc_path(self, state, box, start, end, *, direction):
-        """The GM_ADVANCED arc a metafile DC strokes for ArcTo and AngleArc."""
+    def _arc_path(self, state, box, start, end, *, direction, radial_box=None):
+        """The GM_ADVANCED arc a metafile DC strokes for ArcTo and AngleArc.
+
+        ``radial_box`` normalizes the radials when it differs from the drawn box.
+        """
         left, right = sorted(box[0::2])
         top, bottom = sorted(box[1::2])
+        radial_left, radial_right = sorted((radial_box or box)[0::2])
+        radial_top, radial_bottom = sorted((radial_box or box)[1::2])
         (x0, y0), (x1, y1) = state.mapping.fixed_point(left, top), state.mapping.fixed_point(right, bottom)
         if direction == 2:
             y0, y1 = y1, y0
-            start, end = (start[0], top + bottom - start[1]), (end[0], top + bottom - end[1])
+            mirror = radial_top + radial_bottom
+            start, end = (start[0], mirror - start[1]), (end[0], mirror - end[1])
         ceil_box = [(value + 15) // 16 for value in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))]
         return arc_figure(
             *ceil_box[:2],
@@ -797,8 +825,22 @@ class Recorder(TraceContext):
             start,
             end,
             drawing_bounds=(x0, y0, x1, y1),
-            radial_bounds=(left, top, right, bottom),
+            radial_bounds=(radial_left, radial_top, radial_right, radial_bottom),
             advanced=True,
+        )
+
+    @staticmethod
+    def _floor_logical(state, point):
+        """The logical point at or below a 28.4 device point, as GetCurrentPositionEx reports it."""
+        mapping = state.mapping
+        if mapping.rotated:
+            m11, m12, m21, m22, dx, dy = mapping.world
+            x, y = point[0] / 16 - dx, point[1] / 16 - dy
+            det = m11 * m22 - m12 * m21
+            return floor((x * m22 - y * m21) / det), floor((y * m11 - x * m12) / det)
+        return tuple(
+            floor((Fraction(value, 16) - Fraction(origin)) / Fraction(scale))
+            for value, (scale, origin) in zip(point, mapping._transform(), strict=True)
         )
 
     def _stroke_from_position(self, state, path, end):
@@ -819,12 +861,17 @@ class Recorder(TraceContext):
         start, end = (a["start_x"], a["start_y"]), (a["end_x"], a["end_y"])
         self._arc_direction(state, records)
         records.append(fixed.ArcTo(left, top, right, bottom, *start, *end))
-        box = (left, top, a["right"], a["bottom"])
-        path = self._arc_path(state, box, start, end, direction=state.arc_direction)
-        # The end lies on the recorded inclusive box's ellipse, along the end radial.
-        cx, cy, rx, ry = (left + right) / 2, (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2
-        angle = atan2((end[1] - cy) / ry, (end[0] - cx) / rx) if rx and ry else 0.0
-        self._stroke_from_position(state, path, (cx + rx * cos(angle), cy + ry * sin(angle)))
+        # The ellipse fills the inclusive box; the radials keep the given box.
+        path = self._arc_path(
+            state,
+            (left, top, right, bottom),
+            start,
+            end,
+            direction=state.arc_direction,
+            radial_box=(left, top, a["right"], a["bottom"]),
+        )
+        # The current position is the arc's 28.4 end, floored to a logical point.
+        self._stroke_from_position(state, path, self._floor_logical(state, path.commands[-1][-1]))
 
     def _record_move_to(self, a, state, records):
         records.append(fixed.MoveToEx(a["x"], a["y"]))
@@ -976,17 +1023,35 @@ class Recorder(TraceContext):
         """
         shadow = state.shadow
         graphics_mode = state.graphics_mode
-        if call.name in ("arc_to", "angle_arc") and graphics_mode != GM_ADVANCED:
-            graphics_mode, arguments = GM_ADVANCED, dict(call.kwargs)
-            if call.name == "arc_to":
-                arguments["right"], arguments["bottom"] = self._inclusive(
-                    state, arguments["right"], arguments["bottom"]
-                )
-            call = Call.make(call.name, **arguments)
+        if call.name == "arc_to" and graphics_mode != GM_ADVANCED:
+            # The figure the recording DC builds: see _record_arc_to.
+            a = call.kwargs
+            right, bottom = self._inclusive(state, a["right"], a["bottom"])
+            path = self._arc_path(
+                state,
+                (a["left"], a["top"], right, bottom),
+                (a["start_x"], a["start_y"]),
+                (a["end_x"], a["end_y"]),
+                direction=state.arc_direction,
+                radial_box=(a["left"], a["top"], a["right"], a["bottom"]),
+            )
+            try:
+                if not shadow._state.path:
+                    shadow._state.position = state.position
+                shadow.mapping = deepcopy(state.mapping)
+                shadow._stroke_from_position(path, self._floor_logical(state, path.commands[-1][-1]))
+            except (UnsupportedOperation, InvalidOperation):
+                state.shadow = None
+            return
+        if call.name == "angle_arc" and graphics_mode != GM_ADVANCED:
+            graphics_mode = GM_ADVANCED
         try:
             shadow.mapping = deepcopy(state.mapping)
             shadow.mapping.graphics_mode = graphics_mode
-            shadow._state.position = state.position
+            if not shadow._state.path:
+                # The path starts at the DC's current position; afterwards the
+                # shadow keeps its own, so figures continue across curves.
+                shadow._state.position = state.position
             shadow._state.arc_direction = state.arc_direction
             shadow.invoke(call)
         except (UnsupportedOperation, InvalidOperation):
@@ -1003,6 +1068,24 @@ class Recorder(TraceContext):
     def _record_widen_path(self, a, state, records):
         records.append(fixed.WidenPath())
         state.widened = True
+        shadow = state.shadow
+        if shadow is None:
+            return
+        try:
+            # The shadow DC widens the path with the selected pen, as natively.
+            pen = state.pen
+            if pen.realize is not None:
+                name, arguments = pen.realize
+                handle = shadow.invoke(Call.make(name, **arguments))
+            else:
+                handle = shadow.get_stock_object(pen.stock if pen.stock is not None else BLACK_PEN)
+            shadow.select_object(handle)
+            shadow.mapping = deepcopy(state.mapping)
+            shadow.mapping.graphics_mode = state.graphics_mode
+            shadow.set_miter_limit(state.miter_limit)
+            shadow.widen_path()
+        except (UnsupportedOperation, InvalidOperation):
+            state.shadow = None
 
     def _clip_path_box(self, state) -> Rect:
         """The bounding box of the region SelectClipPath makes from the path.
@@ -1014,8 +1097,23 @@ class Recorder(TraceContext):
         if figures is None and not state.widened and state.shadow is not None:
             # Shapes and arcs: the shadow DC's flattened figures, closed.
             figures = [(list(path.flattened().vertices), True) for path in state.shadow._path_figures(close=True)]
+        if state.widened and (figures is None or state.pen.realize and state.pen.realize[0] == "ext_create_pen"):
+            # Shapes, arcs and extended pens: the shadow DC's widened outlines,
+            # filled with the DC's polygon fill mode, as any clip path.
+            if state.shadow is None:
+                raise UnsupportedOperation("SelectClipPath of this widened path is not recorded")
+            contours = tuple(
+                list(path.flattened().vertices) for path in state.shadow._path_figures(close=True) if path.vertices
+            )
+            if not contours:
+                return (0, 0, -1, -1)
+            xs = [x for points in contours for x, _ in points]
+            ys = [y for points in contours for _, y in points]
+            left, top, right, bottom = min(xs) // 16 - 1, min(ys) // 16 - 1, max(xs) // 16 + 2, max(ys) // 16 + 2
+            spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
+            return _box(point for y, start, end in spans for point in ((start, y), (end - 1, y))) or (0, 0, -1, -1)
         if figures is None or state.pen.miter or state.pen.style == PS_INSIDEFRAME:
-            raise UnsupportedOperation("SelectClipPath of widened shapes or extended pens is not yet recorded")
+            raise UnsupportedOperation("SelectClipPath of widened inside-frame paths is not yet recorded")
         figures = [(points, closed) for points, closed in figures if points]
         if not figures:
             return (0, 0, -1, -1)
@@ -1222,7 +1320,7 @@ class Recorder(TraceContext):
 
     def _record_mask_blt(self, a, state, records):
         if a["source"] is None:
-            raise UnsupportedOperation("EMF recording of source-less MaskBlt is not yet supported")
+            return  # Native recording writes nothing for a source-less MaskBlt.
         if a.get("src_size") is not None:
             raise UnsupportedOperation("EMF recording of MaskBlt with a stretched source is not yet supported")
         mask = mask_bitmap(a["mask"]) if a["mask"] is not None else None

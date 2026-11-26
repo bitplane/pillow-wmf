@@ -479,9 +479,16 @@ class RasterContext(ExecutionContext[DrawingState]):
         The current position is the exact logical end point, floored, as
         native recording reports it after AngleArc and ArcTo.
         """
-        start = self._path_point(*self._state.position)
+        start = self._start_point()
         self._stroke_path(DevicePath(((start, path.commands[0][0]), *path.commands)), extend=True)
         self._state.position = (math.floor(end[0]), math.floor(end[1]))
+        self._state.fixed_position = path.commands[-1][-1]
+
+    def _start_point(self):
+        """The 28.4 point a *To call starts from: the exact point an arc left, else the position."""
+        if self._state.fixed_position is not None:
+            return self._state.fixed_position
+        return self._path_point(*self._state.position)
 
     def _prepare_arc_to(self, a):
         if self.mapping.graphics_mode != GM_ADVANCED:
@@ -492,12 +499,20 @@ class RasterContext(ExecutionContext[DrawingState]):
         box = (a["left"], a["top"], a["right"], a["bottom"])
         end = (a["end_x"], a["end_y"])
         path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end)
-        # The end lies on the box's ellipse along the end radial.
-        left, right = sorted(box[0::2])
-        top, bottom = sorted(box[1::2])
-        cx, cy, rx, ry = (left + right) / 2, (top + bottom) / 2, (right - left) / 2, (bottom - top) / 2
-        angle = math.atan2((end[1] - cy) / ry, (end[0] - cx) / rx) if rx and ry else 0.0
-        self._stroke_from_position(path, (cx + rx * math.cos(angle), cy + ry * math.sin(angle)))
+        # The current position is the arc's 28.4 end, floored to a logical point.
+        self._stroke_from_position(path, self._floor_logical(path.commands[-1][-1]))
+
+    def _floor_logical(self, point):
+        """The logical point at or below a 28.4 device point, as GetCurrentPositionEx reports it."""
+        if self.mapping.rotated:
+            m11, m12, m21, m22, dx, dy = self.mapping.world
+            x, y = point[0] / 16 - dx, point[1] / 16 - dy
+            det = m11 * m22 - m12 * m21
+            return math.floor((x * m22 - y * m21) / det), math.floor((y * m11 - x * m12) / det)
+        return tuple(
+            math.floor((Fraction(value, 16) - Fraction(origin)) / Fraction(scale))
+            for value, (scale, origin) in zip(point, self.mapping._transform(), strict=True)
+        )
 
     def _prepare_angle_arc(self, a):
         if self.mapping.graphics_mode != GM_ADVANCED:
@@ -900,11 +915,14 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_move_to(self, call, prepared, result):
         a = call.kwargs
         self._state.position = a["x"], a["y"]
+        self._state.fixed_position = None
 
     def _apply_line_to(self, call, prepared, result):
         a = call.kwargs
-        self._stroke_path(DevicePath.polyline(self._mapped_path((self._state.position, (a["x"], a["y"])))), extend=True)
+        start = self._start_point()
+        self._stroke_path(DevicePath.polyline((start, self._path_point(a["x"], a["y"]))), extend=True)
         self._state.position = a["x"], a["y"]
+        self._state.fixed_position = None
 
     def _apply_polyline(self, call, prepared, result):
         a = call.kwargs
@@ -924,18 +942,19 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_poly_bezier_to(self, call, prepared, result):
         logical = (self._state.position, *call.kwargs["points"])
-        points = self._mapped_path(logical)
+        points = [self._start_point(), *self._mapped_path(logical[1:])]
         if len(points) > 1:
             self._stroke_path(
                 DevicePath(tuple(tuple(points[i : i + 4]) for i in range(0, len(points) - 1, 3))), extend=True
             )
-        self._state.position = logical[-1]
+            self._state.position, self._state.fixed_position = logical[-1], None
 
     def _apply_polyline_to(self, call, prepared, result):
         logical = (self._state.position, *call.kwargs["points"])
         if len(logical) > 1:
-            self._stroke_path(DevicePath.polyline(self._mapped_path(logical)), extend=True)
-        self._state.position = logical[-1]
+            points = [self._start_point(), *self._mapped_path(logical[1:])]
+            self._stroke_path(DevicePath.polyline(points), extend=True)
+            self._state.position, self._state.fixed_position = logical[-1], None
 
     def _apply_poly_polyline(self, call, prepared, result):
         for polyline in call.kwargs["polylines"]:
@@ -984,6 +1003,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         for commands, closed in figures:
             mapped = tuple(tuple(self._path_point(*point) for point in command) for command in commands)
             self._stroke_path(DevicePath(mapped, closed=closed))
+        if figures or position != self._state.position:
+            self._state.fixed_position = None
         self._state.position = position
 
     def _apply_polygon(self, call, prepared, result):
