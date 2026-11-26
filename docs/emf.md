@@ -119,9 +119,9 @@ Text records play through the font collection's faces:
   underline and strikeout are parallelograms along the baseline. A logical
   unit along the baseline spans `1 / |W⁻¹d|` device units, for the world
   transform `W` and the font's unit device baseline `d`. Without explicit
-  spacing, glyphs are placed by their logical extents: cumulative design
-  widths at the device em (in 28.4 along the baseline) converted back to
-  logical units, rounded half up. Escaped GM_COMPATIBLE text under a world
+  spacing, glyphs are placed by their logical extents: the glyphs' 28.4
+  device advances (fxD) accumulated, converted back to logical units and
+  rounded half up; a recorded EXTTEXTOUT stores the same extents. Escaped GM_COMPATIBLE text under a world
   transform kept from GM_ADVANCED rotates in device space the same way.
   When a GM_ADVANCED escapement differs from the orientation, each glyph's
   centre (origin plus half its advance) sits on the escapement at its back
@@ -642,6 +642,7 @@ source pixel. A mask bit of 1 copies the source pixel.
   records the native results).
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
-  differs from native along slanted edges, and the recorder's bounds for some rotated runs without explicit advances
-  differ by a logical unit.
+  differs from native along slanted edges, and the recorder's bounds for rotated runs without explicit advances whose
+  device advances total an odd number of half pixels can differ by a
+  logical unit.
 - `GM_COMPATIBLE` ArcTo and AngleArc take the `GM_ADVANCED` arc geometry.

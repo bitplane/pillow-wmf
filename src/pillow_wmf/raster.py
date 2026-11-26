@@ -1981,13 +1981,14 @@ class RasterContext(ExecutionContext[DrawingState]):
             else em_width
         )
         if not advances and rotating and advance_matrix is None:
-            # Rotated or sheared glyphs take their logical extents: the design
-            # widths at the logical em, accumulated and rounded half up.
-            design, logical, previous, bold = 0, [], 0, 0
+            # Rotated or sheared glyphs take their logical extents: the 28.4
+            # device advances (fxD) accumulated, converted to logical units
+            # and rounded half up.
+            logical, previous, bold, device = [], 0, 0, 0
             for index in indices:
-                design += face.design_advances.get(index, 0)
                 bold += 1 if font.embolden and face.design_advances.get(index, 0) else 0
-                position = _round_half_away(Fraction(design) * extent_em / upem + 16 * bold / Fraction(scale))
+                device += font.glyph_advance(index)[0]
+                position = _round_half_away(Fraction(device + 16 * bold) / Fraction(scale))
                 logical.append(position - previous)
                 previous = position
             advances = tuple(logical)
@@ -2046,11 +2047,16 @@ class RasterContext(ExecutionContext[DrawingState]):
             sign = -1 if alignment & 6 == 2 else 1
             fixed_position = tuple(start + sign * step for start, step in zip(fixed_origin, run.advance, strict=True))
             position = self.mapping.logical_from_fixed(*fixed_position)
-        # Logical extents follow the notional widths at the logical em, rounded half up.
-        total, extents = 0, []
+        # Logical extents follow the notional widths at the logical em, rounded
+        # half up. Rotated text records its accumulated fxD in logical units instead.
+        total, extents, device = 0, [], 0
         for index in indices:
             total += face.design_advances.get(index, 0)
-            extents.append(math.floor(Fraction(total) * extent_em / upem + Fraction(1, 2)))
+            device += font.glyph_advance(index)[0]
+            if rotating:
+                extents.append(math.floor(Fraction(device) / Fraction(scale) + Fraction(1, 2)))
+            else:
+                extents.append(math.floor(Fraction(total) * extent_em / upem + Fraction(1, 2)))
         return TextLayout(run.glyphs, background, position, decorations, fixed_position, tuple(extents))
 
     def measure_text(self, args):

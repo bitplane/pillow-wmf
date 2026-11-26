@@ -3,7 +3,8 @@
 ``recorded_text_bounds.json`` holds records the ``glyph-transforms`` probe
 captured: runs of the controlled font drawn at (40, 40) with TA_TOP, in
 GM_ADVANCED, through an escapement or a rotating world transform, with and
-without explicit advances, transparent and opaque.
+without explicit advances, transparent and opaque, some with the world origin
+moved by sixteenths of a pixel.
 """
 
 import json
@@ -21,7 +22,9 @@ GROUPS = json.loads(Path(__file__).with_name("recorded_text_bounds.json").read_t
 FONTS = FontCollection([FontFace.from_path(ROOT / "fonts/layout.ttf")])
 
 
-@pytest.mark.parametrize("group", GROUPS, ids=[f"{g['height']}-{g['escapement']}-{g['world'][0]}" for g in GROUPS])
+@pytest.mark.parametrize(
+    "group", GROUPS, ids=[f"{g['height']}-{g['escapement']}-{g['world'][0]}-{g['world'][4]}" for g in GROUPS]
+)
 def test_recorded_bounds_match_native(group):
     recorder = Recorder(fonts=FONTS)
     recorder.set_graphics_mode(2)
