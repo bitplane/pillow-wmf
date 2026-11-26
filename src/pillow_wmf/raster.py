@@ -1911,6 +1911,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             ink_spans=face.ink_spans,
             advance_matrix=advance_matrix,
             oblique=bool(request.italic) and not face.italic,
+            exact_advances=compatible,
             embolden=request.weight >= 700 > face.weight,
         )
         if glyph_indices is None:
