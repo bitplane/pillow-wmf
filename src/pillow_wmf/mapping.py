@@ -302,6 +302,16 @@ class Mapping:
         det = m11 * m22 - m12 * m21
         return rounded((x * m22 - y * m21) / det), rounded((y * m11 - x * m12) / det)
 
+    def logical_from_fixed(self, x: int, y: int) -> tuple[float, float]:
+        """The exact logical point a 28.4 device point maps back to."""
+        x, y = x / 16, y / 16
+        if self.rotated:
+            m11, m12, m21, m22, dx, dy = self.world
+            x, y = x - dx, y - dy
+            det = m11 * m22 - m12 * m21
+            return (x * m22 - y * m21) / det, (y * m11 - x * m12) / det
+        return tuple((value - origin) / scale for value, (scale, origin) in zip((x, y), self._transform(), strict=True))
+
     def logical_point(self, x, y) -> tuple[int, int]:
         """DPtoLP: the nearest logical point to a device point."""
         return tuple(

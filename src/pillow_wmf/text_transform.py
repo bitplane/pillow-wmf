@@ -52,6 +52,9 @@ class TransformedFont:
     descent: int
     design_advances: dict
     quality: int = 3
+    # Notional black-box start and end along the baseline, by glyph.
+    ink_spans: dict = field(default_factory=dict)
+    _frame: object = field(default=None, repr=False)
     _glyphs: dict = field(default_factory=dict, repr=False)
     _lock: Lock = field(default_factory=Lock, repr=False, compare=False)
     _face: object = field(default=None, repr=False)
@@ -185,13 +188,89 @@ class TransformedFont:
             return (0, pixels * 16 if (d < 0) == (units < 0) else -pixels * 16)
         return tuple(_round_half_away(Fraction(value) * units * 16) for value in (b, d))
 
+    def frame(self) -> "Frame":
+        """The realized font's unit vectors, cell extents and alignment vectors."""
+        if self._frame is None:
+            self._frame = self._compute_frame()
+        return self._frame
+
+    def _compute_frame(self):
+        a, b, c, d = (float32(value) for value in self._device_matrix())
+        if not b and not c:
+            ascent = abs(self.vertical(self.ascent)[1])
+            descent = abs(self.vertical(self.descent)[1])
+            side = (0.0, 1.0 if d > 0 else -1.0)
+            return Frame(
+                (1.0 if a >= 0 else -1.0, 0.0),
+                side,
+                float32(abs(a) * 16),
+                ascent,
+                descent,
+                self.vertical(self.ascent),
+                self.vertical(-self.descent),
+            )
+        # The driver bounds the em box by the head table's yMax and yMin, each
+        # widened by 1/64 em, and rounds each extent out to whole pixels along
+        # the side vector.
+        base_length, base = _unit(a * 16, c * 16)
+        side_length, side = _unit(b * 16, d * 16)
+        margin = self.units_per_em >> 6
+        top = _round_half_away(float32(float32(-(self.ascent + margin)) * side_length))
+        bottom = _round_half_away(float32(float32(self.descent + margin) * side_length))
+        ascent, descent = ((15 - top) >> 4) * 16, ((bottom + 15) >> 4) * 16
+        return Frame(
+            base,
+            side,
+            base_length,
+            ascent,
+            descent,
+            tuple(_round_half_away(float32(ascent * value)) for value in side),
+            tuple(_round_half_away(float32(-descent * value)) for value in side),
+        )
+
+    def offset(self, units: int) -> tuple[int, int]:
+        """A notional vertical offset (y up) as whole device pixels, as the driver places decorations."""
+        _, b, _, d = (float32(value) for value in self._device_matrix())
+        return tuple(((_round_half_away(16 * float32(units * value)) >> 3) + 1) >> 1 for value in (b, d))
+
+    def ink(self, index: int) -> tuple[int, int]:
+        """The glyph's black-box start and end along the baseline, 28.4."""
+        left, right = self.ink_spans.get(index, (0, 0))
+        length = self.frame().base_length
+        return _round_half_away(float32(left * length)), _round_half_away(float32(right * length))
+
+
+def _unit(x, y):
+    """A vector's single-precision length and unit vector."""
+    x, y = float32(x), float32(y)
+    length = float32(sqrt(float32(float32(x * x) + float32(y * y))))
+    return length, (float32(x / length), float32(y / length))
+
+
+@dataclass(frozen=True)
+class Frame:
+    """Unit baseline and ascender vectors, the 28.4 baseline length of a
+    notional unit, the 28.4 cell ascent and descent, and the alignment
+    vectors from the baseline to the cell's top and bottom."""
+
+    base: tuple[float, float]
+    side: tuple[float, float]
+    base_length: float
+    ascent: int
+    descent: int
+    ascent_vector: tuple[int, int]
+    descent_vector: tuple[int, int]
+
 
 @dataclass(frozen=True)
 class TransformedRun:
-    """Glyph pixel origins and the 28.4 total advance of a placed run."""
+    """Glyph pixel origins, the 28.4 total advance and aligned origin, and
+    the glyphs' 28.4 baseline offsets."""
 
     glyphs: tuple
     advance: tuple[int, int]
+    origin: tuple[int, int] = (0, 0)
+    offsets: tuple = ()
 
 
 def place_run(font: TransformedFont, indices, origin, alignment, *, advances=(), baseline=None, max_pixels):
@@ -202,11 +281,12 @@ def place_run(font: TransformedFont, indices, origin, alignment, *, advances=(),
     """
     horizontal, vertical = alignment & 6, alignment & 24
     origin_x, origin_y = origin
+    frame = font.frame()
     if vertical == 0:
-        up = font.vertical(font.ascent)
+        up = frame.ascent_vector
         origin_x, origin_y = origin_x - up[0], origin_y - up[1]
     elif vertical == 8:
-        down = font.vertical(-font.descent)
+        down = frame.descent_vector
         origin_x, origin_y = origin_x - down[0], origin_y - down[1]
     positions = [(0, 0)]
     if advances:
@@ -237,7 +317,64 @@ def place_run(font: TransformedFont, indices, origin, alignment, *, advances=(),
         x = (origin_x + px - shift[0] + 8) >> 4
         y = (origin_y + py - shift[1] + 8) >> 4
         glyphs.append((x + glyph.bearing[0], y + glyph.bearing[1], glyph))
-    return TransformedRun(tuple(glyphs), total)
+    return TransformedRun(tuple(glyphs), total, (origin_x - shift[0], origin_y - shift[1]), tuple(positions))
+
+
+def _round_product(value, factor) -> int:
+    return _round_half_away(float32(float32(value) * factor))
+
+
+def opaque_area(font: TransformedFont, run: TransformedRun, indices):
+    """The 28.4 corners of the cell parallelogram an opaque run fills.
+
+    Along the baseline the cell spans from the origin, or the earliest ink,
+    to the run's length plus any ink protruding past its advance; across it,
+    the cell ascent and descent.
+    """
+    frame = font.frame()
+    position = left = right = 0
+    for index in indices:
+        start, end = font.ink(index)
+        left, right = min(left, position + start), max(right, position + end)
+        position += _round_half_away(float32(font.design_advances.get(index, 0) * frame.base_length))
+    x, y = run.advance
+    length = float32(
+        sqrt(
+            float32(
+                float32(float32(x * 0.0625) * float32(x * 0.0625)) + float32(float32(y * 0.0625) * float32(y * 0.0625))
+            )
+        )
+    )
+    length = _round_half_away(float32(length * 16))
+    left, right = min(left, position), length + max(0, right - position)
+    top, bottom = frame.ascent, -frame.descent
+    bx, by = frame.base
+    sx, sy = frame.side
+    ox, oy = run.origin
+    ax, ay = _round_product(left, bx), _round_product(left, by)
+    cx, cy = _round_product(right, bx), _round_product(right, by)
+    ex, ey = _round_product(top, sx), _round_product(top, sy)
+    gx, gy = _round_product(bottom, sx), _round_product(bottom, sy)
+    return (
+        (ox + ex + ax, oy + ey + ay),
+        (ox + ex + cx, oy + ey + cy),
+        (ox + gx + cx, oy + gy + cy),
+        (ox + gx + ax, oy + gy + ay),
+    )
+
+
+def decoration_areas(font: TransformedFont, run: TransformedRun, metrics):
+    """28.4 parallelograms for each (position, thickness) decoration, from the pixel origin along the run."""
+    ox, oy = ((value + 8) & ~15 for value in run.origin)
+    ax, ay = run.advance
+    areas = []
+    for position, thickness in metrics:
+        px, py = font.offset(position)
+        tx, ty = font.offset(-thickness)
+        x, y = ox + px * 16, oy + py * 16
+        tx, ty = tx * 16, ty * 16
+        areas.append(((x, y), (x + ax, y + ay), (x + ax + tx, y + ay + ty), (x + tx, y + ty)))
+    return tuple(areas)
 
 
 def baseline_vector(matrix, world_baseline):

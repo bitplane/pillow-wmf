@@ -80,7 +80,7 @@ from .surface import Surface
 from .text import FontCollection
 from .text_layout import TextLayout, layout_text
 from .text_math import text_rotation
-from .text_transform import TransformedFont, baseline_vector, place_run
+from .text_transform import TransformedFont, baseline_vector, decoration_areas, opaque_area, place_run
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
@@ -1760,7 +1760,6 @@ class RasterContext(ExecutionContext[DrawingState]):
         # already explicitly supplied TrueType face. Retain them in DC state.
         update = self._state.text_state.alignment & TA_UPDATECP
         origin = self._state.position if update else (args["x"], args["y"])
-        origin_xy = origin
         continued = self._state.text_position
         if update and continued is not None and continued[0] == self._state.position:
             fixed_origin = continued[1]
@@ -1798,7 +1797,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         characters = decoded.text if decoded is not None else None
         if self._general_text(request):
             layout = self._transformed_text(
-                request, face, characters, glyph_indices, origin_xy, alignment, advances, options, vertical_advances
+                request, face, characters, glyph_indices, fixed_origin, alignment, advances, options, vertical_advances
             )
             return layout, rectangle
         layout = layout_text(
@@ -1855,17 +1854,14 @@ class RasterContext(ExecutionContext[DrawingState]):
         return bool(m12 or m21 or m11 < 0 or m22 < 0 or request.escapement % 3600)
 
     def _transformed_text(
-        self, request, face, characters, glyph_indices, origin, alignment, advances, options, vertical_advances
+        self, request, face, characters, glyph_indices, fixed_origin, alignment, advances, options, vertical_advances
     ):
-        """Realize and place a run through its full notional-to-device matrix; see ``text_transform``."""
+        """Realize and place a run from its 28.4 origin through its full notional-to-device matrix.
+
+        See ``text_transform``.
+        """
         if vertical_advances or options & ETO_PDY:
             raise UnsupportedOperation("Paired advances under a general text transform")
-        if self._state.background_mode == OPAQUE:
-            raise UnsupportedOperation("Opaque text under a general text transform")
-        if request.underline or request.strikeout:
-            raise UnsupportedOperation("Text decorations under a general text transform")
-        if alignment & TA_UPDATECP:
-            raise UnsupportedOperation("Current-position text under a general text transform")
         text_state = self._state.text_state
         if text_state.character_extra or text_state.justification[0]:
             raise UnsupportedOperation("Text spacing under a general text transform")
@@ -1907,6 +1903,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             *(face.outline_cell if matrix[1] or matrix[2] else (face.ascent, face.descent)),
             face.design_advances,
             quality=request.quality,
+            ink_spans=face.ink_spans,
         )
         if glyph_indices is None:
             indices = []
@@ -1927,13 +1924,30 @@ class RasterContext(ExecutionContext[DrawingState]):
         run = place_run(
             font,
             indices,
-            self.mapping.fixed_point(*origin),
+            fixed_origin,
             alignment,
             advances=advances,
             baseline=baseline_vector(matrix, world_baseline) if advances else None,
             max_pixels=self.max_bitmap_pixels,
         )
-        return TextLayout(run.glyphs)
+
+        def pixels(points):
+            return tuple((Fraction(x, 16), Fraction(y, 16)) for x, y in points)
+
+        background = pixels(opaque_area(font, run, indices)) if self._state.background_mode == OPAQUE else None
+        metrics = [
+            m
+            for m, on in ((face.underline_metrics, request.underline), (face.strikeout_metrics, request.strikeout))
+            if on
+        ]
+        decorations = tuple(pixels(area) for area in decoration_areas(font, run, metrics))
+        position = fixed_position = None
+        if alignment & TA_UPDATECP and alignment & 6 != 6:
+            # The current position moves by the run's advance, back for TA_RIGHT.
+            sign = -1 if alignment & 6 == 2 else 1
+            fixed_position = tuple(start + sign * step for start, step in zip(fixed_origin, run.advance, strict=True))
+            position = self.mapping.logical_from_fixed(*fixed_position)
+        return TextLayout(run.glyphs, background, position, decorations, fixed_position)
 
     def _font_aspect(self):
         """A metafile text record's font transform stretches the width by its y over x scale."""
