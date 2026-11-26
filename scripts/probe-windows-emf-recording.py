@@ -770,6 +770,78 @@ def gap_scenarios():
 
     yield "clip-path-shapes", None, clip_path_shapes
 
+    def mask_blt_patterns(dc):
+        # Source-less MaskBlt: the pattern through a mask, and without one.
+        select(dc, hatch_brush(5, 0x0000FF))
+        mono = create_bitmap(8, 6, 1, 1, ctypes.create_string_buffer(bytes((0xA5, 0, 0x5A, 0) * 3), 12))
+        mask_blt(dc, 4, 4, 8, 6, None, 0, 0, mono, 0, 0, 0xAAF00021)
+        mask_blt(dc, 20, 4, 8, 6, None, 0, 0, mono, 2, 1, 0x55F00021)
+        mask_blt(dc, 36, 4, 8, 6, None, 0, 0, None, 0, 0, 0xAAF00021)
+        delete(mono)
+
+    yield "mask-blt-patterns", None, mask_blt_patterns
+
+    def compressed_pattern_brushes(dc):
+        # DIB pattern brushes from RLE8 and RLE4 DIBs.
+        palette = b"".join(struct.pack("<I", value) for value in (0x0000FF, 0x00FF00, 0xFF0000, 0xFFFFFF))
+        for compression, bits in (
+            (1, bytes((4, 1, 4, 2, 0, 0, 8, 3, 0, 0, 2, 0, 0, 2, 2, 1, 0, 0, 0, 1))),
+            (2, bytes((8, 0x12, 0, 0, 8, 0x30, 0, 0, 0, 3, 0x12, 0x30, 0, 0, 0, 1))),
+        ):
+            depth = 8 if compression == 1 else 4
+            header = struct.pack("<IiiHHIIiiII", 40, 8, 4, 1, depth, compression, len(bits), 0, 0, 4, 0)
+            packed = ctypes.create_string_buffer(header + palette + bits)
+            select(dc, dib_pattern_brush(packed, 0))
+            rectangle(dc, 0, 0, 20, 20)
+            select(dc, stock(0))
+
+    yield "compressed-pattern-brushes", None, compressed_pattern_brushes
+
+    def clip_path_widened_shapes(dc):
+        # SelectClipPath after widening shapes, arcs and extended-pen paths.
+        select(dc, create_pen(0, 5, 0))
+        shapes = (
+            lambda: ellipse(dc, 5, 5, 40, 30),
+            lambda: round_rect(dc, 6, 4, 41, 33, 12, 9),
+            lambda: pie(dc, 5, 5, 41, 31, 40, 5, 5, 6),
+            lambda: (move_to(dc, 2, 2, None), arc_to(dc, 10, 10, 50, 35, 50, 20, 10, 12), line_to(dc, 2, 2)),
+            lambda: rectangle(dc, 8, 8, 40, 30),
+        )
+        for shape in shapes:
+            save_dc(dc)
+            begin_path(dc)
+            shape()
+            end_path(dc)
+            widen_path(dc)
+            select_clip_path(dc, 5)
+            polyline(dc, *points((0, 0), (90, 0), (90, 90), (0, 90), (0, 0)))
+            restore_dc(dc, -1)
+        brush = LogBrush(0, 0, 0)
+        for style in (0x00010000 | 0x0200 | 0x2000, 0x00010000 | 0x0100 | 0x1000):
+            select(dc, ext_create_pen(style, 7, ctypes.byref(brush), 0, None))
+            save_dc(dc)
+            begin_path(dc)
+            move_to(dc, 10, 10, None)
+            line_to(dc, 40, 15)
+            line_to(dc, 20, 35)
+            end_path(dc)
+            widen_path(dc)
+            select_clip_path(dc, 5)
+            polyline(dc, *points((0, 0), (90, 0), (90, 90), (0, 90), (0, 0)))
+            restore_dc(dc, -1)
+
+    yield "clip-path-widened-shapes", None, clip_path_widened_shapes
+
+    def odd_arc_to(dc):
+        # The clockwise ArcTo on an odd-sized box, then its current position.
+        set_arc_direction(dc, 2)
+        for box, radials in (((10, 10, 41, 31), (40, 10, 10, 30)), ((10, 10, 41, 31), (10, 30, 40, 10))):
+            move_to(dc, 0, 0, None)
+            arc_to(dc, *box, *radials)
+            polyline_to(dc, *points((300, 300)))
+
+    yield "odd-arc-to", None, odd_arc_to
+
 
 def records(data):
     position = 0
