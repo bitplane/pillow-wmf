@@ -309,7 +309,13 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   moves in by the logical size of one device pixel (window over viewport
   extent), rounded half to even. GM_ADVANCED boxes are written as given;
   there is no record for the graphics mode. `SetWorldTransform` is followed
-  by `ModifyWorldTransform(MWT_SET)` with the same matrix.
+  by `ModifyWorldTransform(MWT_SET)` with the same matrix;
+  `ModifyWorldTransform` is written as given. Once a world transform has
+  been set (until `MWT_IDENTITY`), GM_COMPATIBLE boxes other than rectangles
+  keep their bottom edge in their bounds.
+- `OffsetViewportOrgEx` is written as `SetViewportOrgEx` of the result.
+  Escapes (`MFCOMMENT` included) and `SetMapperFlags` leave no record;
+  `gdi_comment` writes `EMR_GDICOMMENT`.
 - `SetArcDirection` is written just before the next arc that uses it.
 - Point records use their 16-bit forms when every coordinate fits.
 - Bounds are inclusive device pixels. A stroke reaches the miter limit times
@@ -317,7 +323,11 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   geometric miter joins), and half the width rounded up plus one otherwise;
   one-pixel pens add nothing. Arcs, chords and pies count their drawn sweep,
   `*To` records include the current position (unless `PolyDraw` opens with a
-  move), and a flood fill claims the whole device. Record and header bounds
+  move; after an arc, a one-pixel pen counts the floored logical point and
+  the device pixel the exact point rounds up to), and a flood fill claims
+  the whole device. Under rotation or shear, points count the pixels their
+  exact 28.4 positions lie across, and a box its four corners, its far edges
+  exclusive except for a rectangle's. Record and header bounds
   are clipped to the clip region's bounding box; a figure with neither pen
   nor brush adds nothing.
 - Transfer sources are written as `GetDIBits` returns a source DC's bitmap:
@@ -330,7 +340,11 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   without a colour table (`DIB_PAL_INDICES`); a 32-bpp device bitmap brush
   becomes a bit-field DIB pattern brush. Packed DIB pattern brushes and pens
   are re-encoded the same way; `SetDIBitsToDevice` and `StretchDIBits` keep
-  the DIB as given.
+  the DIB as given. A legacy (Bitmap16) source is selected into a memory DC
+  compatible with the recording DC: a monochrome or reference-depth bitmap
+  selects and the transfer leaves no record, while any other depth fails to
+  select and the transfer records the memory DC's default 1x1 monochrome
+  bitmap.
 - Bitmap brushes carry a `0x20000000` DWORD before their BitmapInfo. A DIB
   pattern pen carries it in place of the header size; the player reads such
   a header as a 40-byte one.

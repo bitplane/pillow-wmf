@@ -48,7 +48,7 @@ from ..limits import DEFAULT_LIMITS
 from ..mapping import REFERENCE_DEVICE, Mapping, ReferenceDevice, _round_half_away
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
-from ..objects import EncodedText, FontRequest, RegionGeometry
+from ..objects import BitmapData, EncodedText, FontRequest, RegionGeometry
 from ..stroke import realize_pen
 from ..trace import TraceContext
 from ..world import modified as modified_world
@@ -289,6 +289,10 @@ class _State:
     # The exact 28.4 device point an arc left the current position at, which
     # the next *To call starts from; None once a logical point sets it.
     fixed_position: tuple[int, int] | None = None
+    # Whether a world transform was set since the DC began or last took
+    # MWT_IDENTITY, even an identity one; GM_COMPATIBLE boxes then keep their
+    # bottom edges.
+    world_set: bool = False
     bounds: Rect | None = None
     path: Rect | None = None
     recording_path: bool = False
@@ -397,17 +401,36 @@ class Recorder(TraceContext):
         return state.mapping.device_point(x, y)
 
     def _device_box(self, state: _State, points) -> Rect | None:
+        """The device pixels points cover; under rotation or shear, the pixels
+        their exact 28.4 positions lie across."""
+        if state.mapping.rotated:
+            exact = [state.mapping.fixed_point(x, y) for x, y in points]
+            if not exact:
+                return None
+            xs, ys = [x for x, _ in exact], [y for _, y in exact]
+            return min(xs) >> 4, min(ys) >> 4, (max(xs) + 15) >> 4, (max(ys) + 15) >> 4
         return _box(self._device(state, x, y) for x, y in points)
 
-    def _device_rect(self, state: _State, left: int, top: int, right: int, bottom: int) -> Rect:
+    def _device_rect(self, state: _State, left: int, top: int, right: int, bottom: int, *, closed=False) -> Rect:
         """The inclusive device box of a logical box, as bounds count it.
 
         In GM_COMPATIBLE the device right and bottom edges are moved in by
         one pixel; in GM_ADVANCED the mapped edges are used as they are.
+        Under rotation or shear the box spans the pixels its four corners'
+        exact positions lie across; the far edges are exclusive except for a
+        ``closed`` box (a GM_ADVANCED rectangle includes its lower-right edges).
         """
+        if state.mapping.rotated:
+            corners = ((left, top), (right, top), (right, bottom), (left, bottom))
+            exact = [state.mapping.fixed_point(x, y) for x, y in corners]
+            xs, ys = [x for x, _ in exact], [y for _, y in exact]
+            inset = 0 if closed else 1
+            return min(xs) >> 4, min(ys) >> 4, ((max(xs) + 15) >> 4) - inset, ((max(ys) + 15) >> 4) - inset
         (x0, y0), (x1, y1) = self._device(state, left, top), self._device(state, right, bottom)
         if state.graphics_mode == GM_COMPATIBLE:
-            x1, y1 = x1 - 1, y1 - 1
+            # A world transform set at any point leaves the bottom edge of
+            # every box but a rectangle in place.
+            x1, y1 = x1 - 1, y1 - (0 if state.world_set and not closed else 1)
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
     def _inclusive(self, state: _State, right: int, bottom: int) -> tuple[int, int]:
@@ -932,6 +955,7 @@ class Recorder(TraceContext):
         records.append(fixed.ModifyWorldTransform(*values, 4))
         if state.graphics_mode == GM_ADVANCED:
             state.mapping.world = values
+            state.world_set = True
 
     def _record_modify_world_transform(self, a, state, records):
         values = tuple(a[key] for key in ("m11", "m12", "m21", "m22", "dx", "dy"))
@@ -940,6 +964,7 @@ class Recorder(TraceContext):
             world = modified_world(state.mapping.world, a["mode"], tuple(float32(v) for v in values))
             if world is not None:
                 state.mapping.world = world
+                state.world_set = a["mode"] != 1  # MWT_IDENTITY
 
     # Drawing
 
@@ -955,7 +980,7 @@ class Recorder(TraceContext):
         else:
             self._untraced(state)
         records.append(record_type(left, top, right, bottom, *extra))
-        box = self._device_rect(state, left, top, a["right"], a["bottom"])
+        box = self._device_rect(state, left, top, a["right"], a["bottom"], closed=record_type is fixed.Rectangle)
         if state.pen.style == PS_NULL:
             if state.brush_null:
                 return  # Neither outline nor interior is drawn.
@@ -1517,22 +1542,22 @@ class Recorder(TraceContext):
         self._blit(bitmaps.BitBlt, a, state, records, source=False, extra={"rop": a["rop"]})
 
     def _record_bit_blt(self, a, state, records):
-        """A legacy-bitmap BitBlt records as a DIB transfer; without a source, as PatBlt."""
+        """A legacy-bitmap BitBlt as a recording DC sees it (see ``_legacy_source``); without a source, PatBlt."""
         if a["source"] is None:
             self._record_pat_blt(a, state, records)
             return
-        layout = read_bitmap16(a["source"])
-        source = encode_dib24(layout.decode())
-        self._record_dib_bit_blt({**a, "source": source}, state, records)
+        source = _legacy_source(a["source"])
+        if source is not None:
+            self._record_dib_bit_blt({**a, "source": source}, state, records)
 
     def _record_stretch_blt(self, a, state, records):
-        """A legacy-bitmap StretchBlt records as a DIB stretch; without a source, as PatBlt."""
+        """A legacy-bitmap StretchBlt as a recording DC sees it (see ``_legacy_source``); without a source, PatBlt."""
         if a["source"] is None:
             self._record_pat_blt(a, state, records)
             return
-        layout = read_bitmap16(a["source"])
-        source = encode_dib24(layout.decode())
-        self._record_dib_stretch_blt({**a, "source": source}, state, records)
+        source = _legacy_source(a["source"])
+        if source is not None:
+            self._record_dib_stretch_blt({**a, "source": source}, state, records)
 
     def _record_escape(self, a, state, records):
         pass  # An EMF DC records no escape, MFCOMMENT included; comments come from GdiComment.
@@ -1708,9 +1733,31 @@ _PATH_CALLS = frozenset(
 )
 
 MFCOMMENT = 15
+# The reference display's colour depth.
+REFERENCE_BITS = 32
+# A memory DC's default bitmap: 1x1, monochrome, black.
+DEFAULT_MEMORY_BITMAP = BitmapData(
+    "dib",
+    struct.pack("<IiiHHIIiiII", 40, 1, 1, 1, 1, 0, 4, 0, 0, 0, 0) + bytes((0, 0, 0, 0, 255, 255, 255, 0, 0, 0, 0, 0)),
+)
+
+
+def _legacy_source(bitmap: BitmapData) -> BitmapData | None:
+    """The source a recording DC transfers from a legacy (Bitmap16) bitmap.
+
+    The bitmap is selected into a memory DC compatible with the recording
+    DC. A monochrome or reference-depth bitmap selects, and the transfer then
+    records nothing; any other depth fails to select, so the transfer reads
+    the memory DC's default bitmap.
+    """
+    if read_bitmap16(bitmap).depth in (1, REFERENCE_BITS):
+        return None
+    return DEFAULT_MEMORY_BITMAP
+
 
 _SAVED = (
     "mapping",
+    "world_set",
     "graphics_mode",
     "pen",
     "position",

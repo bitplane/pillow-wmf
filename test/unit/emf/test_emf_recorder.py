@@ -858,6 +858,49 @@ def completion_scenarios():
 
     yield "completion", None, completion
 
+    def legacy_depths(r):
+        play_wmf(WmfMetafile.from_bytes(LEGACY_DEPTHS), r, strict=True)
+        r.select_object(r.get_stock_object(7))
+        r.select_object(r.get_stock_object(0))
+        r.select_palette(r.get_stock_object(15))
+        r.select_clip_region(None)
+
+    yield "legacy-depths", None, legacy_depths
+
+    def transformed_shapes(m11, m12, m21, m22):
+        def draw(r):
+            r.set_graphics_mode(2)
+            r.set_world_transform(m11, m12, m21, m22, 20.0, 10.0)
+            r.rectangle(10, 10, 30, 20)
+            r.ellipse(40, 10, 60, 24)
+            r.round_rect(10, 30, 30, 44, 6, 4)
+            r.arc(40, 30, 60, 44, 60, 37, 40, 30)
+            r.chord(10, 50, 30, 64, 30, 57, 10, 50)
+            r.pie(40, 50, 60, 64, 60, 57, 40, 50)
+            r.polygon(((10, 70), (25, 72), (18, 80)))
+            r.polyline(((40, 70), (55, 75), (48, 82)))
+            r.move_to(5, 85)
+            r.line_to(30, 90)
+
+        return draw
+
+    yield "sheared-shapes", None, transformed_shapes(1.0, 0.0, 0.45, 1.0)
+    yield "rotated-shapes", None, transformed_shapes(0.9, 0.4, -0.4, 0.9)
+
+    def compatible_after_world(r):
+        r.set_graphics_mode(2)
+        r.set_world_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        r.set_graphics_mode(1)
+        r.rectangle(10, 10, 30, 20)
+        r.ellipse(40, 10, 60, 30)
+        r.set_graphics_mode(2)
+        r.modify_world_transform(1, 0, 0, 1, 0, 0, 1)
+        r.set_graphics_mode(1)
+        r.rectangle(10, 40, 30, 50)
+        r.ellipse(40, 40, 60, 60)
+
+    yield "compatible-after-world", None, compatible_after_world
+
 
 SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios(), *completion_scenarios()]
 
