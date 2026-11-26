@@ -37,8 +37,10 @@ def _round_half_away(value) -> int:
     return magnitude if value >= 0 else -magnitude
 
 
-def _round_half_up(value) -> int:
-    return int((value + Fraction(1, 2)).__floor__())
+def _post(p, x, q, y) -> int:
+    """One output coordinate of a 16.16 matrix applied to a 26.6 point, rounded once."""
+    first, second = _round_half_away(p * 65536), _round_half_away(q * 65536)
+    return (x * first + y * second + 0x8000) >> 16
 
 
 @dataclass
@@ -186,8 +188,8 @@ class TransformedFont:
                     [
                         (
                             (
-                                _round_half_up(pa * x) + _round_half_up(pb * y),
-                                _round_half_up(pc * x) + _round_half_up(pd * y),
+                                _post(pa, x, pb, y),
+                                _post(pc, x, pd, y),
                             ),
                             on,
                         )
