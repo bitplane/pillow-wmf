@@ -165,6 +165,8 @@ def main():
                         print(f"bits {row} {mask}")
             # The world origin maps to the device origin; draw at its inverse.
             runs = [("A", 24), ("B", 24), ("AB A", 24), ("AB A", 0), ("AB A", 8), ("AB A", 30), ("AB A", 26)]
+            if name.endswith("-fractional"):
+                runs += [("AB", 24), ("BA", 24), ("AA", 24), ("A A", 24), ("AAAA", 24)]
             for label, alignment in runs:
                 ctypes.memset(bits, 0xFF, SIZE * SIZE * 4)
                 set_align(dc, alignment)
