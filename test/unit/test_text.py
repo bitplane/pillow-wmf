@@ -56,7 +56,7 @@ class MetricFont:
     ascent, descent = 9, 3
 
     def glyph(self, character, max_pixels):
-        return Glyph((1, 1), (-1, -7), b"\xff", 5)
+        return Glyph((1, 1), (-1, -7), b"\xff", 5, ink_left=Fraction(-1))
 
 
 @pytest.mark.parametrize("horizontal,origin_x", [(0, 30), (2, 11), (6, 20)])

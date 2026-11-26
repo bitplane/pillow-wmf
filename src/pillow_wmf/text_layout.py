@@ -173,14 +173,11 @@ def layout_text(
         ]
     )
     # With explicit advances the cell also widens left to the first pixel
-    # that protruding ink covers from the exact run origin.
-    exact_x = None if precise_origin is None or escapement % 3600 else precise_origin[0] + origin_x - x
+    # whose centre protruding ink strictly covers, from the glyph's pixel origin.
     left = min(
         [origin_x]
         + [
-            floor(origin_x + offset + glyph.bearing[0])
-            if exact_x is None
-            else ceil(exact_x + offset + glyph.ink_left - Fraction(1, 2))
+            origin_x + rounded(offset) + floor(glyph.ink_left - Fraction(1, 2)) + 1
             for glyph, offset in zip(glyphs, mapped_offsets[:-1], strict=True)
             if advances and glyph.size[0]
         ]
