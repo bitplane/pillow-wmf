@@ -91,6 +91,7 @@ from .text_transform import (
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
+from .world import modified as modified_world
 
 
 def rgb(colorref: int) -> tuple[int, int, int]:
@@ -332,6 +333,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         pass  # Printer escapes have no effect on a bitmap DC.
 
     _apply_realize_palette = _apply_escape
+    _apply_gdi_comment = _apply_escape
 
     def _prepare_text_out(self, a):
         try:
@@ -521,6 +523,17 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_set_world_transform(self, call, prepared, result):
         self.mapping.world = prepared
+
+    def _prepare_modify_world_transform(self, a):
+        matrix = tuple(float32(a[name]) for name in ("m11", "m12", "m21", "m22", "dx", "dy"))
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            raise InvalidOperation("World transforms require GM_ADVANCED")
+        world = modified_world(self.mapping.world, a["mode"], matrix)
+        if world is None:
+            raise InvalidOperation("ModifyWorldTransform fails for this matrix or mode")
+        return world
+
+    _apply_modify_world_transform = _apply_set_world_transform
 
     def _apply_set_layout(self, call, prepared, result):
         # Only right-to-left layout and bitmap orientation affect drawing.

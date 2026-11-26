@@ -16,6 +16,8 @@ from pillow_wmf.gdi import UnsupportedOperation
 from pillow_wmf.objects import BitmapData, FontRequest, GlyphIndices, PaletteEntries, PaletteUpdate, RegionGeometry
 from pillow_wmf.raster import RasterContext
 from pillow_wmf.text import FontCollection
+from pillow_wmf.wmf import Metafile as WmfMetafile
+from pillow_wmf.wmf.player import play as play_wmf
 
 NATIVE = json.loads((Path(__file__).with_name("native_recordings.json")).read_text())
 
@@ -730,7 +732,134 @@ def text_scenarios():
     yield "text-bounds", None, text_bounds
 
 
-SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios()]
+# A WMF of legacy-bitmap BitBlt and StretchBlt records, with and without a
+# source, which the probe plays into its recording DC with PlayMetaFile.
+LEGACY_BLITS = bytes.fromhex(
+    "0100090000035400000000001800000000001600000022092000cc000000000002000200040004000000020002000600011803020106"
+    "05040908070c0b0a18000000230b2000cc0002000200000000000400060004000a0000000200020006000118030201060504090807"
+    "0c0b0a0c00000022092100f00000000000000003000300040014000e000000230b49005a00020002000000000000000500050004001e"
+    "00030000000000"
+)
+
+# Legacy-bitmap BitBlt from Bitmap16 sources of each depth: 1, 4, 8, 16, 24, 32.
+LEGACY_DEPTHS = bytes.fromhex(
+    "010009000003c300000000002e00000000001300000022092000cc00000000000300050028000400000005000300020001015000"
+    "a80050001600000022092000cc00000000000300050028001400000005000300040001040b61c0001c72d0002d83e00019000000"
+    "22092000cc0000000000030005002800240000000500030006000108003b76b1ec00417cb7f22d0082bdf8336e001f0000002209"
+    "2000cc000000000003000500280034000000050003000a00011000003b197632b14bec6441297c42b75bf2742d8e8252bd6bf884"
+    "339e6eb72800000022092000cc00000000000300050028004400000005000300100001180000003b1908763210b14b18ec642000"
+    "4129007c4208b75b10f274182d8e2000825200bd6b08f88410339e186eb720002e00000022092000cc0000000000030005002800"
+    "540000000500030014000120000000003b19080076321000b14b1800ec642000412900087c420808b75b1008f27418082d8e2008"
+    "82520010bd6b0810f8841010339e18106eb72010030000000000"
+)
+
+
+def completion_scenarios():
+    def advanced(r):
+        r.set_graphics_mode(2)
+        r.set_world_transform(1.5, 0, 0, 2.0, 3.0, 4.0)
+        r.rectangle(10, 10, 30, 20)
+        r.ellipse(10, 10, 30, 20)
+        r.set_graphics_mode(2)
+
+    yield "advanced", None, advanced
+
+    def advanced_modify(r):
+        r.set_graphics_mode(2)
+        r.modify_world_transform(2, 0, 0, 2, 1, 1, 2)
+        r.modify_world_transform(1, 0, 0.5, 1, 0, 0, 3)
+        r.rectangle(10, 10, 30, 20)
+        r.modify_world_transform(1, 0, 0, 1, 0, 0, 1)
+        r.set_world_transform(1, 0, 0, 1, 0, 0)
+        r.set_graphics_mode(1)
+        r.ellipse(40, 40, 60, 60)
+
+    yield "advanced-modify", None, advanced_modify
+
+    def curves(r):
+        r.set_arc_direction(2)
+        r.move_to(5, 5)
+        r.arc_to(10, 10, 40, 30, 40, 20, 10, 10)
+        r.angle_arc(60, 60, 10, 30.0, 120.0)
+        r.chord(70, 5, 100, 30, 100, 15, 70, 5)
+        r.polyline_to(((1, 90), (20, 100)))
+        r.poly_bezier_to(((30, 90), (40, 110), (50, 100)))
+        r.poly_polyline((((5, 5), (20, 5), (20, 20)), ((60, 60), (70, 60))))
+        r.poly_draw(((80, 80), (90, 80), (90, 90), (80, 90)), bytes((6, 2, 2, 3)))
+
+    yield "curves", None, curves
+
+    def paths_more(r):
+        r.begin_path()
+        r.move_to(5, 5)
+        r.line_to(40, 10)
+        r.close_figure()
+        r.end_path()
+        r.flatten_path()
+        r.widen_path()
+        r.select_clip_path(5)
+        r.begin_path()
+        r.line_to(1, 1)
+        r.abort_path()
+        r.rectangle(0, 0, 60, 60)
+
+    yield "paths-more", None, paths_more
+
+    def arc_positions(r):
+        for x, y, radius, start, sweep in (
+            (60, 60, 10, 30.0, 120.0),
+            (60, 60, 10, 0.0, 90.0),
+            (60, 60, 10, 45.0, -60.0),
+            (50, 50, 17, 200.0, 75.0),
+            (50, 50, 17, 10.0, 350.0),
+            (40, 40, 5, 123.0, 1.5),
+            (40, 40, 9, 300.0, -200.0),
+        ):
+            r.move_to(0, 0)
+            r.angle_arc(x, y, radius, start, sweep)
+            r.polyline_to(((300, 300),))
+        r.set_arc_direction(2)
+        for box, radials in (
+            ((10, 10, 40, 30), (40, 20, 10, 10)),
+            ((10, 10, 41, 31), (40, 10, 10, 30)),
+            ((5, 7, 60, 50), (0, 0, 60, 60)),
+        ):
+            r.move_to(0, 0)
+            r.arc_to(*box, *radials)
+            r.polyline_to(((300, 300),))
+        r.set_arc_direction(1)
+        r.move_to(0, 0)
+        r.arc_to(10, 10, 40, 30, 40, 20, 10, 10)
+        r.polyline_to(((300, 300),))
+
+    yield "arc-positions", None, arc_positions
+
+    def completion(r):
+        r.offset_viewport_origin(3, 4)
+        r.set_map_mode(8)
+        r.set_window_extent(100, 100)
+        r.set_viewport_extent(100, 100)
+        r.scale_viewport_extent(2, 3, 4, 5)
+        r.set_map_mode(1)
+        r.set_color_adjustment(1, 2, 12000, 11000, 9000, 100, 9000, 10, -20, 30, -40)
+        r.set_mapper_flags(1)
+        r.escape(15, b"note\0")  # MFCOMMENT
+        r.escape(8)  # QUERYESCSUPPORT
+        r.begin_path()
+        r.rectangle(10, 10, 40, 30)
+        r.end_path()
+        r.stroke_and_fill_path()
+        play_wmf(WmfMetafile.from_bytes(LEGACY_BLITS), r, strict=True)
+        # PlayMetaFile ends by restoring the DC's selections and clip.
+        r.select_object(r.get_stock_object(7))  # BLACK_PEN
+        r.select_object(r.get_stock_object(0))  # WHITE_BRUSH
+        r.select_palette(r.get_stock_object(15))  # DEFAULT_PALETTE
+        r.select_clip_region(None)
+
+    yield "completion", None, completion
+
+
+SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios(), *completion_scenarios()]
 
 
 @pytest.mark.parametrize(("name", "frame", "draw"), SCENARIOS, ids=[name for name, _, _ in SCENARIOS])

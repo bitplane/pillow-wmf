@@ -51,6 +51,7 @@ from ..numeric import float32
 from ..objects import EncodedText, FontRequest, RegionGeometry
 from ..stroke import realize_pen
 from ..trace import TraceContext
+from ..world import modified as modified_world
 from . import bitmaps, fixed, text, variable
 from .file import Metafile
 from .objects import FACE_NAME_BYTES, LogFont
@@ -472,15 +473,20 @@ class Recorder(TraceContext):
         xs, ys = [x for x, _ in corners], [y for _, y in corners]
         return ((min(xs) - ex) >> 4, (min(ys) - ey) >> 4, -((-(max(xs) + ex)) >> 4), -((-(max(ys) + ey)) >> 4))
 
-    def _start(self, state: _State) -> tuple[tuple, tuple]:
-        """The current position for a *To call's bounds: logical points, then exact 28.4 points.
+    def _start(self, state: _State) -> tuple[tuple, tuple, tuple]:
+        """The current position for a *To call's bounds: logical points, exact
+        28.4 points, then device pixels.
 
         After an arc a wide pen starts from the exact 28.4 point; one-pixel
-        pens from its floored logical point.
+        pens from its floored logical point and the device pixel the exact
+        point rounds up to.
         """
-        if state.fixed_position is not None and self._extent(state) != (0, 0):
-            return (), (state.fixed_position,)
-        return (state.position,), ()
+        if state.fixed_position is not None:
+            if self._extent(state) != (0, 0):
+                return (), (state.fixed_position,), ()
+            x, y = state.fixed_position
+            return (state.position,), (), (((x + 15) >> 4, (y + 15) >> 4),)
+        return (state.position,), (), ()
 
     def _clipped(self, state: _State, box: Rect | None) -> Rect | None:
         """Record bounds are clipped like the header's, outside path brackets."""
@@ -927,6 +933,14 @@ class Recorder(TraceContext):
         if state.graphics_mode == GM_ADVANCED:
             state.mapping.world = values
 
+    def _record_modify_world_transform(self, a, state, records):
+        values = tuple(a[key] for key in ("m11", "m12", "m21", "m22", "dx", "dy"))
+        records.append(fixed.ModifyWorldTransform(*values, a["mode"]))
+        if state.graphics_mode == GM_ADVANCED:
+            world = modified_world(state.mapping.world, a["mode"], tuple(float32(v) for v in values))
+            if world is not None:
+                state.mapping.world = world
+
     # Drawing
 
     def _record_box(self, a, state, records, record_type, *extra):
@@ -1031,12 +1045,17 @@ class Recorder(TraceContext):
         The current position is the exact logical end point, floored.
         """
         points = [point for command in path.commands for point in command]
-        logical, exact = self._start(state)
+        logical, exact, pixels = self._start(state)
+        if pixels:
+            logical_box = self._device_box(state, logical)
+            start = _union(logical_box, _box(pixels)) if logical_box is not None else _box(pixels)
+        else:
+            start = self._device_box(state, logical)
         if self._extent(state) != (0, 0):
-            box = self._stroked(state, self._device_box(state, logical), fixed_points=(*exact, *points))
+            box = self._stroked(state, start, fixed_points=(*exact, *points))
         else:
             box = _box(((x + 15) // 16, (y + 15) // 16) for x, y in points)
-            box = self._stroked(state, _union(box, self._device_box(state, logical)), fixed_points=exact)
+            box = self._stroked(state, _union(box, start), fixed_points=exact)
         self._draw(state, box)
         state.position = (floor(end[0]), floor(end[1]))
         state.fixed_position = path.commands[-1][-1]
@@ -1071,8 +1090,10 @@ class Recorder(TraceContext):
     def _record_line_to(self, a, state, records):
         records.append(fixed.LineTo(a["x"], a["y"]))
         self._trace(state, (state.position, (a["x"], a["y"])), extend=True)
-        logical, exact = self._start(state)
+        logical, exact, pixels = self._start(state)
         box = self._device_box(state, (*logical, (a["x"], a["y"])))
+        if pixels:
+            box = _union(box, _box(pixels))
         self._draw(state, self._stroked(state, box, fixed_points=exact))
         state.position, state.fixed_position = (a["x"], a["y"]), None
 
@@ -1088,8 +1109,10 @@ class Recorder(TraceContext):
         # The *To forms start from the current position, unless PolyDraw
         # opens with a move.
         moves = "types" in a and a["types"][:1] == bytes((PT_MOVETO,))
-        logical, exact = self._start(state) if to and not moves else ((), ())
+        logical, exact, pixels = self._start(state) if to and not moves else ((), (), ())
         box = self._device_box(state, (*logical, *points))
+        if pixels:
+            box = _union(box, _box(pixels))
         bounds = self._clipped(state, self._stroked(state, box, fixed_points=exact))
         record_type = narrow if _fits16(points) else wide
         extra = (a["types"],) if "types" in a else ()
@@ -1512,9 +1535,13 @@ class Recorder(TraceContext):
         self._record_dib_stretch_blt({**a, "source": source}, state, records)
 
     def _record_escape(self, a, state, records):
-        # An EMF DC keeps only metafile comments; other escapes leave no record.
-        if a["escape_function"] == MFCOMMENT:
-            records.append(variable.Comment(a["data"]))
+        pass  # An EMF DC records no escape, MFCOMMENT included; comments come from GdiComment.
+
+    def _record_gdi_comment(self, a, state, records):
+        records.append(variable.Comment(a["data"]))
+
+    def _record_set_mapper_flags(self, a, state, records):
+        pass  # A recording DC keeps no mapper flags.
 
     def _record_set_font_xform(self, a, state, records):
         pass  # Playback's per-record font scales; a recording DC derives its own.
@@ -1710,7 +1737,6 @@ _SIMPLE = {
     "set_stretch_mode": lambda a: fixed.SetStretchBltMode(a["mode"]),
     "set_text_alignment": lambda a: fixed.SetTextAlign(a["alignment"]),
     "set_text_color": lambda a: fixed.SetTextColor(a["color"]),
-    "set_mapper_flags": lambda a: fixed.SetMapperFlags(a["flags"]),
     "set_brush_origin": lambda a: fixed.SetBrushOrgEx(a["x"], a["y"]),
     "set_meta_region": lambda a: fixed.SetMetaRgn(),
     "set_layout": lambda a: fixed.SetLayout(a["layout"]),

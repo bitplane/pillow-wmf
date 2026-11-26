@@ -240,6 +240,15 @@ class GDI:
     def set_graphics_mode(self, mode: int) -> None:
         return self.invoke(Call.make("set_graphics_mode", mode=mode))
 
+    def modify_world_transform(
+        self, m11: float, m12: float, m21: float, m22: float, dx: float, dy: float, mode: int
+    ) -> None:
+        """Combine the GM_ADVANCED world transform with a matrix: MWT_IDENTITY,
+        MWT_LEFTMULTIPLY, MWT_RIGHTMULTIPLY or MWT_SET (1-4)."""
+        return self.invoke(
+            Call.make("modify_world_transform", m11=m11, m12=m12, m21=m21, m22=m22, dx=dx, dy=dy, mode=mode)
+        )
+
     def set_world_transform(self, m11: float, m12: float, m21: float, m22: float, dx: float, dy: float) -> None:
         """Replace the GM_ADVANCED world transform: x' = x*m11 + y*m21 + dx, y' = x*m12 + y*m22 + dy."""
         return self.invoke(Call.make("set_world_transform", m11=m11, m12=m12, m21=m21, m22=m22, dx=dx, dy=dy))
@@ -569,6 +578,10 @@ class GDI:
 
     def escape(self, escape_function: int, data: bytes = b"") -> None:
         return self.invoke(Call.make("escape", escape_function=escape_function, data=data))
+
+    def gdi_comment(self, data: bytes) -> None:
+        """A metafile comment (GdiComment); it draws nothing."""
+        return self.invoke(Call.make("gdi_comment", data=data))
 
     def bit_blt(
         self,

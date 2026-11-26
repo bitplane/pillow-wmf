@@ -1236,6 +1236,18 @@ LEGACY_BLITS = bytes.fromhex(
     "00030000000000"
 )
 
+# Legacy-bitmap BitBlt from Bitmap16 sources of each depth: 1, 4, 8, 16, 24, 32.
+LEGACY_DEPTHS = bytes.fromhex(
+    "010009000003c300000000002e00000000001300000022092000cc00000000000300050028000400000005000300020001015000"
+    "a80050001600000022092000cc00000000000300050028001400000005000300040001040b61c0001c72d0002d83e00019000000"
+    "22092000cc0000000000030005002800240000000500030006000108003b76b1ec00417cb7f22d0082bdf8336e001f0000002209"
+    "2000cc000000000003000500280034000000050003000a00011000003b197632b14bec6441297c42b75bf2742d8e8252bd6bf884"
+    "339e6eb72800000022092000cc00000000000300050028004400000005000300100001180000003b1908763210b14b18ec642000"
+    "4129007c4208b75b10f274182d8e2000825200bd6b08f88410339e186eb720002e00000022092000cc0000000000030005002800"
+    "540000000500030014000120000000003b19080076321000b14b1800ec642000412900087c420808b75b1008f27418082d8e2008"
+    "82520010bd6b0810f8841010339e18106eb72010030000000000"
+)
+
 
 def completion_scenarios():
     def completion(dc):
@@ -1260,6 +1272,47 @@ def completion_scenarios():
         api("DeleteMetaFile", boolean, ptr)(metafile)
 
     yield "completion", None, completion
+
+    def legacy_depths(dc):
+        metafile = api("SetMetaFileBitsEx", ptr, wintypes.UINT, ctypes.c_char_p)(len(LEGACY_DEPTHS), LEGACY_DEPTHS)
+        api("PlayMetaFile", boolean, ptr, ptr)(dc, metafile)
+        api("DeleteMetaFile", boolean, ptr)(metafile)
+
+    yield "legacy-depths", None, legacy_depths
+
+    def transformed_shapes(m11, m12, m21, m22):
+        def draw(dc):
+            set_graphics_mode(dc, 2)
+            set_world_transform(dc, ctypes.byref(XForm(m11, m12, m21, m22, 20.0, 10.0)))
+            rectangle(dc, 10, 10, 30, 20)
+            ellipse(dc, 40, 10, 60, 24)
+            round_rect(dc, 10, 30, 30, 44, 6, 4)
+            arc(dc, 40, 30, 60, 44, 60, 37, 40, 30)
+            chord(dc, 10, 50, 30, 64, 30, 57, 10, 50)
+            pie(dc, 40, 50, 60, 64, 60, 57, 40, 50)
+            polygon(dc, *points((10, 70), (25, 72), (18, 80)))
+            polyline(dc, *points((40, 70), (55, 75), (48, 82)))
+            move_to(dc, 5, 85, None)
+            line_to(dc, 30, 90)
+
+        return draw
+
+    yield "sheared-shapes", None, transformed_shapes(1.0, 0.0, 0.45, 1.0)
+    yield "rotated-shapes", None, transformed_shapes(0.9, 0.4, -0.4, 0.9)
+
+    def compatible_after_world(dc):
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
+        set_graphics_mode(dc, 1)
+        rectangle(dc, 10, 10, 30, 20)
+        ellipse(dc, 40, 10, 60, 30)
+        set_graphics_mode(dc, 2)
+        modify_world_transform(dc, None, 1)
+        set_graphics_mode(dc, 1)
+        rectangle(dc, 10, 40, 30, 50)
+        ellipse(dc, 40, 40, 60, 60)
+
+    yield "compatible-after-world", None, compatible_after_world
 
 
 def records(data):
