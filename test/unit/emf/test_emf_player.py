@@ -239,17 +239,14 @@ def test_palette_edits_name_their_palette():
     assert omissions == ()
 
 
-def test_unsupported_creations_are_reported_once_selected():
-    _, omissions = run(
+def test_creations_that_fail_natively_leave_their_slot_empty():
+    calls, omissions = run(
         [
             bitmaps.CreateMonoBrush(1, 0, 0, 0, 0, 0, b""),  # No bitmap header.
             fixed.SelectObject(1),
         ]
     )
-    assert [(o.record_index, o.reason) for o in omissions] == [
-        (0, "Monochrome brushes need a BITMAPINFOHEADER"),
-        (1, "Object creation was unsupported"),
-    ]
+    assert not calls and not omissions
 
 
 def ext_pen_call(style, width, color=0, entries=(), brush_style=0, hatch=0):
@@ -567,17 +564,17 @@ def test_comments_reach_the_hook_and_never_draw():
     ]
 
 
-def test_unsupported_records_are_reported_or_raise_when_strict():
+def test_malformed_records_are_reported_or_raise_when_strict():
     adjustment = fixed.SetColorAdjustment(20, 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 0, 0)
     records = [adjustment, UnknownRecord(0x7777, b""), UnknownRecord(103, b""), fixed.Rectangle(0, 0, 1, 1)]
     calls, omissions = run(records)
     assert calls == [Call.make("rectangle", left=0, top=0, right=1, bottom=1)]
+    # A bad COLORADJUSTMENT fails natively and unknown types are ignored; a
+    # malformed known record is reported.
     assert [(o.record_index, o.function, o.reason) for o in omissions] == [
-        (0, 23, "COLORADJUSTMENT with an unexpected size"),
-        (1, 0x7777, "Record type 0x7777 is not yet supported"),
-        (2, 103, "GLSBOUNDEDRECORD is not yet supported"),
+        (2, 103, "Malformed GLSBOUNDEDRECORD record")
     ]
-    with pytest.raises(UnsupportedOperation, match="Record 0: COLORADJUSTMENT"):
+    with pytest.raises(UnsupportedOperation, match="Record 2: Malformed GLSBOUNDEDRECORD"):
         run(records, strict=True)
 
 

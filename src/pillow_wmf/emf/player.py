@@ -46,7 +46,7 @@ from . import bitmaps, fixed, system, text, variable
 from .constants import CREATION_TYPES, CommentIdentifier, RecordType
 from .file import Metafile
 from .objects import region_rectangles
-from .records import UnknownRecord, record_type
+from .records import RECORD_CLASSES, UnknownRecord, record_type
 from .transform import PlaybackTransform, natural_size
 
 STOCK_OBJECT = 0x80000000
@@ -128,8 +128,7 @@ def _dib(record) -> BitmapData:
 def _source_blit(record):
     if not record.bitmap_size:
         # A recorded PatBlt is a BitBlt without a source bitmap.
-        if isinstance(record, bitmaps.StretchBlt):
-            raise Unsupported("Source-less StretchBlt")
+        # As a BitBlt, a source-less StretchBlt fills with the brush.
         return "pat_blt", {
             "x": record.x,
             "y": record.y,
@@ -188,21 +187,23 @@ def _source_dib(record) -> BitmapData:
     if record.usage == DIB_RGB_COLORS:
         return _dib(record)
     if record.usage != DIB_PAL_COLORS:
-        raise Unsupported("Palette-indexed blit sources are not yet supported")
+        raise Fails  # Other colour usages cannot realize a source bitmap.
     info = record.bitmap_info
     header_size = struct.unpack_from("<I", info)[0] if len(info) >= 4 else 0
-    if header_size < 40 or len(info) < 16:
-        raise Unsupported("DIB_PAL_COLORS sources need a BITMAPINFOHEADER")
-    depth, used = struct.unpack_from("<H", info, 14)[0], struct.unpack_from("<I", info, 32)[0]
+    core = header_size == 12
+    if len(info) < header_size or not core and (header_size < 40 or len(info) < 36):
+        raise Fails
+    depth = struct.unpack_from("<H", info, 10 if core else 14)[0]
+    used = 0 if core else struct.unpack_from("<I", info, 32)[0]
     if depth > 8:
         return _dib(record)
     count = min(used or 1 << depth, 1 << depth)
     table = info[header_size : header_size + 2 * count]
     if len(table) < 2 * count:
-        raise Unsupported("Truncated DIB_PAL_COLORS colour table")
+        raise Fails
+    entry = (lambda c: bytes(reversed(c))) if core else (lambda c: bytes((*reversed(c), 0)))
     colors = b"".join(
-        bytes((*reversed(DEFAULT_COLORS[index % len(DEFAULT_COLORS)]), 0))
-        for index in struct.unpack(f"<{count}H", table)
+        entry(DEFAULT_COLORS[index % len(DEFAULT_COLORS)]) for index in struct.unpack(f"<{count}H", table)
     )
     return BitmapData("dib", info[:header_size] + colors + record.bits)
 
@@ -271,7 +272,7 @@ def _mask_blt(record):
 
 def _color_adjustment(record):
     if record.size != 24:
-        raise Unsupported("COLORADJUSTMENT with an unexpected size")
+        raise Fails
     return "set_color_adjustment", {
         "flags": record.values,
         "illuminant": record.illuminant_index,
@@ -289,13 +290,11 @@ def _color_adjustment(record):
 
 def _plg_blt(record):
     if not record.bitmap_size:
-        raise Unsupported("PlgBlt without a bitmap")
+        raise Fails
     rectangle = (record.src_x, record.src_y, record.src_width, record.src_height)
     source = _source_rectangle(record, *rectangle)
     if source is None:
         return None, None
-    if record.mask_size and source != rectangle:
-        raise Unsupported("Masked PlgBlt with a scaled or offset source transform")
     mask = BitmapData("dib", record.mask_info + record.mask_bits) if record.mask_size else None
     return "plg_blt", {
         "points": ((record.x0, record.y0), (record.x1, record.y1), (record.x2, record.y2)),
@@ -310,7 +309,7 @@ def _plg_blt(record):
 
 def _stretch_dib(record):
     if not record.bitmap_size:
-        raise Unsupported("StretchDIBits without a bitmap")
+        raise Fails
     return "stretch_dib", {
         "x": record.x,
         "y": record.y,
@@ -341,7 +340,7 @@ def _set_dib_to_device(record):
     lines; see ``_scan_band``.
     """
     if not record.bitmap_size:
-        raise Unsupported("SetDIBitsToDevice without a bitmap")
+        raise Fails
     height = _dib_height(record.bitmap_info)
     if record.start_scan == 0 and height is not None and record.scan_count >= abs(height):
         return "stretch_dib", {
@@ -371,11 +370,11 @@ def _scan_band(record):
     """
     info = record.bitmap_info
     if len(info) < 40 or struct.unpack_from("<I", info)[0] < 40:
-        raise Unsupported("SetDIBitsToDevice bands need a BITMAPINFOHEADER")
+        raise Fails
     width, height, _, depth, compression = struct.unpack_from("<iiHHI", info, 4)
     rle = compression in (1, 2)
     if not (compression in (0, 3) or (rle and height > 0)) or width <= 0 or height == 0:
-        raise Unsupported("SetDIBitsToDevice bands of top-down compressed or empty DIBs")
+        raise Fails  # GDI cannot realize a top-down compressed or empty DIB.
     top_down, lines = height < 0, abs(height)
     if record.start_scan >= lines or not record.scan_count:
         return None, None
@@ -389,7 +388,7 @@ def _scan_band(record):
     else:
         stride = (width * depth + 31) // 32 * 4
         if len(bits) < stride * rows:
-            raise Unsupported("SetDIBitsToDevice band bits are truncated")
+            raise Fails
         scans = [bits[row * stride : (row + 1) * stride] for row in range(rows)]
         # Stored bottom-up, where StretchDIBits measures rows from the last line.
         band = b"".join(reversed(scans) if top_down else scans)
@@ -424,15 +423,15 @@ def _mono_brush(record):
     """
     info = record.bitmap_info
     if len(info) < 16 or struct.unpack_from("<I", info)[0] < 40:
-        raise Unsupported("Monochrome brushes need a BITMAPINFOHEADER")
+        raise Fails
     width, height, _, depth = struct.unpack_from("<iiHH", info, 4)
     if depth != 1 or width <= 0 or height == 0:
-        raise Unsupported("Monochrome brushes need a 1-bpp bitmap")
+        raise Fails
     stride = (width + 31) // 32 * 4
     bits = record.bits
     rows = abs(height)
     if len(bits) < stride * rows:
-        raise Unsupported("Monochrome brush bits are truncated")
+        raise Fails
     order = range(rows) if height < 0 else range(rows - 1, -1, -1)
     samples = [bits[y * stride + x // 8] >> (7 - x % 8) & 1 for y in order for x in range(width)]
     return "create_pattern_brush", {"bitmap": encode_bitmap16(width, rows, samples, pattern=True, native_pattern=True)}
@@ -470,6 +469,10 @@ TEXT_RECORDS = (text.ExtTextOutA, text.ExtTextOutW, text.PolyTextOutA, text.Poly
 
 class Stop(Exception):
     """Native playback rejects the record and plays nothing after it."""
+
+
+class Fails(Exception):
+    """Native playback fails the record without drawing; an object it creates is not made."""
 
 
 def _text_arguments(x, y, value, options, rectangle, advances):
@@ -949,7 +952,10 @@ def play(
         if kind == RecordType.EOF:
             break
         if isinstance(record, UnknownRecord):
-            omissions.omit(index, kind, f"{record_name(kind)} is not yet supported")
+            # Native playback ignores record types it does not know; a known
+            # type whose layout the typed fields cannot express is malformed.
+            if kind in RECORD_CLASSES:
+                omissions.omit(index, kind, f"Malformed {record_name(kind)} record")
             continue
         if isinstance(record, NO_OP_RECORDS):
             continue
@@ -1050,6 +1056,10 @@ def play(
             name, arguments = translate(record)
         except Stop:
             break
+        except Fails:
+            if creation:
+                slots[record.object_index] = None
+            continue
         except (Unsupported, FormatError) as reason:
             # FormatError: offset-addressed data lies outside the record.
             if creation:
