@@ -1299,6 +1299,35 @@ def text_transform_styles(d):
             d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
 
 
+def scale_extents(d):
+    """ScaleWindowExtEx and ScaleViewportExtEx: anisotropic, isotropic, mirrored, and ignored in MM_TEXT."""
+    d.brush(BS_SOLID, 0x00A000)
+    cases = (
+        (8, fixed.ScaleWindowExtEx(3, 2, 2, 3), (4, 4, 60, 30)),
+        (7, fixed.ScaleViewportExtEx(2, 3, 4, 5), (70, 4, 124, 40)),
+        (8, fixed.ScaleWindowExtEx(-1, 1, 1, 1), (-60, 50, -8, 80)),
+        (1, fixed.ScaleWindowExtEx(2, 1, 2, 1), (70, 90, 124, 124)),
+    )
+    for mode, scale, box in cases:
+        d.add(fixed.SaveDC(), fixed.SetMapMode(mode))
+        if mode != 1:
+            d.add(fixed.SetWindowExtEx(d.u(100), d.u(100)), fixed.SetViewportExtEx(d.u(100), d.u(100)))
+        d.add(scale, fixed.Rectangle(*d.rect(*box)), fixed.Ellipse(*d.rect(*box)), fixed.RestoreDC(-1))
+
+
+def text_justification(d):
+    """SetTextJustification spreading extra space over break characters, before and with explicit advances."""
+    text_font(d, -d.u(12))
+    d.add(fixed.SetTextColor(0x802000))
+    rows = ((d.u(10), 1), (d.u(10), 2), (d.u(7), 3), (-d.u(3), 1), (d.u(20), 4))
+    for row, (extra, count) in enumerate(rows):
+        d.add(fixed.SetTextJustification(extra, count))
+        d.add(ext_text_a(d, d.u(4), d.u(4 + 20 * row), b"A B A"))
+    d.add(fixed.SetTextJustification(d.u(10), 1))
+    d.add(ext_text_a(d, d.u(70), d.u(4), b"A B A", advances=tuple(d.u(v) for v in (8, 5, 8, 5, 8))))
+    d.add(fixed.SetTextJustification(0, 0), ext_text_a(d, d.u(70), d.u(24), b"A B A"))
+
+
 def rotated_color_adjustment(d):
     """HALFTONE stretches with colour adjustment under a rotating transform."""
     transfer_background(d)
@@ -1496,6 +1525,7 @@ def state_record(*records):
 
 
 COLOR_SPACE = struct.pack("<5I", 0x50534F43, 0x400, 328, 0x73524742, 4) + bytes(308)
+COLOR_SPACE_W = struct.pack("<5I", 0x50534F43, 0x400, 588, 0x73524742, 4) + bytes(568)
 STATE_RECORDS = {
     "icm-on": (fixed.SetICMMode(2),),
     "icm-off": (fixed.SetICMMode(1),),
@@ -1505,6 +1535,8 @@ STATE_RECORDS = {
     "color-space": (system.CreateColorSpace(5, COLOR_SPACE), fixed.SetColorSpace(5), fixed.DeleteColorSpace(5)),
     "color-correct-palette": (fixed.ColorCorrectPalette(1, 0, 0, 0),),
     "icm-profile": (system.SetICMProfileA(0, b"sRGB\0\0\0\0"),),
+    "icm-profile-w": (system.SetICMProfileW(0, "sRGB\0\0\0\0".encode("utf-16-le")),),
+    "color-space-w": (system.CreateColorSpaceW(6, COLOR_SPACE_W), fixed.SetColorSpace(6), fixed.DeleteColorSpace(6)),
     "color-match": (system.ColorMatchToTargetW(1, 0, b"", b""),),
     "font-mapping": (fixed.ForceUFIMapping(1, 2), system.SetLinkedUFIs(((1, 2),))),
     "opengl": (system.GlsRecord(bytes(8)), system.GlsBoundedRecord((0, 0, 1, 1), bytes(8))),
@@ -1569,6 +1601,8 @@ FEATURES = (
     ("text-transforms", text_transforms, (128, 51)),
     ("text-records", text_records, (128, 51)),
     ("text-transform-styles", text_transform_styles, (128, 51)),
+    ("scale-extents", scale_extents, (128, 51)),
+    ("text-justification", text_justification, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),

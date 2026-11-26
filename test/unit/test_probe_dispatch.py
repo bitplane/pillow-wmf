@@ -179,6 +179,7 @@ EXPECTED = {
     "color-engine-phase": ("scripts/probe-windows-color-engine-phase.py", "color-engine-phase", True, True),
     "coordinate-limits": ("scripts/probe-windows-coordinate-limits.py", "coordinate-limits", True, True),
     "glyph-transforms": ("scripts/probe-windows-glyph-transforms.py", "glyph-transforms", True, True),
+    "compatible-arcs": ("scripts/probe-windows-compatible-arcs.py", "compatible-arcs", True, True),
 }
 
 

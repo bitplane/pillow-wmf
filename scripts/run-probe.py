@@ -142,6 +142,7 @@ PROBES = {
     "color-engine-phase": Probe("probe-windows-color-engine-phase.py", output="color-engine-phase"),
     "coordinate-limits": Probe("probe-windows-coordinate-limits.py", output="coordinate-limits"),
     "glyph-transforms": Probe("probe-windows-glyph-transforms.py", output="glyph-transforms"),
+    "compatible-arcs": Probe("probe-windows-compatible-arcs.py", output="compatible-arcs"),
 }
 
 

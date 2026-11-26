@@ -203,7 +203,7 @@ the codec and reference columns against the code and fixtures.
 | `EXCLUDECLIPRECT` | typed | full | yes |  |
 | `INTERSECTCLIPRECT` | typed | full | yes |  |
 | `SCALEVIEWPORTEXTEX` | typed | full | yes | 32-bit products and truncating division, as natively. |
-| `SCALEWINDOWEXTEX` | typed | full | no | As SCALEVIEWPORTEXTEX. |
+| `SCALEWINDOWEXTEX` | typed | full | yes | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
 | `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing, text included; see below. |
@@ -282,15 +282,15 @@ the codec and reference columns against the code and fixtures.
 | `NAMEDESCAPE` | typed | full | yes | No effect on a bitmap DC. |
 | `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
-| `SETICMPROFILEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
+| `SETICMPROFILEW` | typed | full | yes | No effect on a bitmap DC. |
 | `ALPHABLEND` | typed | full | yes | Constant and per-pixel alpha with nearest sampling. |
 | `SETLAYOUT` | typed | full | yes | Mirrors the playback transform about the reference device width; the DC layout is unchanged. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; without it native playback stops. |
 | `SETLINKEDUFIS` | typed | full | yes | No effect on shapes; font-limited. |
-| `SETTEXTJUSTIFICATION` | typed | full | no | Text is font-limited. |
+| `SETTEXTJUSTIFICATION` | typed | full | yes | Spreads break extra over the run's break characters. |
 | `COLORMATCHTOTARGETW` | typed | full | yes | `CS_ENABLE` without a profile name stops playback; otherwise no effect on a bitmap DC. |
-| `CREATECOLORSPACEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
+| `CREATECOLORSPACEW` | typed | full | yes | No effect on a bitmap DC. |
 
 ## Recording
 
