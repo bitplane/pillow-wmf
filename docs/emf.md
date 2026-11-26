@@ -138,8 +138,8 @@ Text records play through the font collection's faces:
   does it ([`embolden.py`](../src/pillow_wmf/embolden.py)): upright at the
   scaler's ppem (the larger component of the transform's y column, in whole
   pixels, held as 16.16 pixels per unit), right-facing edges moved a pixel
-  right, before the rest of the transform. Unhinted faces take the same
-  emboldening and scan for horizontal monochrome text.
+  right, before the rest of the transform. Horizontal monochrome text of an
+  unhinted face takes the same TrueType scan rules and emboldening.
 - Stock fonts select their logical fonts (mostly raster faces, so
   font-limited). Charset 254 decodes UTF-8.
 

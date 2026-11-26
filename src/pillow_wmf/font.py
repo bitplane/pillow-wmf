@@ -102,9 +102,10 @@ class RasterFont:
     background_cell: tuple[int, int] = (0, 0)
     # The horizontal pixels per design unit as the scaler quantizes it, 16.16.
     advance_fixed: Fraction = Fraction(1)
-    # Simulated styles on an unhinted face are drawn as the TrueType scaler
-    # draws them: a transformed font supplies the monochrome mask.
-    styled_masks: object = None
+    # Monochrome glyphs of an unhinted face are drawn by the TrueType scan
+    # rules (and simulated styles by the scaler's emboldening): a transformed
+    # font supplies the mask.
+    scan_masks: object = None
     _glyphs: dict[int, Glyph] = field(default_factory=GlyphCache)
     # One FreeType face has one glyph slot: glyph realization is serialized.
     # Copies made with dataclasses.replace share the face, cache and lock.
@@ -194,8 +195,8 @@ class RasterFont:
                 (ink_bounds.xMin // 64, ceil(Fraction(ink_bounds.xMax, 64))) if self.escapement % 900 else ink_span
             )
             size, bearing = (bitmap.width // channels, bitmap.rows), (slot.bitmap_left, -slot.bitmap_top)
-            if self.styled_masks is not None:
-                styled = self.styled_masks.glyph(index, max_pixels)
+            if self.scan_masks is not None:
+                styled = self.scan_masks.glyph(index, max_pixels)
                 size, bearing, pixels = styled.size, styled.bearing, styled.pixels
             glyph = Glyph(
                 size,
@@ -379,17 +380,17 @@ class FontFace:
             strikeout=bool(request.strikeout),
         )
 
-    def _styled_masks(self, size, width, quality, escapement, bold, italic):
-        if quality != 3 or escapement or self.hinted or not (bold or italic):
+    def _scan_masks(self, size, width, quality, escapement, bold, italic):
+        if quality != 3 or escapement or self.hinted:
             return None
         from .text_transform import TransformedFont  # noqa: PLC0415 - text_transform builds on this module
 
         return TransformedFont(
             self.data,
             self.index,
-            # The scaler realizes both axes at the whole-pixel em.
+            # An isotropic scale realizes both axes at the whole-pixel em.
             (
-                Fraction(width) * rounded(size) / Fraction(size) / self.units_per_em,
+                Fraction(width) * (rounded(size) / Fraction(size) if width == size else 1) / self.units_per_em,
                 0,
                 0,
                 -Fraction(rounded(size)) / self.units_per_em,
@@ -511,7 +512,7 @@ class FontFace:
                     background_cell=background_cell,
                     synthetic_bold=synthetic_bold,
                     synthetic_italic=synthetic_italic,
-                    styled_masks=self._styled_masks(size, width, quality, escapement, synthetic_bold, synthetic_italic),
+                    scan_masks=self._scan_masks(size, width, quality, escapement, synthetic_bold, synthetic_italic),
                     decorations=tuple(
                         (
                             rounded(position * size / self.units_per_em),
