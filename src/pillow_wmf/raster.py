@@ -164,6 +164,45 @@ def alpha_channel(source, destination, source_alpha, constant):
     return min(255, div255(source * constant) + div255(destination * (255 - alpha)))
 
 
+@dataclass(frozen=True)
+class MaskedPattern:
+    """A source-less MaskBlt's arguments, mask and background ROP."""
+
+    arguments: dict
+    mask: object
+    background: int
+
+
+class _PaddedSource:
+    """Source samples that are black outside the bitmap, as a clipped read leaves them."""
+
+    def __init__(self, source):
+        self.source, self.width, self.height = source, source.width, source.height
+
+    def pixel(self, x, y):
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.source.pixel(x, y)
+        return (0, 0, 0)
+
+
+def _oriented(corners, rectangle):
+    """A source rectangle with positive extents and the corners rebound to match.
+
+    A negative extent mirrors the source onto the parallelogram; an empty one
+    transfers nothing (None).
+    """
+    (x, y, width, height), (p0, p1, p2) = rectangle, corners
+    if not width or not height:
+        return None
+    if width < 0:
+        x, width = x + width, -width
+        p0, p1, p2 = p1, p0, (p2[0] + p1[0] - p0[0], p2[1] + p1[1] - p0[1])
+    if height < 0:
+        y, height = y + height, -height
+        p0, p1, p2 = p2, (p1[0] + p2[0] - p0[0], p1[1] + p2[1] - p0[1]), p0
+    return (p0, p1, p2), (x, y, width, height)
+
+
 class RasterContext(ExecutionContext[DrawingState]):
     """Draw the currently supported GDI calls into an RGB Pillow image.
 
@@ -267,9 +306,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         call = token.call
         handler, prepared = token.payload
         result = self._result(call)
+        failed = prepared is NATIVE_FAILURE or (isinstance(prepared, tuple) and prepared[:1] == (NATIVE_FAILURE,))
         # Input rejection belongs in prepare; execution failures are fatal.
         with self._geometry_budget.activate():
-            handler(call, prepared, result)
+            if not failed:
+                handler(call, prepared, result)
         self._commit(call)
         if isinstance(result, Handle) and self.is_null_object(result):
             # Intern failed creations so file-slot reuse cannot leak handles.
@@ -385,10 +426,6 @@ class RasterContext(ExecutionContext[DrawingState]):
             return self._state.fixed_position
         return self._path_point(*self._state.position)
 
-    def _prepare_arc_to(self, a):
-        if self.mapping.graphics_mode != GM_ADVANCED:
-            raise UnsupportedOperation("arc_to in GM_COMPATIBLE")
-
     def _apply_arc_to(self, call, prepared, result):
         a = call.kwargs
         box = (a["left"], a["top"], a["right"], a["bottom"])
@@ -412,8 +449,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         )
 
     def _prepare_angle_arc(self, a):
-        if self.mapping.graphics_mode != GM_ADVANCED:
-            raise UnsupportedOperation("angle_arc in GM_COMPATIBLE")
+        # GM_COMPATIBLE arcs take the same 28.4 geometry, without a world transform.
         if a["radius"] < 0:
             return NATIVE_FAILURE  # A radius past 2^31 fails natively.
 
@@ -1006,7 +1042,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         alpha = None
         if alpha_format:
             if layout.depth != 32 or layout.compression != 0 or not layout.complete:
-                raise UnsupportedOperation("alpha_blend: per-pixel alpha needs a 32-bit BI_RGB DIB")
+                return NATIVE_FAILURE  # Per-pixel alpha needs a 32-bit BI_RGB source.
             # The fourth byte of each BGRA sample, in top-down order.
             rows = [
                 layout.data[layout.offset + row * layout.stride : layout.offset + (row + 1) * layout.stride][3::4]
@@ -1105,12 +1141,16 @@ class RasterContext(ExecutionContext[DrawingState]):
                 mx, my = u - a["src_x"] + a["mask_x"], v - a["src_y"] + a["mask_y"]
                 return 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
 
-        return ParallelogramTransfer(source, corners, self._source_rectangle(source, rectangle), sample)
+        normalized = _oriented(corners, rectangle)
+        if normalized is None:
+            return NATIVE_FAILURE
+        corners, rectangle = normalized
+        return ParallelogramTransfer(_PaddedSource(source), corners, rectangle, sample)
 
     def _plg_mask(self, a):
         mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
         if mask.depth != 1 or not mask.complete:
-            raise UnsupportedOperation("plg_blt: masks are complete 1-bpp DIBs")
+            raise InvalidOperation("Masks are complete 1-bpp DIBs")  # GDI fails the transfer.
         return mask
 
     def _prepare_rectangular_plg_blt(self, a, x, y, width, height):
@@ -1146,44 +1186,44 @@ class RasterContext(ExecutionContext[DrawingState]):
 
         return transfer, (sample, 0x00AA0029)
 
-    def _parallelogram_source(self, bitmap):
-        layout = read_dib(bitmap, max_pixels=self.max_bitmap_pixels)
-        if not accepts_dib(layout) or not layout.complete:
-            raise UnsupportedOperation("Parallelogram transfers need a complete, directly decodable DIB")
-        return layout.decode()
-
-    @staticmethod
-    def _source_rectangle(source, rectangle):
-        x, y, width, height = rectangle
-        if width <= 0 or height <= 0:
-            raise UnsupportedOperation("Parallelogram transfers of empty or mirrored source rectangles")
-        if x < 0 or y < 0 or x + width > source.width or y + height > source.height:
-            raise UnsupportedOperation("Parallelogram transfers of rectangles outside the source")
-        return rectangle
+    def _parallelogram_source(self, bitmap, color_usage=0):
+        """The source's samples; palette indices resolve through the DC palette and
+        unwritten (RLE or truncated) pixels are black."""
+        layout = read_dib(bitmap, color_usage=color_usage, max_pixels=self.max_bitmap_pixels)
+        if accepts_dib(layout) and layout.complete and not color_usage:
+            return layout.decode()
+        return layout.decode(palette=self._state.palette.colors(), gap_color=(0, 0, 0))
 
     def _prepare_rotated_transfer(self, name, a):
         """A rotating or shearing transform maps a destination rectangle to a
         parallelogram; see ``RasterPainter.transform_blt``."""
-        if a.get("color_usage", 0) != 0 or a["source"] is None:
-            raise UnsupportedOperation(f"{name}: only RGB transfers with a source under a rotating transform")
-        source = self._parallelogram_source(a["source"])
+        x, y = a["x"], a["y"]
+        corners = tuple(
+            self.mapping.fixed_point(*point) for point in ((x, y), (x + a["width"], y), (x, y + a["height"]))
+        )
+        if a["source"] is None:
+            # Without a source the brush fills the parallelogram.
+            return ParallelogramTransfer(None, corners, (0, 0, 0, 0), rop=a["rop"])
+        source = self._parallelogram_source(a["source"], a.get("color_usage", 0))
         width, height = a.get("src_width", a["width"]), a.get("src_height", a["height"])
         top = a["src_y"]
         if name == "stretch_dib" and read_dib(a["source"], max_pixels=self.max_bitmap_pixels).top_down is False:
             # StretchDIBits measures a bottom-up source from its last row.
             top = source.height - a["src_y"] - height
-        x, y = a["x"], a["y"]
-        corners = tuple(
-            self.mapping.fixed_point(*point) for point in ((x, y), (x + a["width"], y), (x, y + a["height"]))
-        )
-        rectangle = self._source_rectangle(source, (a["src_x"], top, width, height))
-        return ParallelogramTransfer(source, corners, rectangle, rop=a["rop"])
+        normalized = _oriented(corners, (a["src_x"], top, width, height))
+        if normalized is None:
+            return NATIVE_FAILURE
+        corners, rectangle = normalized
+        return ParallelogramTransfer(_PaddedSource(source), corners, rectangle, rop=a["rop"])
 
     def _apply_plg_blt(self, call, prepared, result):
         if isinstance(prepared, tuple):
             transfer, mask = prepared
             if isinstance(transfer, SourceTransfer):
                 self._painter().source_blt(transfer.bitmap, transfer.horizontal, transfer.vertical, SRCCOPY, mask=mask)
+            return
+        if prepared.source is None:
+            self._painter().transform_pat_blt(prepared.corners, prepared.rop)
             return
         if prepared.rop is not None:
             self._painter().transform_blt(
@@ -1210,10 +1250,13 @@ class RasterContext(ExecutionContext[DrawingState]):
             arguments |= {"src_width": source_width, "src_height": source_height}
         if a["source"] is None:
             if pattern_rop2(foreground) is None or (a["mask"] is not None and pattern_rop2(background) is None):
-                raise UnsupportedOperation("mask_blt: source-less operation uses its source")
+                return NATIVE_FAILURE, foreground, None  # A ROP that reads the missing source fails.
             if a["mask"] is None:
                 return TransferAction.PATTERN, foreground, None
-            raise UnsupportedOperation("mask_blt: masked pattern transfers")
+            mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
+            if mask.depth != 1 or not mask.complete:
+                return NATIVE_FAILURE, foreground, None
+            return (MaskedPattern(a, mask, background), foreground, None)
         if self.mapping.rotated:
             return self._prepare_rotated_mask_blt(a, arguments, foreground, background), foreground, None
         if a["mask"] is None:
@@ -1233,7 +1276,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
         source = read_dib(a["source"], max_pixels=self.max_bitmap_pixels)
         if mask.depth != 1 or not mask.complete:
-            raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
+            return NATIVE_FAILURE, foreground, None
         # Source samples are top-down; place the mask's rectangle over the source's.
         source_top = a["src_y"] if source.top_down else source.height - a["src_y"] - source_height
         mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - source_height
@@ -1250,7 +1293,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             return transfer
         mask = read_dib(a["mask"], color_usage=a["mask_usage"], max_pixels=self.max_bitmap_pixels)
         if mask.depth != 1 or not mask.complete:
-            raise UnsupportedOperation("mask_blt: masks are complete 1-bpp DIBs")
+            raise InvalidOperation("Masks are complete 1-bpp DIBs")  # GDI fails the transfer.
         mask_top = (
             a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - arguments.get("src_height", a["height"])
         )
@@ -1276,11 +1319,32 @@ class RasterContext(ExecutionContext[DrawingState]):
                 mask=mask,
                 pad_bounds=transfer.pad_bounds,
             )
+        elif isinstance(transfer, MaskedPattern):
+            self._masked_pattern(transfer, foreground)
         elif transfer is TransferAction.PATTERN:
             if self.mapping.rotated:
                 self._painter().transform_pat_blt(self._prepare_pat_blt(a), foreground)
                 return
             self._pat_blt(a["x"], a["y"], a["width"], a["height"], foreground)
+
+    def _masked_pattern(self, transfer, foreground):
+        """A source-less MaskBlt: each mask bit picks the foreground or background pattern ROP."""
+        a, mask = transfer.arguments, transfer.mask
+        painter = self._painter()
+        brush = self._state.brush
+        (x0, y0), (x1, y1) = self._point(a["x"], a["y"]), self._point(a["x"] + a["width"], a["y"] + a["height"])
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
+        mask_top = a["mask_y"] if mask.top_down else mask.height - a["mask_y"] - (y1 - y0)
+        for y in range(max(0, y0), min(self.surface.height, y1)):
+            for x in range(max(0, x0), min(self.surface.width, x1)):
+                mx, my = x - x0 + a["mask_x"], y - y0 + mask_top
+                chosen = 0 <= mx < mask.width and 0 <= my < mask.height and mask.index(mx, my) == 1
+                operation = pattern_rop2(foreground if chosen else transfer.background)
+                if operation is None or not self._state.clip.contains(x, y):
+                    continue
+                color = painter.brush_color_at(x, y, brush, opaque=True) or (0, 0, 0)
+                painter.pixel(x, y, color, operation=operation)
 
     def _apply_bit_blt(self, call, prepared, result):
         a = call.kwargs
