@@ -10,7 +10,7 @@ realized pen polygon, so flat and square caps, bevels and miters share it.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from math import atan2, floor, hypot, pi
 
@@ -280,17 +280,6 @@ def _miter_in_limit(shape: PenShape, vertex: Point, tip: Point) -> bool:
     return float32(float32(float32(wy) * float32(wy)) + float32(float32(wx) * float32(wx))) <= threshold
 
 
-def _miter_fits(first_direction, second_direction, limit) -> bool:
-    # Miter length over line width is 1 / sin(half the interior angle).
-    dot = -_dot(first_direction, second_direction)
-    lengths = hypot(*first_direction) * hypot(*second_direction)
-    if not lengths:
-        return False
-    cosine = max(-1.0, min(1.0, dot / lengths))
-    half_sine_squared = (1 - cosine) / 2
-    return half_sine_squared > 0 and 1 / half_sine_squared <= limit * limit
-
-
 def _sweep(shape: PenShape, origin: Point, start: Point, start_edge, end_edge, through: Point, *, join=True) -> Polygon:
     """Inset pen vertices walked from one offset's pen edge to another's.
 
@@ -507,7 +496,8 @@ def dash_figures(segments, pattern, scale, *, shorten=0, closed=False, logical=N
                 continue
             a, b = point(span, low), point(span, high)
             if a != b or not figure and low == high:
-                figure.append(StrokeSegment(a, b, segment.direction))
+                chord = segment.chord or (segment.end[0] - segment.start[0], segment.end[1] - segment.start[1])
+                figure.append(replace(segment, start=a, end=b, curve=segment.curve and a == segment.start, chord=chord))
             if start + length >= high:
                 break
         if figure:

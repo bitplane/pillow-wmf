@@ -1571,7 +1571,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                 self.mapping.fixed_point(logical_right, logical_top),
                 self.mapping.fixed_point(logical_left, logical_bottom),
             )
-            if self.mapping.rotated and self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
+            if self._state.pen.style == PS_INSIDEFRAME and not pen.cosmetic:
                 lt, rt, lb = self._inside_frame_corners(
                     lt, rt, lb, self._state.pen.width, logical_right - logical_left, logical_bottom - logical_top
                 )
@@ -1605,8 +1605,8 @@ class RasterContext(ExecutionContext[DrawingState]):
                     self._state.pen.width,
                     self.mapping.linear_scale,
                 )
-                if not corners:
-                    # Rotated boxes were inset at their transformed corners.
+                if advanced_bounds is None:
+                    # GM_ADVANCED boxes were inset at their transformed corners.
                     drawing_bounds = inset_bounds
                 if covered and name in {"arc", "chord", "pie"}:
                     return

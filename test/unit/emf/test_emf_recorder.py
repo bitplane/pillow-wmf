@@ -588,6 +588,39 @@ def gap_scenarios():
 
     yield "clip-path-inside-frame", None, clip_path_inside_frame
 
+    def arc_to_inside_frame(r):
+        # ArcTo with an inside-frame pen: clip paths and current positions,
+        # counterclockwise and clockwise, in a covered box, and in GM_ADVANCED.
+        frame = ((-60, -60), (120, -60), (120, 120), (-60, 120), (-60, -60))
+        r.select_object(r.create_pen(6, 7, 0))
+        boxes = ((10, 10, 50, 35, 50, 20, 10, 12), (10, 10, 15, 35, 15, 20, 10, 12))
+
+        def run():
+            for box in boxes:
+                r.save_dc()
+                r.begin_path()
+                r.move_to(2, 2)
+                r.arc_to(*box)
+                r.line_to(2, 2)
+                r.end_path()
+                r.select_clip_path(5)
+                r.polyline(frame)
+                r.restore_dc(-1)
+                r.move_to(0, 0)
+                r.arc_to(*box)
+                r.polyline_to(((300, 300),))
+
+        for direction in (1, 2):
+            r.set_arc_direction(direction)
+            run()
+        r.set_arc_direction(1)
+        r.set_graphics_mode(2)
+        run()
+        r.set_world_transform(0.9, 0.4, -0.4, 0.9, 20, 0)
+        run()
+
+    yield "arc-to-inside-frame", None, arc_to_inside_frame
+
     def odd_arc_to(r):
         # The clockwise ArcTo on an odd-sized box, then its current position.
         r.set_arc_direction(2)

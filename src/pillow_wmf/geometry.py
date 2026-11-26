@@ -58,6 +58,10 @@ class StrokeSegment:
     start: Point
     end: Point
     direction: Point
+    # Whether the joint at the start lies inside a flattened curve.
+    curve: bool = False
+    # The whole line's vector, for a dash that lies along part of it.
+    chord: Point | None = None
 
     @classmethod
     def line(cls, start: Point, end: Point):

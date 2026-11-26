@@ -1025,6 +1025,57 @@ def widened_curves(d):
     d.add(fixed.RestoreDC(-1))
 
 
+def dashed_curves(d):
+    """Styled wide pens along curves, widened dashes filled by alternation, inside-frame ArcTo."""
+
+    def pts(*values):
+        return tuple((d.u(x), d.u(y)) for x, y in values)
+
+    def ext_pen(style, width, color, user=()):
+        d.select(
+            lambda slot: bitmaps.ExtCreatePen(
+                slot, 0, 0, 0, 0, PS_GEOMETRIC | style, d.u(width), 0, color, 0, tuple(d.u(v) for v in user)
+            )
+        )
+
+    d.brush(BS_NULL, 0, 0)
+    styles = (
+        (PS_DASH | PS_JOIN_MITER | PS_ENDCAP_FLAT, ()),
+        (PS_DOT | PS_JOIN_BEVEL | PS_ENDCAP_SQUARE, ()),
+        (PS_USERSTYLE | PS_JOIN_MITER | PS_ENDCAP_FLAT, (14, 4, 6, 4)),
+        (PS_USERSTYLE | PS_JOIN_ROUND | PS_ENDCAP_ROUND, (10, 6)),
+    )
+    for column, (style, user) in enumerate(styles):
+        left = 4 + 31 * column
+        ext_pen(style, 4, (0x800000, 0x008000, 0x000080, 0x808000)[column], user)
+        d.add(fixed.Ellipse(*d.rect(left, 4, left + 26, 22)))
+        d.add(fixed.Pie(*d.rect(left, 24, left + 26, 44), *d.rect(left + 26, 30, left, 26)))
+        d.add(variable.PolyBezier((0, 0, 0, 0), pts((left + 2, 58), (left + 8, 40), (left + 24, 70), (left + 24, 48))))
+    d.add(fixed.SetPolyFillMode(ALTERNATE))
+    d.brush(BS_SOLID, 0x2060C0)
+    ext_pen(PS_USERSTYLE | PS_JOIN_MITER | PS_ENDCAP_SQUARE, 6, 0, (20, 8))
+    d.add(fixed.BeginPath(), fixed.Ellipse(*d.rect(4, 70, 40, 96)), fixed.EndPath(), fixed.WidenPath())
+    d.add(fixed.FillPath(0, 0, 0, 0))
+    # ArcTo in a path with an inside-frame pen, both directions, then a box
+    # narrower than the pen.
+    d.pen(6, d.u(6), 0x008080)  # PS_INSIDEFRAME
+    d.brush(BS_SOLID, 0xC0C000)
+    for column, direction in enumerate((1, 2)):
+        left = 46 + 28 * column
+        d.add(fixed.SetArcDirection(direction))
+        d.add(fixed.BeginPath(), fixed.MoveToEx(d.u(left), d.u(70)))
+        d.add(fixed.ArcTo(*d.rect(left + 2, 70, left + 26, 96), *d.rect(left + 26, 80, left + 2, 72)))
+        d.add(fixed.CloseFigure(), fixed.EndPath(), fixed.StrokeAndFillPath(0, 0, 0, 0))
+    d.add(fixed.SetArcDirection(1))
+    d.add(fixed.BeginPath(), fixed.MoveToEx(d.u(104), d.u(70)))
+    d.add(fixed.ArcTo(*d.rect(106, 70, 110, 96), *d.rect(110, 80, 106, 72)), fixed.LineTo(d.u(124), d.u(96)))
+    d.add(fixed.EndPath(), fixed.StrokePath(0, 0, 0, 0))
+    # Inside-frame chords and arcs in a path, and a covered ellipse.
+    d.add(fixed.BeginPath(), fixed.Chord(*d.rect(4, 100, 34, 124), *d.rect(34, 104, 4, 120)))
+    d.add(fixed.Arc(*d.rect(38, 100, 68, 124), *d.rect(68, 112, 38, 112)), fixed.CloseFigure())
+    d.add(fixed.Ellipse(*d.rect(72, 100, 76, 124)), fixed.EndPath(), fixed.StrokeAndFillPath(0, 0, 0, 0))
+
+
 def rotated_color_adjustment(d):
     """HALFTONE stretches with colour adjustment under a rotating transform."""
     transfer_background(d)
@@ -1290,6 +1341,7 @@ FEATURES = (
     ("rotated-insideframe", rotated_insideframe, (128, 51)),
     ("rotated-color-adjustment", rotated_color_adjustment, (128,)),
     ("widened-curves", widened_curves, (128, 51)),
+    ("dashed-curves", dashed_curves, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),

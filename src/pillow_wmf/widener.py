@@ -320,32 +320,46 @@ class _Widener:
 
     # Figures
 
-    def figure(self, start: Point, pieces: list[tuple[Point, Point, bool]], closed: bool) -> None:
-        """Widen one figure given as (end point, tangent, curve joint) pieces."""
-        lines: list[tuple[Point, _Line, bool]] = []
-        position = start
-        for end, tangent, curve in pieces:
-            chord = (end[0] - position[0], end[1] - position[1])
-            if chord == (0, 0):
-                continue
-            lines.append((position, _Line(chord, tangent if tangent != (0, 0) else chord), curve))
-            position = end
+    def figure(self, segments: tuple[StrokeSegment, ...], closed: bool, seam: int = 0, *, dash: bool = False) -> None:
+        """Widen one figure of segments carrying native directions and joint kinds.
+
+        A ``seam`` is the closing joint of a closed figure whose last dash runs
+        on into its first: the right side up to it is moved to the front. A
+        ``dash`` of zero length still has caps, in its segment's direction.
+        """
+        start = segments[0].start
+        lines = [
+            (
+                segment.start,
+                _Line(segment.chord or chord, segment.direction if segment.direction != (0, 0) else chord),
+                segment.curve,
+            )
+            for segment in segments
+            if (chord := (segment.end[0] - segment.start[0], segment.end[1] - segment.start[1])) != (0, 0)
+        ]
+        position = segments[-1].end
         if closed and position != start:
             chord = (start[0] - position[0], start[1] - position[1])
             lines.append((position, _Line(chord, chord), False))
         if not lines:
-            # A figure of one point: round caps draw the pen there.
-            if self.shape.cap == CAP_ROUND:
-                line = _Line((16, 0), (16, 0))
-                self.vertex, self.left = start, []
-                self.start_cap(line)
-                self.end_cap(line)
-                self.figures.append((self.left, True))
-            return
+            if dash and segments[0].direction != (0, 0):
+                lines = [(start, _Line((0, 0), segments[0].direction), False)]
+            else:
+                # A figure of one point: round caps draw the pen there.
+                if self.shape.cap == CAP_ROUND:
+                    line = _Line((16, 0), (16, 0))
+                    self.vertex, self.left = start, []
+                    self.start_cap(line)
+                    self.end_cap(line)
+                    self.figures.append((self.left, True))
+                return
         self.left, self.right = [], []
-        for (vertex, line, curve), (_, previous, _) in zip(lines[1:], lines, strict=False):
+        front = 0
+        for index, ((vertex, line, curve), (_, previous, _)) in enumerate(zip(lines[1:], lines, strict=False), 1):
             self.vertex = vertex
-            self.join(previous, line, curve)
+            self.join(previous, line, curve and index != seam)
+            if index == seam:
+                front = len(self.right)
         if closed:
             self.vertex = start
             self.join(lines[-1][1], lines[0][1], False)
@@ -354,10 +368,11 @@ class _Widener:
             return
         self.vertex = position
         self.end_cap(lines[-1][1])
-        body = self.left + self.right[::-1]
+        body = self.left + self.right[front:][::-1]
+        moved = self.right[:front][::-1]
         self.vertex, self.left = start, []
         self.start_cap(lines[0][1])
-        self.figures.append((self.left + body, True))
+        self.figures.append((moved + self.left + body, True))
 
 
 def _intersect(a: Point, first: Point, b: Point, second: Point) -> Point | None:
@@ -382,51 +397,50 @@ def _round_half_away(value: float) -> int:
     return magnitude if value >= 0 else -magnitude
 
 
-def _pieces(start: Point, commands) -> list[tuple[Point, Point, bool]]:
-    """Flattened pieces with the directions and joint kinds the native walker gives them."""
-    pieces = []
-    position = start
-    for command in commands:
+def segments(path) -> tuple[StrokeSegment, ...]:
+    """A device path's flattened segments as the native widener walks them.
+
+    A Bézier's first piece takes its start tangent and its last piece its end
+    tangent (or the piece's own chord where that is zero), and the joints
+    between its pieces are curve joints.
+    """
+    result = []
+    for command in path.commands:
+        position = command[0]
         if len(command) == 2:
-            end = command[1]
-            pieces.append((end, (end[0] - position[0], end[1] - position[1]), False))
-            position = end
+            result.append(StrokeSegment.line(position, command[1]))
             continue
         p0, p1, p2, p3 = command
         points = flatten_cubic(command)
         if len(points) == 1:
-            pieces.append((p3, (p3[0] - p0[0], p3[1] - p0[1]), False))
-        else:
-            for index, point in enumerate(points):
-                before = points[index - 1] if index else p0
-                if index == 0:
-                    tangent = (p1[0] - p0[0], p1[1] - p0[1])
-                elif index == len(points) - 1:
-                    tangent = (p3[0] - p2[0], p3[1] - p2[1])
-                else:
-                    tangent = (point[0] - before[0], point[1] - before[1])
-                pieces.append((point, tangent, index > 0))
-        position = p3
-    return pieces
+            result.append(StrokeSegment.line(p0, p3))
+            continue
+        for index, point in enumerate(points):
+            if index == 0:
+                tangent = (p1[0] - p0[0], p1[1] - p0[1])
+            elif index == len(points) - 1:
+                tangent = (p3[0] - p2[0], p3[1] - p2[1])
+            else:
+                tangent = (point[0] - position[0], point[1] - position[1])
+            result.append(StrokeSegment(position, point, tangent, index > 0))
+            position = point
+    return tuple(result)
 
 
 def widen(shape: PenShape, paths: Iterable) -> list[tuple[list[Point], bool]]:
     """WidenPath's figures for device paths (``DevicePath``) widened by ``shape``."""
     widener = _Widener(shape)
     for path in paths:
-        if not path.commands:
-            continue
-        start = path.commands[0][0]
-        widener.figure(start, _pieces(start, path.commands), path.closed)
+        figure = segments(path)
+        if figure:
+            widener.figure(figure, path.closed)
     return widener.figures
 
 
-def widen_segments(shape: PenShape, figures: Iterable[tuple[tuple[StrokeSegment, ...], bool]]):
-    """WidenPath's figures for already flattened segment figures, such as dashes."""
+def widen_dashes(shape: PenShape, dashes: Iterable[tuple[tuple[StrokeSegment, ...], int]]):
+    """WidenPath's figures for the dashes of a styled pen, as ``(segments, seam)`` pairs."""
     widener = _Widener(shape)
-    for segments, closed in figures:
-        if not segments:
-            continue
-        pieces = [(segment.end, segment.direction, False) for segment in segments]
-        widener.figure(segments[0].start, pieces, closed)
+    for figure, seam in dashes:
+        if figure:
+            widener.figure(figure, False, seam, dash=True)
     return widener.figures

@@ -33,13 +33,13 @@ from .stroke import (
     join_outline,
     realize_pen,
     realize_transformed_pen,
-    support_outlines,
     widen_segment,
 )
 from .surface import Surface
 from .widen import CAP_FLAT, CAP_ROUND, JOIN_MITER, JOIN_ROUND, PenShape, dash_figures, perpendicular
 from .widen import outline as widen_outline
-from .widener import widen
+from .widener import segments as widener_segments
+from .widener import widen, widen_dashes
 
 
 def _nudged_index(numerator, det, step):
@@ -506,10 +506,9 @@ class RasterPainter:
         if self.state.pen.style == PS_NULL:
             return set()
         pixels: set[tuple[int, int]] = set()
-        pen = self.state.pen
-        if not self.realized_pen.cosmetic and not (pen.geometric and pen.pattern) and not miter:
-            outlines = tuple(points for points, _ in widen(self.widen_shape, paths))
-            return set(self.contour_pixels(outlines, fill_mode=WINDING))
+        if not self.realized_pen.cosmetic and not miter:
+            # Wide pens fill the widened outlines by winding.
+            return set(self.contour_pixels(tuple(self.widened_outlines(paths)), fill_mode=WINDING))
         for path in paths:
             for segments, closed, _ in self._pen_figures(path):
                 pixels.update(self._figure_pixels(segments, closed, miter=miter))
@@ -519,18 +518,19 @@ class RasterPainter:
         """The figures a pen strokes: each dash of a patterned geometric pen, or the path."""
         pen = self.state.pen
         if pen.geometric and pen.pattern:
-            # Each dash is an open figure with the pen's caps and joins.
-            scale = self.state.mapping.linear_scale
-            # Predefined styles pull capped dash ends back; user styles do not.
-            shorten = pen.width if pen.cap != CAP_FLAT and pen.style != PS_USERSTYLE else 0
-            logical = self.state.mapping.rotated_logical_point if self.state.mapping.rotated else None
-            figures = dash_figures(
-                path.segments, pen.pattern, scale, shorten=shorten, closed=path.closed, logical=logical
-            )
-            for dash, seam in figures:
+            for dash, seam in self._dashes(path.segments, path.closed):
                 yield dash, False, seam
         else:
             yield path.segments, path.closed, 0
+
+    def _dashes(self, segments, closed):
+        """A patterned geometric pen's dashes of one figure, as ``(segments, seam)`` pairs."""
+        pen = self.state.pen
+        scale = self.state.mapping.linear_scale
+        # Predefined styles pull capped dash ends back; user styles do not.
+        shorten = pen.width if pen.cap != CAP_FLAT and pen.style != PS_USERSTYLE else 0
+        logical = self.state.mapping.rotated_logical_point if self.state.mapping.rotated else None
+        return dash_figures(segments, pen.pattern, scale, shorten=shorten, closed=closed, logical=logical)
 
     @cached_property
     def widen_shape(self) -> PenShape:
@@ -552,16 +552,10 @@ class RasterPainter:
     def widened_outlines(self, paths: tuple[DevicePath, ...]) -> list[Polygon]:
         """WidenPath's closed outlines, as the native widener builds them."""
         pen = self.state.pen
-        if not (pen.geometric and pen.pattern):
-            return [points for points, _ in widen(self.widen_shape, paths)]
-        outlines: list[Polygon] = []
-        for path in paths:
-            for segments, closed, seam in self._pen_figures(path.flattened()):
-                if self.pen_shape is None:
-                    outlines.extend(support_outlines(segments, self.realized_pen, closed, seam=seam))
-                else:
-                    outlines.extend(widen_outline(self.pen_shape, segments, closed, seam=seam))
-        return outlines
+        if pen.geometric and pen.pattern:
+            dashes = [dash for path in paths for dash in self._dashes(widener_segments(path), path.closed)]
+            return [points for points, _ in widen_dashes(self.widen_shape, dashes)]
+        return [points for points, _ in widen(self.widen_shape, paths)]
 
     def _figure_pixels(self, segments, closed, *, miter=False):
         if miter and self.state.mapping.rotated and not self.realized_pen.cosmetic:

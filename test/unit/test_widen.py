@@ -105,7 +105,7 @@ def test_dashes_are_logical_lengths_with_round_cap_ends_pulled_back():
     assert rounded[0][-1].end == (190, 115)
     # Dots with extending caps become zero-length dashes.
     dots = dash_figures(figure((6, 6), (46, 6)), (3, 3), (1, 1), shorten=3)
-    assert dots[1] == ((StrokeSegment((192, 96), (192, 96), (640, 0)),), 0)
+    assert dots[1] == ((StrokeSegment((192, 96), (192, 96), (640, 0), chord=(640, 0)),), 0)
 
 
 def test_closed_dashes_run_on_across_the_closing_vertex():
