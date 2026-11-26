@@ -729,10 +729,11 @@ def scan_outline(contours, *, closed):
 
     A pixel is covered when its centre lies inside the outline by the nonzero
     rule. A centre exactly on the outline is covered when ``closed`` (the
-    font's own orientation) and not when the outline is mirrored. Smart
-    dropout control then fills, along every row and column centre line, each
-    stretch of interior that holds no pixel centre, at the pixel nearest its
-    middle.
+    font's own orientation) and not when the outline is mirrored. Dropout
+    control then fills, along every row and column centre line, each stretch
+    of interior that holds no pixel centre (including vertices that only
+    touch the line): the pixel to the left or below, or the other neighbour
+    when that one lies outside the outline's pixel bounds.
     """
     segments = [(p, q) for contour in contours for p, q in zip(contour, contour[1:] + contour[:1], strict=True)]
     if not segments:
@@ -752,16 +753,19 @@ def scan_outline(contours, *, closed):
                     covered.add((column, row))
             elif sum(direction for position, direction in crossings if position < centre_x):
                 covered.add((column, row))
+    # Dropout pixels stay inside the outline's pixel bounds: a choice outside
+    # them takes the other neighbour instead.
+    left, bottom = min(xs) // 64, -(-max(ys) // 64) - 1
     for row in rows:
         for start, end in _dropout_spans(contours, segments, 64 * row + 32, 1):
             first = -((32 - start) // 64)  # the first pixel whose centre is at or after the start
             if first * 64 + 32 > end:
-                covered.add((first - 1, row))  # the pixel to the left
+                covered.add((first - 1 if first - 1 >= left else first, row))  # the pixel to the left
     for column in columns:
         for start, end in _dropout_spans(contours, segments, 64 * column + 32, 0):
             first = -((32 - start) // 64)
             if first * 64 + 32 > end:
-                covered.add((column, first))  # the pixel below
+                covered.add((column, first if first <= bottom else first - 1))  # the pixel below
     return covered
 
 
