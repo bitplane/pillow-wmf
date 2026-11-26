@@ -37,12 +37,6 @@ def _round_half_away(value) -> int:
     return magnitude if value >= 0 else -magnitude
 
 
-def _post(p, x, q, y) -> int:
-    """One output coordinate of a 16.16 matrix applied to a 26.6 point, rounded once."""
-    first, second = _round_half_away(p * 65536), _round_half_away(q * 65536)
-    return (x * first + y * second + 0x8000) >> 16
-
-
 @dataclass
 class TransformedFont:
     """A face realized through a notional-to-device matrix.
@@ -161,29 +155,28 @@ class TransformedFont:
         # A mirroring transform reverses the outline's orientation.
         closed = Fraction(a) * Fraction(d) - Fraction(b) * Fraction(c) < 0
         if self.embolden:
-            # The scaler emboldens the outline upright at the whole pixel em
-            # height, y up, then applies the rest of the matrix to the moved
-            # points and flattens the arcs in device space.
-            # The upright size is the scaler's ppem: the larger component of
-            # the (unsheared) y column, in whole pixels.
-            _, rb, _, rd = self._device_matrix()
-            ppem = int(max(abs(float(rb)), abs(float(rd))) * self.units_per_em + 0.5)
-            # The scaler holds pixels per notional unit in 16.16.
-            k = Fraction(_round_half_away(Fraction(ppem * 65536, self.units_per_em)), 65536)
-            upright = [
-                [(_round_half_away(64 * k * u), _round_half_away(64 * k * v), on) for (u, v), on in contour]
+            # The scaler's first stage scales each axis by its matrix column's
+            # larger component (16.16 per unit), where it emboldens the
+            # points; the remaining 16.16 matrix then maps them and the arcs
+            # are flattened in device space.
+            sx = _q16(max(abs(Fraction(a)), abs(Fraction(c))))
+            sy = _q16(max(abs(Fraction(b)), abs(Fraction(d))))
+            stage = [
+                [(_round_half_away(64 * sx * u), _round_half_away(64 * sy * v), on) for (u, v), on in contour]
                 for contour in _raw_contours(outline)
             ]
-            moved = embolden(upright, (EMBOLDEN_PER_MILLE * ppem - 10) // 1000 + 1, grid_fitted=True)
-            exact = Fraction(ppem, self.units_per_em)
-            pa, pb, pc, pd = (Fraction(value) / exact for value in (a, b, c, d))
+            ppem = int(sy * self.units_per_em + Fraction(1, 2))
+            moved = embolden(stage, (EMBOLDEN_PER_MILLE * ppem - 10) // 1000 + 1, grid_fitted=True)
+            qa, qb, qc, qd = (
+                _round_half_away(Fraction(m) / scale * 65536) for m, scale in ((a, sx), (b, sy), (c, sx), (d, sy))
+            )
             flat = (
                 _flatten(
                     [
                         (
                             (
-                                _post(pa, x, pb, y),
-                                _post(pc, x, pd, y),
+                                ((x * qa + 0x8000) >> 16) + ((y * qb + 0x8000) >> 16),
+                                ((x * qc + 0x8000) >> 16) + ((y * qd + 0x8000) >> 16),
                             ),
                             on,
                         )
@@ -197,6 +190,9 @@ class TransformedFont:
         else:
             contours = [[device(point) for point in contour] for contour in _contours(outline)]
         pixels = scan_outline(contours, closed=closed)
+        return self._mask(pixels, index, max_pixels)
+
+    def _mask(self, pixels, index, max_pixels):
         if not pixels:
             return Glyph((0, 0), (0, 0), b"", 0, index, 1)
         xs, ys = [x for x, _ in pixels], [y for _, y in pixels]

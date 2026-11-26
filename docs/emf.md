@@ -136,10 +136,9 @@ Text records play through the font collection's faces:
   Italic shears the outline by 0x5700/65536. Bold adds a device pixel to each
   advance (and its logical equivalent to each logical extent); under rotating
   or shearing transforms the outline is emboldened as the TrueType scaler
-  does it ([`embolden.py`](../src/pillow_wmf/embolden.py)): upright at the
-  scaler's ppem (the larger component of the transform's y column, in whole
-  pixels, held as 16.16 pixels per unit), right-facing edges moved a pixel
-  right, before the rest of the transform. Horizontal monochrome text of an
+  does it ([`embolden.py`](../src/pillow_wmf/embolden.py)): in the scaler's
+  first stage (each axis scaled by its column's larger component, 16.16 per
+  unit), right-facing edges moved a pixel right, before the remaining matrix. Horizontal monochrome text of an
   unhinted face takes the same TrueType scan rules and emboldening.
 - Stock fonts select their logical fonts (mostly raster faces, so
   font-limited). Charset 254 decodes UTF-8.
