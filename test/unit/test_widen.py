@@ -155,10 +155,17 @@ def test_hatched_pens_fill_their_footprint_with_the_hatch():
     assert marks and all((x + y) % 8 == 7 and 2 <= x < 22 and 3 <= y < 9 for x, y in marks)
 
 
+def test_bitmap_brush_pens_fail_creation():
+    from pillow_wmf.raster import RasterContext
+
+    context = RasterContext(4, 4)
+    pen = context.ext_create_pen(style=0x00010000, width=6, color=0, brush_style=3)
+    assert context.is_null_object(pen)
+
+
 @pytest.mark.parametrize(
     ("pen", "error"),
     [
-        ({"style": 0x00010000, "width": 6, "color": 0, "brush_style": 3}, "UnsupportedOperation"),
         ({"style": 0x00000000, "width": 1, "color": 0, "brush_style": 2, "hatch": 1}, "InvalidOperation"),
         ({"style": 0x00010008, "width": 3, "color": 0}, "InvalidOperation"),  # Geometric alternate.
         ({"style": 0x00000007, "width": 1, "color": 0}, "InvalidOperation"),  # User style without entries.

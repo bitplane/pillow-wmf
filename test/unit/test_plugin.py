@@ -20,6 +20,7 @@ from pillow_wmf import (
     render,
 )
 from pillow_wmf.binary import ResourceLimitError
+from pillow_wmf.objects import FontRequest
 from pillow_wmf.plugin import WmfImageFile
 from pillow_wmf.wmf.objects import Font
 
@@ -95,12 +96,18 @@ def test_invalid_options(options):
 
 def test_unsupported_drawing_is_not_silently_omitted():
     recorder = Recorder()
-    recorder.escape(0x7777, b"")
+    unrenderable_text(recorder)
     with Image.open(BytesIO(recorder.to_bytes())) as image, pytest.raises(OSError) as caught:
-        image.load()
+        image.load(fonts=FontCollection([]))
     assert isinstance(caught.value.__cause__, UnsupportedOperation)
     with pytest.raises(UnsupportedOperation):
-        render(recorder.to_bytes(), (128, 128))
+        render(recorder.to_bytes(), (128, 128), fonts=FontCollection([]))
+
+
+def unrenderable_text(recorder):
+    """Text in a face the empty collection lacks: font-limited, so playback refuses it."""
+    recorder.select_object(recorder.create_font(FontRequest(height=-12, face_name="Unavailable Face")))
+    recorder.text_out(0, 0, b"x")
 
 
 def test_corrupt_signature_becomes_unidentified_image():

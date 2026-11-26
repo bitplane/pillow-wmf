@@ -101,56 +101,8 @@ def logical_color(colorref):
     return PaletteIndex(colorref & 65535) if colorref & 0x01000000 else rgb(colorref)
 
 
-# MS-WMF's defined escape records are printer operations or embedded metadata.
-# They do not affect the native RGB memory device. Keep the verified set
-# explicit: other escape numbers, including callbacks and XPS, are unsupported.
-BITMAP_NOOP_ESCAPES = frozenset(
-    {
-        0x0001,  # NEWFRAME
-        0x0002,  # ABORTDOC
-        0x0003,  # NEXTBAND
-        0x0004,  # SETCOLORTABLE
-        0x0005,  # GETCOLORTABLE
-        0x0008,  # QUERYESCSUPPORT
-        0x000A,  # STARTDOC
-        0x000B,  # ENDDOC
-        0x000C,  # GETPHYSPAGESIZE
-        0x000D,  # GETPRINTINGOFFSET
-        0x000E,  # GETSCALINGFACTOR
-        0x000F,  # META_ESCAPE_ENHANCED_METAFILE
-        0x0011,  # SETCOPYCOUNT
-        0x0013,  # PASSTHROUGH
-        0x0015,  # SETLINECAP
-        0x0016,  # SETLINEJOIN
-        0x0017,  # SETMITERLIMIT
-        0x0019,  # DRAWPATTERNRECT
-        0x0021,  # EPSPRINTING
-        0x0025,  # POSTSCRIPT_DATA
-        0x0026,  # POSTSCRIPT_IGNORE
-        0x002A,  # GETDEVICEUNITS
-        0x0100,  # GETEXTENDEDTEXTMETRICS
-        0x0102,  # GETPAIRKERNTABLE
-        0x0200,  # EXTTEXTOUT (escape, not META_EXTTEXTOUT)
-        0x0201,  # GETFACENAME
-        0x0202,  # DOWNLOADFACE
-        0x0801,  # METAFILE_DRIVER
-        0x0C01,  # QUERYDIBSUPPORT
-        0x1000,  # BEGIN_PATH
-        0x1001,  # CLIP_TO_PATH
-        0x1002,  # END_PATH
-        0x100E,  # OPENCHANNEL
-        0x100F,  # DOWNLOADHEADER
-        0x1010,  # CLOSECHANNEL
-        0x1013,  # POSTSCRIPT_PASSTHROUGH
-        0x1014,  # ENCAPSULATED_POSTSCRIPT
-        0x1015,  # POSTSCRIPT_IDENTIFY
-        0x1016,  # POSTSCRIPT_INJECTION
-        0x1017,  # CHECKJPEGFORMAT
-        0x1018,  # CHECKPNGFORMAT
-        0x1019,  # GET_PS_FEATURESETTING
-        0x11D8,  # SPCLPASSTHROUGH2
-    }
-)
+# Escapes, printer operations and embedded metadata alike, have no effect on
+# the native RGB memory device: GDI fails the ones it does not support.
 
 
 SRCCOPY = 0x00CC0020
@@ -197,6 +149,22 @@ PEN_STROKES = frozenset(
         "stroke_path",
     }
 )
+
+# The stock fonts' logical fonts on a 96 DPI display. Most name raster
+# faces; text with them is font-limited like any face the collection lacks.
+STOCK_FONTS = {
+    10: FontRequest(height=12, width=8, weight=400, charset=255, pitch_and_family=0x31, face_name="Terminal"),
+    11: FontRequest(height=12, width=9, weight=400, pitch_and_family=0x31, face_name="Courier"),
+    12: FontRequest(height=12, width=9, weight=400, pitch_and_family=0x22, face_name="MS Sans Serif"),
+    13: FontRequest(height=16, width=7, weight=700, pitch_and_family=0x22, face_name="System"),
+    14: FontRequest(height=16, width=7, weight=700, pitch_and_family=0x22, face_name="System"),
+    16: FontRequest(height=15, width=8, weight=400, pitch_and_family=0x31, face_name="Fixedsys"),
+    17: FontRequest(height=-11, weight=400, face_name="MS Shell Dlg"),
+}
+
+
+# A preparation for a call that fails natively without effect.
+NATIVE_FAILURE = object()
 
 UNVERIFIED_IN_ADVANCED_MODE = frozenset(
     {
@@ -354,12 +322,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             self._objects[result] = None
         return result
 
-    def _prepare_escape(self, a):
-        if a["escape_function"] not in BITMAP_NOOP_ESCAPES:
-            raise UnsupportedOperation(f"escape {a['escape_function']:#06x}")
-
     def _apply_escape(self, call, prepared, result):
-        pass  # Accepted printer metadata has no effect on a bitmap DC.
+        pass  # Printer escapes have no effect on a bitmap DC.
 
     _apply_realize_palette = _apply_escape
 
@@ -411,13 +375,10 @@ class RasterContext(ExecutionContext[DrawingState]):
         a = call.kwargs
         self._state.palette.resize(a["count"])
 
-    def _prepare_set_map_mode(self, a):
-        if a["mode"] not in range(MM_TEXT, MM_ANISOTROPIC + 1):
-            raise UnsupportedOperation(f"Map mode {a['mode']}")
-
     def _apply_set_map_mode(self, call, prepared, result):
         a = call.kwargs
-        self.mapping.set_mode(a["mode"])
+        if a["mode"] in range(MM_TEXT, MM_ANISOTROPIC + 1):  # Other modes fail natively.
+            self.mapping.set_mode(a["mode"])
 
     def _apply_set_brush_origin(self, call, prepared, result):
         self._state.brush_origin = (call.kwargs["x"], call.kwargs["y"])
@@ -497,9 +458,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self.mapping.graphics_mode != GM_ADVANCED:
             raise UnsupportedOperation("angle_arc in GM_COMPATIBLE")
         if a["radius"] < 0:
-            raise UnsupportedOperation("angle_arc: negative radii")
+            return NATIVE_FAILURE  # A radius past 2^31 fails natively.
 
     def _apply_angle_arc(self, call, prepared, result):
+        if prepared is NATIVE_FAILURE:
+            return
         a = call.kwargs
         x, y, radius = a["x"], a["y"], a["radius"]
         box = (x - radius, y - radius, x + radius, y + radius)
@@ -560,13 +523,9 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_set_world_transform(self, call, prepared, result):
         self.mapping.world = prepared
 
-    def _prepare_set_layout(self, a):
-        if a["layout"] & ~9:
-            raise UnsupportedOperation(f"Layout {a['layout']}")
-
     def _apply_set_layout(self, call, prepared, result):
-        a = call.kwargs
-        self.mapping.set_layout(a["layout"])
+        # Only right-to-left layout and bitmap orientation affect drawing.
+        self.mapping.set_layout(call.kwargs["layout"] & 9)
 
     def _apply_set_polygon_fill_mode(self, call, prepared, result):
         # Any value other than WINDING fills as ALTERNATE.
@@ -709,8 +668,11 @@ class RasterContext(ExecutionContext[DrawingState]):
             brush = self._prepare_create_dib_pattern_brush(arguments)
             if brush is None:
                 raise InvalidOperation("Unusable pattern pen bitmap")
+        elif a["brush_style"] == BS_NULL:
+            # A hollow brush makes a pen that draws nothing.
+            return Pen(color, 0, PS_NULL)
         elif a["brush_style"] != BS_SOLID:
-            raise UnsupportedOperation("Extended pen brush style is not supported")
+            return None  # Bitmap brushes need a handle a metafile cannot carry; creation fails.
         if brush is not None and not kind:
             raise InvalidOperation("Cosmetic pens need a solid brush")
         if not kind:
@@ -746,7 +708,10 @@ class RasterContext(ExecutionContext[DrawingState]):
             if self._default_palette is None:
                 self._default_palette = LogicalPalette.default()
             return self._default_palette
-        raise UnsupportedOperation(f"Stock font {index}")
+        font = STOCK_FONTS.get(index)
+        if font is None:
+            raise InvalidOperation(f"Stock object {index}")
+        return font
 
     _apply_get_stock_object = _store_object
 
@@ -754,7 +719,9 @@ class RasterContext(ExecutionContext[DrawingState]):
         if a["style"] not in (BS_SOLID, BS_NULL, BS_HATCHED) or (
             a["style"] == BS_HATCHED and a["hatch"] not in range(6)
         ):
-            raise UnsupportedOperation("Only solid, null and six hatch brushes are supported")
+            # Bitmap brushes need a bitmap handle a LOGBRUSH cannot carry here,
+            # and other hatches do not exist: creation fails.
+            return None
         return Brush(logical_color(a["color"]), a["style"], a["hatch"])
 
     _apply_create_brush = _store_object
@@ -1391,9 +1358,11 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_ext_flood_fill(self, a):
         if a["mode"] not in (FLOODFILLBORDER, FLOODFILLSURFACE):
-            raise UnsupportedOperation(f"Flood fill mode {a['mode']}")
+            return NATIVE_FAILURE
 
-    _apply_ext_flood_fill = _apply_flood_fill
+    def _apply_ext_flood_fill(self, call, prepared, result):
+        if prepared is not NATIVE_FAILURE:
+            self._apply_flood_fill(call, prepared, result)
 
     def _capture_saved_state(self):
         return self._state.snapshot()
@@ -1739,7 +1708,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             | ETO_GLYPH_INDEX
             | ETO_PDY
         ):
-            raise UnsupportedOperation("Text output options")
+            # GDI fails text output with options it neither uses nor ignores.
+            return TextLayout(), None
         rectangle = args.get("rectangle")
         if options & (ETO_OPAQUE | ETO_CLIPPED) and rectangle is None:
             raise InvalidOperation("Text output options require a rectangle")

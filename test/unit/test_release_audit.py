@@ -5,6 +5,7 @@ import json
 from PIL import Image
 
 from pillow_wmf import Recorder
+from pillow_wmf.objects import FontRequest
 
 
 def test_strict_comparison_and_review_selection(tmp_path, load_script):
@@ -38,11 +39,12 @@ def test_invalid_record_remains_blocked(tmp_path, load_script):
     script = load_script("audit-release.py")
     (tmp_path / "128x128").mkdir()
     recorder = Recorder()
-    recorder.escape(0x7777, b"")
+    recorder.select_object(recorder.create_font(FontRequest(height=-12, face_name="Unavailable Face")))
+    recorder.text_out(0, 0, b"x")
     (tmp_path / "bad.wmf").write_bytes(recorder.to_bytes())
     Image.new("RGB", (8, 8), "white").save(tmp_path / "128x128/bad.png")
     script["initialize"](tmp_path, tmp_path, [], {})
     result = script["compare"]("bad.wmf")
     assert result["status"] == "blocked"
-    assert "escape" in result["error"]
+    assert "font" in result["error"].lower()
     assert "differing_pixels" not in result

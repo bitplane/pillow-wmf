@@ -5,7 +5,6 @@ import pytest
 
 from pillow_wmf import RasterContext
 from pillow_wmf.flood import flood_spans
-from pillow_wmf.gdi import UnsupportedOperation
 
 
 def test_scanlines_match_independent_four_neighbour_search():
@@ -48,6 +47,8 @@ def test_fill_preserves_current_position_and_selected_state(mode):
     assert context.image.tobytes() == control.image.tobytes()
 
 
-def test_unknown_mode_remains_explicitly_unsupported():
-    with pytest.raises(UnsupportedOperation):
-        RasterContext(8, 8).ext_flood_fill(0, 0, 0, 2)
+def test_unknown_mode_fails_without_filling():
+    dc = RasterContext(8, 8)
+    before = dc.image.tobytes()
+    dc.ext_flood_fill(0, 0, 0, 2)
+    assert dc.image.tobytes() == before
