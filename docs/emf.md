@@ -133,7 +133,9 @@ Text records play through the font collection's faces:
   subtracts the run's logical width converted back to whole device pixels.
 - Current-position text continues from the 28.4 device point the previous run
   left. An opaque cell widens over ink protruding past the advances, and, with
-  explicit advances, to the left of the origin.
+  explicit advances, to the left of the origin. Under rotation or shear the
+  drawn cell also reaches each glyph's ink end rounded up to a whole pixel;
+  a metafile's recorded bounds keep the unrounded cell.
 - A missing weight or slant is simulated from the family's nearest face.
   Italic shears the outline by 0x5700/65536. Bold adds a device pixel to each
   advance (and its logical equivalent to each logical extent); under rotating

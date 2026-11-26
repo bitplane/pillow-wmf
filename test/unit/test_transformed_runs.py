@@ -3,7 +3,8 @@
 ``transformed_runs.json`` holds the pixels the ``glyph-transforms`` probe read
 back for each run: text drawn at the device point (40, 48) with the given
 world transform, font height, escapement (and orientation, when it differs),
-simulated style, explicit advances and alignment.
+simulated style, explicit advances and alignment. Opaque runs draw white
+text on a black background at a sub-pixel ``shift``, so only the cell shows.
 """
 
 import json
@@ -22,14 +23,21 @@ FONTS = FontCollection([FontFace.from_path(ROOT / "fonts/layout.ttf")])
 @pytest.mark.parametrize(
     "run",
     RUNS,
-    ids=[f"{r['case']}{r['height']}-{r['text']}-{r['align']}{'-dx' if r.get('advances') else ''}" for r in RUNS],
+    ids=[
+        f"{r['case']}{r['height']}-{r['text']}-{r['align']}{'-dx' if r.get('advances') else ''}{'-opaque-' + str(r['shift']) if r.get('opaque') else ''}"
+        for r in RUNS
+    ],
 )
 def test_runs_match_native_pixels(run):
     dc = RasterContext(96, 96, fonts=FONTS, trace_calls=False)
     dc.set_graphics_mode(2)
-    dc.set_background_mode(1)
+    dc.set_background_mode(2 if run.get("opaque") else 1)
+    if run.get("opaque"):
+        dc.set_text_color(0xFFFFFF)
+        dc.set_background_color(0)
     dc.set_text_alignment(run["align"])
-    dc.set_world_transform(*run["transform"], 40.0, 48.0)
+    shift = run.get("shift", (0.0, 0.0))
+    dc.set_world_transform(*run["transform"], 40.0 + shift[0], 48.0 + shift[1])
     escapement = run["escapement"]
     font = FontRequest(
         height=run["height"],

@@ -591,12 +591,14 @@ def _round_product(value, factor) -> int:
     return _round_half_away(float32(float32(value) * factor))
 
 
-def opaque_area(font: TransformedFont, run: TransformedRun, indices, *, explicit=False):
+def opaque_area(font: TransformedFont, run: TransformedRun, indices, *, explicit=False, drawn=False):
     """The 28.4 corners of the cell parallelogram an opaque run fills.
 
     Along the baseline the cell spans from the origin (or, with explicit
     advances, the earliest ink) to the run's length plus any ink protruding
-    past its advance; across it, the cell ascent and descent.
+    past its advance; across it, the cell ascent and descent. A ``drawn``
+    cell also reaches each glyph's ink end rounded up to a whole pixel, as
+    the glyph bitmaps cover; a metafile's recorded bounds do not.
     """
     frame = font.frame()
     position = left = right = 0
@@ -604,15 +606,24 @@ def opaque_area(font: TransformedFont, run: TransformedRun, indices, *, explicit
         start, end = font.ink(index)
         left, right = min(left, position + start), max(right, position + end)
         position += _round_half_away(float32(font.design_advances.get(index, 0) * frame.base_length))
-    x, y = run.advance
-    length = float32(
-        sqrt(
-            float32(
-                float32(float32(x * 0.0625) * float32(x * 0.0625)) + float32(float32(y * 0.0625) * float32(y * 0.0625))
+
+    def along(vector):
+        x, y = vector
+        length = float32(
+            sqrt(
+                float32(
+                    float32(float32(x * 0.0625) * float32(x * 0.0625))
+                    + float32(float32(y * 0.0625) * float32(y * 0.0625))
+                )
             )
         )
-    )
-    length = _round_half_away(float32(length * 16))
+        return _round_half_away(float32(length * 16))
+
+    length = along(run.advance)
+    if drawn and run.offsets:
+        length = max(
+            length, *(along(o) + ((font.ink(i)[1] + 15) & ~15) for o, i in zip(run.offsets, indices, strict=True))
+        )
     left, right = min(left, position) if explicit else 0, length + max(0, right - position)
     top, bottom = frame.ascent, -frame.descent
     bx, by = frame.base
