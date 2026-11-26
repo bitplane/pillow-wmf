@@ -102,6 +102,9 @@ class RasterFont:
     background_cell: tuple[int, int] = (0, 0)
     # The horizontal pixels per design unit as the scaler quantizes it, 16.16.
     advance_fixed: Fraction = Fraction(1)
+    # Simulated styles on an unhinted face are drawn as the TrueType scaler
+    # draws them: a transformed font supplies the monochrome mask.
+    styled_masks: object = None
     _glyphs: dict[int, Glyph] = field(default_factory=GlyphCache)
     # One FreeType face has one glyph slot: glyph realization is serialized.
     # Copies made with dataclasses.replace share the face, cache and lock.
@@ -190,9 +193,13 @@ class RasterFont:
             background_ink_span = (
                 (ink_bounds.xMin // 64, ceil(Fraction(ink_bounds.xMax, 64))) if self.escapement % 900 else ink_span
             )
+            size, bearing = (bitmap.width // channels, bitmap.rows), (slot.bitmap_left, -slot.bitmap_top)
+            if self.styled_masks is not None:
+                styled = self.styled_masks.glyph(index, max_pixels)
+                size, bearing, pixels = styled.size, styled.bearing, styled.pixels
             glyph = Glyph(
-                (bitmap.width // channels, bitmap.rows),
-                (slot.bitmap_left, -slot.bitmap_top),
+                size,
+                bearing,
                 pixels,
                 advance,
                 index,
@@ -372,6 +379,30 @@ class FontFace:
             strikeout=bool(request.strikeout),
         )
 
+    def _styled_masks(self, size, width, quality, escapement, bold, italic):
+        if quality != 3 or escapement or self.hinted or not (bold or italic):
+            return None
+        from .text_transform import TransformedFont  # noqa: PLC0415 - text_transform builds on this module
+
+        return TransformedFont(
+            self.data,
+            self.index,
+            # The scaler realizes both axes at the whole-pixel em.
+            (
+                Fraction(width) * rounded(size) / Fraction(size) / self.units_per_em,
+                0,
+                0,
+                -Fraction(rounded(size)) / self.units_per_em,
+            ),
+            self.units_per_em,
+            self.ascent,
+            self.descent,
+            self.design_advances,
+            quality=3,
+            oblique=italic,
+            embolden=bold,
+        )
+
     def _em_for_cell(self, height):
         """Use the first exact VDMX cell, or the entry before an overshoot.
 
@@ -480,6 +511,7 @@ class FontFace:
                     background_cell=background_cell,
                     synthetic_bold=synthetic_bold,
                     synthetic_italic=synthetic_italic,
+                    styled_masks=self._styled_masks(size, width, quality, escapement, synthetic_bold, synthetic_italic),
                     decorations=tuple(
                         (
                             rounded(position * size / self.units_per_em),
