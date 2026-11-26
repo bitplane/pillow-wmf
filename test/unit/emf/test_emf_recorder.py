@@ -717,6 +717,18 @@ def text_scenarios():
 
     yield "text-advanced", None, text_advanced
 
+    def text_bounds(r):
+        r.set_graphics_mode(2)
+        text_font(r, -10)
+        for row, matrix in enumerate(((0.9, 0.4, -0.4, 0.9), (1.0, 0.0, 0.45, 1.0))):
+            r.set_world_transform(*matrix, 10.0, 10.0 + 60.0 * row)
+            for mode in (1, 2):
+                r.set_background_mode(mode)
+                for column, text in enumerate(("BA", "AB", "B", "A B")):
+                    r.ext_text_out(28 * column, 24 * (mode - 1), text)
+
+    yield "text-bounds", None, text_bounds
+
 
 SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios()]
 
