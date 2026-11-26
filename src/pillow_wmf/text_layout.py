@@ -143,7 +143,7 @@ def layout_text(
     width = rounded(run_width)
     # Monochrome GDI places cached glyphs at integer origins. Centering an
     # odd-width run chooses the lower coordinate, not a fractional mask phase.
-    center_offset = (width + (not mirrored_layout)) // 2
+    center_offset = floor(run_width / 2 + Fraction(1, 2)) if not mirrored_layout else width // 2
     origin_x = x - (width if horizontal == 2 else center_offset if horizontal == 6 else 0)
     if horizontal == 2 and precise_origin is not None and not (device_run and not advances):
         # Subtract the advance before rounding the aligned reference point.

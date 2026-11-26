@@ -135,8 +135,9 @@ Text records play through the font collection's faces:
   advance (and its logical equivalent to each logical extent); under rotating
   or shearing transforms the outline is emboldened as the TrueType scaler
   does it ([`embolden.py`](../src/pillow_wmf/embolden.py)): upright at the
-  whole-pixel em, right-facing edges moved a pixel right, before the rest of
-  the transform.
+  scaler's ppem (the larger component of the transform's y column, in whole
+  pixels, held as 16.16 pixels per unit), right-facing edges moved a pixel
+  right, before the rest of the transform.
 - Stock fonts select their logical fonts (mostly raster faces, so
   font-limited). Charset 254 decodes UTF-8.
 

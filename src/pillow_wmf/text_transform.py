@@ -37,6 +37,10 @@ def _round_half_away(value) -> int:
     return magnitude if value >= 0 else -magnitude
 
 
+def _round_half_up(value) -> int:
+    return int((value + Fraction(1, 2)).__floor__())
+
+
 @dataclass
 class TransformedFont:
     """A face realized through a notional-to-device matrix.
@@ -164,21 +168,26 @@ class TransformedFont:
             # The scaler emboldens the outline upright at the whole pixel em
             # height, y up, then applies the rest of the matrix to the moved
             # points and flattens the arcs in device space.
-            ppem = int(sqrt(float(b) ** 2 + float(d) ** 2) * self.units_per_em + 0.5)
-            k = Fraction(ppem, self.units_per_em)
+            # The upright size is the scaler's ppem: the larger component of
+            # the (unsheared) y column, in whole pixels.
+            _, rb, _, rd = self._device_matrix()
+            ppem = int(max(abs(float(rb)), abs(float(rd))) * self.units_per_em + 0.5)
+            # The scaler holds pixels per notional unit in 16.16.
+            k = Fraction(_round_half_away(Fraction(ppem * 65536, self.units_per_em)), 65536)
             upright = [
                 [(_round_half_away(64 * k * u), _round_half_away(64 * k * v), on) for (u, v), on in contour]
                 for contour in _raw_contours(outline)
             ]
             moved = embolden(upright, (EMBOLDEN_PER_MILLE * ppem - 10) // 1000 + 1, grid_fitted=True)
-            pa, pb, pc, pd = (Fraction(value) / k for value in (a, b, c, d))
+            exact = Fraction(ppem, self.units_per_em)
+            pa, pb, pc, pd = (Fraction(value) / exact for value in (a, b, c, d))
             flat = (
                 _flatten(
                     [
                         (
                             (
-                                _round_half_away(pa * x) + _round_half_away(pb * y),
-                                _round_half_away(pc * x) + _round_half_away(pd * y),
+                                _round_half_up(pa * x) + _round_half_up(pb * y),
+                                _round_half_up(pc * x) + _round_half_up(pd * y),
                             ),
                             on,
                         )
