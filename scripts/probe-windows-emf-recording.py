@@ -1220,6 +1220,48 @@ def text_scenarios():
     yield "text-bounds", None, text_bounds
 
 
+class ColorAdjustment(ctypes.Structure):
+    _fields_ = [
+        (name, ctypes.c_ushort) for name in ("size", "flags", "illuminant", "red", "green", "blue", "black", "white")
+    ]
+    _fields_ += [(name, ctypes.c_short) for name in ("contrast", "brightness", "colorfulness", "tint")]
+
+
+# A WMF of legacy-bitmap BitBlt and StretchBlt records, with and without a
+# source, as PlayMetaFile hands them to the recording DC.
+LEGACY_BLITS = bytes.fromhex(
+    "0100090000035400000000001800000000001600000022092000cc000000000002000200040004000000020002000600011803020106"
+    "05040908070c0b0a18000000230b2000cc0002000200000000000400060004000a0000000200020006000118030201060504090807"
+    "0c0b0a0c00000022092100f00000000000000003000300040014000e000000230b49005a00020002000000000000000500050004001e"
+    "00030000000000"
+)
+
+
+def completion_scenarios():
+    def completion(dc):
+        api("OffsetViewportOrgEx", boolean, ptr, integer, integer, ptr)(dc, 3, 4, None)
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 100, 100, None)
+        set_viewport_ext(dc, 100, 100, None)
+        api("ScaleViewportExtEx", boolean, ptr, integer, integer, integer, integer, ptr)(dc, 2, 3, 4, 5, None)
+        set_map_mode(dc, 1)
+        adjustment = ColorAdjustment(24, 1, 2, 12000, 11000, 9000, 100, 9000, 10, -20, 30, -40)
+        api("SetColorAdjustment", boolean, ptr, ctypes.POINTER(ColorAdjustment))(dc, ctypes.byref(adjustment))
+        api("SetMapperFlags", dword, ptr, dword)(dc, 1)
+        escape = api("Escape", integer, ptr, integer, integer, ctypes.c_char_p, ptr)
+        escape(dc, 15, 5, b"note\0", None)  # MFCOMMENT
+        escape(dc, 8, 0, None, None)  # QUERYESCSUPPORT leaves no record
+        begin_path(dc)
+        rectangle(dc, 10, 10, 40, 30)
+        end_path(dc)
+        api("StrokeAndFillPath", boolean, ptr)(dc)
+        metafile = api("SetMetaFileBitsEx", ptr, wintypes.UINT, ctypes.c_char_p)(len(LEGACY_BLITS), LEGACY_BLITS)
+        api("PlayMetaFile", boolean, ptr, ptr)(dc, metafile)
+        api("DeleteMetaFile", boolean, ptr)(metafile)
+
+    yield "completion", None, completion
+
+
 def records(data):
     position = 0
     while position < len(data):
@@ -1231,7 +1273,13 @@ def records(data):
 def main():
     print(f"Windows EMF recording probe: {platform.platform()}")
     print(f"Module versions: {module_versions()}")
-    for name, frame, draw in (*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios()):
+    for name, frame, draw in (
+        *scenarios(),
+        *more_scenarios(),
+        *gap_scenarios(),
+        *text_scenarios(),
+        *completion_scenarios(),
+    ):
         with private_fonts(FONTS), reference_surface(128, 128) as (_, reference, _bits):
             rect = wintypes.RECT(*frame) if frame else None
             dc = create_emf(reference, None, ctypes.byref(rect) if rect else None, None)

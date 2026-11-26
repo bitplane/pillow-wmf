@@ -1502,6 +1502,15 @@ class Recorder(TraceContext):
         source = encode_dib24(layout.decode())
         self._record_dib_bit_blt({**a, "source": source}, state, records)
 
+    def _record_stretch_blt(self, a, state, records):
+        """A legacy-bitmap StretchBlt records as a DIB stretch; without a source, as PatBlt."""
+        if a["source"] is None:
+            self._record_pat_blt(a, state, records)
+            return
+        layout = read_bitmap16(a["source"])
+        source = encode_dib24(layout.decode())
+        self._record_dib_stretch_blt({**a, "source": source}, state, records)
+
     def _record_escape(self, a, state, records):
         # An EMF DC keeps only metafile comments; other escapes leave no record.
         if a["escape_function"] == MFCOMMENT:
