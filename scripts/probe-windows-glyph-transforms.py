@@ -19,7 +19,8 @@ differing escapement at sixteen sub-pixel offsets per axis (``pair`` blocks
 add glyph pairs and explicit advances); ``opaque`` blocks show rotated
 and sheared background cells at sub-pixel origins; ``outline``
 blocks give GGO_NATIVE points across sizes, transforms and simulated bold
-italic.
+italic; ``big`` blocks pair large simulated styles' outlines with the drawn
+glyphs.
 """
 
 import ctypes
@@ -465,6 +466,33 @@ def main():
                                 print_native(data.raw)
                         select(dc, previous)
                         delete(font)
+        check(set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))), "SetWorldTransform")
+
+        # Large simulated styles: the drawn glyph and its native outline, to
+        # tell bitmap from outline emboldening past one pixel of strength.
+        set_align(dc, 24)
+        for name in ("identity", "rotate", "shear"):
+            matrix = TRANSFORMS[name]
+            for height in (-40, -48, -50, -52, -56, -64):
+                for weight, italic in ((700, 0), (700, 1), (400, 1)):
+                    font = make_font(height, 0, 0, weight, italic)
+                    previous = select(dc, font)
+                    for character in "AB":
+                        label = f"big {name} height={height} transform={matrix} weight={weight} italic={italic}"
+                        check(set_world(dc, ctypes.byref(XForm(*matrix, 0.0, 0.0))), "SetWorldTransform")
+                        metrics = GlyphMetrics()
+                        native = outline(dc, ord(character), 2, ctypes.byref(metrics), 0, None, ctypes.byref(identity))
+                        print(f"{label} outline {character!r}")
+                        if native not in (0, 0xFFFFFFFF):
+                            data = ctypes.create_string_buffer(native)
+                            outline(dc, ord(character), 2, ctypes.byref(metrics), native, data, ctypes.byref(identity))
+                            print_native(data.raw)
+                        ctypes.memset(bits, 0xFF, SIZE * SIZE * 4)
+                        set_world(dc, ctypes.byref(XForm(*matrix, 36.0, 84.0)))
+                        text_out(dc, 0, 0, 0, None, character, 1, None)
+                        print_rows(f"{label} text {character!r}")
+                    select(dc, previous)
+                    delete(font)
         check(set_world(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))), "SetWorldTransform")
 
 
