@@ -71,6 +71,7 @@ def layout_text(
     byte_lengths=(),
     byte_indexed_advances=True,
     device_run=False,
+    measured=False,
 ):
     """Place independently realized glyphs; explicit advances replace metrics."""
     if characters is None and glyph_indices is None:
@@ -174,7 +175,13 @@ def layout_text(
     for glyph, offset, dy in zip(glyphs, offsets[:-1], vertical_offsets[:-1], strict=True):
         gx, gy = project(origin_x + offset, baseline + rounded(dy))
         positioned.append((gx + glyph.bearing[0], gy + glyph.bearing[1], glyph))
-    background_width = ceil(total * scale) if advances else ceil((Fraction(total, 65536) // scale) * scale)
+    if advances:
+        background_width = ceil(total * scale)
+    elif measured:
+        # A recording DC bounds the run by its rounded logical extent.
+        background_width = ceil(rounded(Fraction(total, 65536) / scale) * scale)
+    else:
+        background_width = ceil((Fraction(total, 65536) // scale) * scale)
     # An opaque run must also cover protruding ink on either side, even with
     # negative spacing or a final explicit advance smaller than the black box.
     right = max(

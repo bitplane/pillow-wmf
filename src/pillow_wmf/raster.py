@@ -243,6 +243,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         # The DC starts with the stock default palette selected.
         self._default_palette: LogicalPalette | None = self._state.palette
         self._font_xform = None
+        self._measuring = False  # Set while a recording DC measures text.
 
     @property
     def image(self):
@@ -1823,6 +1824,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             mirrored_layout=self.mapping.rtl,
             precise_origin=precise_origin,
             device_run=self.mapping.graphics_mode == GM_ADVANCED and self._font_xform is None and abs(sx) != abs(sy),
+            measured=self._measuring,
         )
         if layout.position is not None:
             layout = replace(
@@ -2053,10 +2055,12 @@ class RasterContext(ExecutionContext[DrawingState]):
         """
         mode = self._state.background_mode
         self._state.background_mode = OPAQUE  # The covered box is the opaque cell.
+        self._measuring = True
         try:
             layout, _ = self._prepare_text(args)
         finally:
             self._state.background_mode = mode
+            self._measuring = False
         text = args["text"]
         if isinstance(text, EncodedText):
             request = self._state.text_state.font or self.fonts.default_font
