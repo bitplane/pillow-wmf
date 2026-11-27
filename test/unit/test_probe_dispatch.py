@@ -183,6 +183,7 @@ EXPECTED = {
     "charset-mapping": ("scripts/probe-windows-charset-mapping.py", "charset-mapping", True, True),
     "text-samples": ("scripts/probe-windows-text-samples.py --output text-samples", "text-samples", True, True),
     "degenerate-shapes": ("scripts/probe-windows-degenerate-shapes.py", "degenerate-shapes", True, True),
+    "current-position": ("scripts/probe-windows-current-position.py", "current-position", True, True),
 }
 
 

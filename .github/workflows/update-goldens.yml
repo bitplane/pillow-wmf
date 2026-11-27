@@ -95,6 +95,7 @@ on:
           - charset-mapping
           - text-samples
           - degenerate-shapes
+          - current-position
   push:
     branches: [master]
     paths:

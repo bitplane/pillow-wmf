@@ -146,6 +146,7 @@ PROBES = {
     "charset-mapping": Probe("probe-windows-charset-mapping.py", output="charset-mapping"),
     **_family("probe-windows-text-samples.py", "text-samples", {"text-samples": ()}),
     "degenerate-shapes": Probe("probe-windows-degenerate-shapes.py", output="degenerate-shapes"),
+    "current-position": Probe("probe-windows-current-position.py", output="current-position"),
 }
 
 
