@@ -862,6 +862,23 @@ def dib_variants(d):
         d.add(bitmaps.StretchDIBits(-1, -1, 1000, 1000, *fields, 0, SRCCOPY, d.u(36), d.u(30), header + bits))
 
 
+def dib_usages(d):
+    """StretchDIBits of 24- and 8-bit sources with every class of colour usage value."""
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    rgb = struct.pack("<IiiHHIIiiII", 40, 2, 2, 1, 24, 0, 0, 0, 0, 0, 0)
+    rgb_bits = bytes((0, 0, 255, 0, 255, 0, 0, 0)) + bytes((255, 0, 0, 0, 255, 255, 0, 0))
+    indexed = struct.pack("<IiiHHIIiiII", 40, 2, 2, 1, 8, 0, 0, 0, 0, 4, 0)
+    table = struct.pack("<4I", 0x0000FF, 0x00FF00, 0xFF0000, 0x00FFFF)
+    sources = ((rgb, rgb_bits), (indexed + table, bytes((0, 1, 0, 0, 2, 3, 0, 0))))
+    for row, (header, bits) in enumerate(sources):
+        for column, usage in enumerate((0, 1, 2, 3, 4, 0xFFFFFFFF)):
+            left, top = 4 + 20 * column, 8 + 40 * row
+            d.brush(BS_SOLID, 0xC0C0C0)
+            d.add(fixed.Rectangle(*d.rect(left - 2, top - 2, left + 18, top + 18)))
+            fields = (d.u(left), d.u(top), 0, 0, 2, 2, offset, len(header), offset + len(header), len(bits))
+            d.add(bitmaps.StretchDIBits(-1, -1, 1000, 1000, *fields, usage, SRCCOPY, d.u(16), d.u(16), header + bits))
+
+
 def record_culling(dense):
     """Transfers and region painting whose record bounds miss the clip box.
 
@@ -1662,6 +1679,7 @@ FEATURES = (
     ("text-transform-styles", text_transform_styles, (128, 51)),
     ("scale-extents", scale_extents, (128, 51)),
     ("dib-variants", dib_variants, (128,)),
+    ("dib-usages", dib_usages, (128,)),
     ("text-justification", text_justification, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),

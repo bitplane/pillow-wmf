@@ -1,7 +1,8 @@
 """Print the pixels native ArcTo and AngleArc draw in each graphics mode.
 
 Each case draws on a fresh 96x96 reference surface: a one-pixel black pen
-moves to a start point, draws one ArcTo or AngleArc, then a line to a fixed
+moves to a start point, draws one ArcTo, AngleArc, Arc, Chord or Pie
+(whose interiors the default white brush leaves white), then a line to a fixed
 point, so the arc's figure and the current position it leaves both show.
 Cases cover GM_COMPATIBLE and GM_ADVANCED under a 1:1, an enlarging and a
 reducing page mapping. No reference images are written.
@@ -25,6 +26,11 @@ CALLS = {
     "arc-to-odd": ("arc_to", 2, (12, 40, 37, 59, 12, 50, 37, 41)),
     "angle-arc": ("angle_arc", 1, (60, 60, 15, 30.0, 200.0)),
     "angle-arc-back": ("angle_arc", 1, (30, 70, 9, 100.0, -150.0)),
+    "arc-cw": ("arc", 2, (10, 10, 41, 31, 41, 10, 10, 31)),
+    "chord-cw": ("chord", 2, (12, 40, 37, 59, 12, 50, 37, 41)),
+    "pie-cw": ("pie", 2, (50, 8, 63, 40, 63, 20, 50, 8)),
+    "chord-ccw": ("chord", 1, (12, 40, 37, 59, 12, 50, 37, 41)),
+    "pie-ccw": ("pie", 1, (50, 8, 63, 40, 63, 20, 50, 8)),
 }
 
 
@@ -41,7 +47,8 @@ def main():
                     bind(gdi, "SetArcDirection", integer, ptr, integer)
                     bind(gdi, "MoveToEx", boolean, ptr, integer, integer, ptr)
                     bind(gdi, "LineTo", boolean, ptr, integer, integer)
-                    bind(gdi, "ArcTo", boolean, ptr, *(integer,) * 8)
+                    for function in ("ArcTo", "Arc", "Chord", "Pie"):
+                        bind(gdi, function, boolean, ptr, *(integer,) * 8)
                     bind(
                         gdi, "AngleArc", boolean, ptr, integer, integer, wintypes.DWORD, ctypes.c_float, ctypes.c_float
                     )
@@ -49,10 +56,8 @@ def main():
                     check(gdi.SetGraphicsMode(dc, mode), "SetGraphicsMode")
                     check(gdi.SetArcDirection(dc, direction), "SetArcDirection")
                     check(gdi.MoveToEx(dc, 5, 90, None), "MoveToEx")
-                    if call == "arc_to":
-                        drawn = gdi.ArcTo(dc, *arguments)
-                    else:
-                        drawn = gdi.AngleArc(dc, *arguments)
+                    functions = {"arc_to": gdi.ArcTo, "arc": gdi.Arc, "chord": gdi.Chord, "pie": gdi.Pie}
+                    drawn = functions.get(call, gdi.AngleArc)(dc, *arguments)
                     check(gdi.LineTo(dc, 90, 90), "LineTo")
                     pixels = ctypes.cast(bits, ctypes.POINTER(ctypes.c_uint32))
                     print(f"case mode={mode} mapping={mapping} call={name} drawn={drawn}")
