@@ -66,6 +66,7 @@ def functions(gdi):
         "MoveToEx": (integer, integer, ptr),
         "LineTo": (integer, integer),
         "ArcTo": (integer,) * 8,
+        "Arc": (integer,) * 8,
         "Ellipse": (integer,) * 4,
         "Rectangle": (integer,) * 4,
         "AngleArc": (integer, integer, wintypes.DWORD, ctypes.c_float, ctypes.c_float),
@@ -80,6 +81,45 @@ def functions(gdi):
         api[name] = bind(gdi, name, integer if name == "SetGraphicsMode" else boolean, ptr, *args)
     api["GetPath"] = bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.c_char_p, integer)
     return api
+
+
+def sequence_steps(api, dc, steps):
+    """Run (call, arguments) steps; ``transform`` steps take XForm fields."""
+    api["SetGraphicsMode"](dc, 2)
+    for call, arguments in steps:
+        if call == "transform":
+            api["SetWorldTransform"](dc, ctypes.byref(XForm(*arguments)))
+        elif call == "polyline_to":
+            points = (wintypes.POINT * len(arguments))(*(wintypes.POINT(*p) for p in arguments))
+            api["PolylineTo"](dc, points, len(arguments))
+        else:
+            api[call](dc, *arguments)
+
+
+# Which calls leave the cached device position stale across a transform change.
+ARC = ("ArcTo", (20, 20, 40, 34, 40, 27, 20, 20))
+SEQUENCES = {
+    "move-rectangle-transform-arcto": [
+        ("MoveToEx", (10, 12, None)),
+        ("Rectangle", (30, 30, 40, 40)),
+        ("transform", ROTATE),
+        ARC,
+    ],
+    "rectangle-transform-arcto": [("Rectangle", (30, 30, 40, 40)), ("transform", ROTATE), ARC],
+    "transform-rectangle-arcto": [("transform", ROTATE), ("Rectangle", (30, 30, 40, 40)), ARC],
+    "transform-transform-arcto": [("transform", SHIFT), ("transform", ROTATE), ARC],
+    "move-line-transform-arcto": [("MoveToEx", (10, 12, None)), ("LineTo", (15, 15)), ("transform", ROTATE), ARC],
+    "line-transform-arcto": [("LineTo", (30, 30)), ("transform", ROTATE), ARC],
+    "anglearc-transform-arcto": [("AngleArc", (30, 30, 8, 30.0, 120.0)), ("transform", ROTATE), ARC],
+    "arcto-transform-arcto": [ARC, ("transform", ROTATE), ARC],
+    "arc-transform-arcto": [("Arc", (20, 20, 40, 34, 40, 27, 20, 20)), ("transform", ROTATE), ARC],
+    "move-transform-lineto": [
+        ("MoveToEx", (10, 12, None)),
+        ("Rectangle", (30, 30, 40, 40)),
+        ("transform", ROTATE),
+        ("LineTo", (40, 30)),
+    ],
+}
 
 
 def position_case(api, dc, start, transform, draw):
@@ -126,6 +166,19 @@ def main():
             gdi.GdiFlush()
             pixels = ctypes.cast(bits, ctypes.POINTER(ctypes.c_uint32))
             print(f"case {name} position={position[0]},{position[1]} result={result}")
+            for y in range(SIZE):
+                row = [pixels[y * SIZE + x] & 0xFFFFFF != 0xFFFFFF for x in range(SIZE)]
+                if any(row):
+                    first = row.index(True)
+                    last = SIZE - 1 - row[::-1].index(True)
+                    print(f"row {y} {first} " + "".join("#" if v else "." for v in row[first : last + 1]))
+    for name, steps in SEQUENCES.items():
+        with reference_surface(SIZE, SIZE) as (gdi, dc, bits):
+            api = functions(gdi)
+            sequence_steps(api, dc, steps)
+            gdi.GdiFlush()
+            pixels = ctypes.cast(bits, ctypes.POINTER(ctypes.c_uint32))
+            print(f"sequence {name}")
             for y in range(SIZE):
                 row = [pixels[y * SIZE + x] & 0xFFFFFF != 0xFFFFFF for x in range(SIZE)]
                 if any(row):
@@ -262,6 +315,9 @@ def main():
         (f"position-{name}", lambda dc, c=case: position_case(api, dc, *c)) for name, *case in POSITION_CASES
     ]
     recordings += [(f"polydraw-path-{name}", lambda dc, c=case: path_case(api, dc, *c)) for name, *case in PATH_CASES]
+    recordings += [
+        (f"sequence-{name}", lambda dc, s=steps: sequence_steps(api, dc, s)) for name, steps in SEQUENCES.items()
+    ]
     for name, draw in recordings:
         with reference_surface(128, 128) as (_, reference, _bits):
             dc = create_emf(reference, None, None, None)
