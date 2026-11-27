@@ -11,6 +11,8 @@ from .bindings import BINDINGS
 from .file import Metafile, PlaceableHeader
 from .records import Record
 
+MFCOMMENT = 15
+
 
 class Recorder(TraceContext):
     """A checked command recorder, not a rendering device-context emulator.
@@ -33,6 +35,9 @@ class Recorder(TraceContext):
         self._capacity = 0
 
     def prepare(self, call: Call):
+        if call.name == "gdi_comment":
+            # GdiComment on a WMF DC writes the MFCOMMENT escape.
+            call = Call.make("escape", escape_function=MFCOMMENT, data=call.kwargs["data"])
         token = super().prepare(call)
         call = token.call
         binding = BINDINGS[call.name]

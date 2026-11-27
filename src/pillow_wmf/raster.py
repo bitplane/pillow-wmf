@@ -65,7 +65,7 @@ from .gdi import Call, Handle, InvalidOperation, UnsupportedOperation
 from .geometry import DEFAULT_MAX_GEOMETRY_POINTS, DevicePath, GeometryBudget, Polygon, coverage_spans
 from .gradient import mesh_triangles
 from .limits import DEFAULT_LIMITS
-from .mapping import IDENTITY_TRANSFORM, Mapping
+from .mapping import IDENTITY_TRANSFORM, Mapping, _int32
 from .numeric import float32
 from .objects import EncodedText, FontRequest, GlyphIndices, UnicodeText
 from .paint import pattern_rop2
@@ -91,6 +91,7 @@ from .text_transform import (
 from .transfer import SourceTransfer as SourceTransfer
 from .transfer import TransferAction as TransferAction
 from .transfer import TransferPreparation, accepts_dib
+from .world import modified as modified_world
 
 
 def rgb(colorref: int) -> tuple[int, int, int]:
@@ -210,6 +211,20 @@ def _oriented(corners, rectangle):
     return (p0, p1, p2), (x, y, width, height)
 
 
+def _overflows(paths) -> bool:
+    """Whether the paths' 28.4 extent overflows 32 bits; native drawing then fails."""
+    points = [point for path in paths for command in path.commands for point in command]
+    if not points:
+        return False
+    xs, ys = [x for x, _ in points], [y for _, y in points]
+    return max(xs) - min(xs) > 0x7FFFFFFF or max(ys) - min(ys) > 0x7FFFFFFF
+
+
+# Device space as a mapping, for figures built after the page transform.
+DEVICE_MAPPING = Mapping()
+ARC_FIELDS = ("left", "top", "right", "bottom", "start_x", "start_y", "end_x", "end_y")
+
+
 class RasterContext(ExecutionContext[DrawingState]):
     """Draw the currently supported GDI calls into an RGB Pillow image.
 
@@ -277,11 +292,14 @@ class RasterContext(ExecutionContext[DrawingState]):
         return self._point(x, y)
 
     def _path_point(self, x: int, y: int) -> tuple[int, int]:
-        """A 28.4 path vertex: whole pixels in GM_COMPATIBLE, sixteenths in GM_ADVANCED."""
+        """A 28.4 path vertex: whole pixels in GM_COMPATIBLE, sixteenths in GM_ADVANCED.
+
+        The 28.4 values are 32-bit and wrap.
+        """
         if self.mapping.graphics_mode == GM_ADVANCED:
-            return self.mapping.fixed_point(x, y)
+            return tuple(_int32(value) for value in self.mapping.fixed_point(x, y))
         x, y = self._point(x, y)
-        return x * 16, y * 16
+        return _int32(x * 16), _int32(y * 16)
 
     def _mapped_path(self, points) -> Polygon:
         return [self._path_point(x, y) for x, y in points]
@@ -332,6 +350,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         pass  # Printer escapes have no effect on a bitmap DC.
 
     _apply_realize_palette = _apply_escape
+    _apply_gdi_comment = _apply_escape
 
     def _prepare_text_out(self, a):
         try:
@@ -429,20 +448,44 @@ class RasterContext(ExecutionContext[DrawingState]):
         self._state.fixed_position = path.commands[-1][-1]
 
     def _start_point(self):
-        """The 28.4 point a *To call starts from: the exact point an arc left, else the position."""
-        if self._state.fixed_position is not None:
-            return self._state.fixed_position
-        return self._path_point(*self._state.position)
+        """The 28.4 point a *To call starts from.
+
+        After an arc the current position is the exact 28.4 point it left. A
+        GM_ADVANCED DC with a page or world transform draws from it as it is;
+        otherwise drawing starts from it floored to a whole device pixel.
+        """
+        exact = self._state.fixed_position
+        if exact is None:
+            return self._path_point(*self._state.position)
+        transformed = not (self.mapping.identity_page and self.mapping.world == IDENTITY_TRANSFORM)
+        if self.mapping.graphics_mode == GM_ADVANCED and transformed:
+            return exact
+        return exact[0] & ~15, exact[1] & ~15
 
     def _apply_arc_to(self, call, prepared, result):
         a = call.kwargs
         box = (a["left"], a["top"], a["right"], a["bottom"])
         end = (a["end_x"], a["end_y"])
-        path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end, inside_frame=True)
+        if self.mapping.graphics_mode == GM_COMPATIBLE:
+            path = self._compatible_arc(a)
+        else:
+            path = self._advanced_arc(box, (a["start_x"], a["start_y"]), end, inside_frame=True)
         if path is None:
             return  # A box narrower than an inside-frame pen: nothing happens.
         # The current position is the arc's 28.4 end, floored to a logical point.
         self._stroke_from_position(path, self._floor_logical(path.commands[-1][-1]))
+
+    def _compatible_arc(self, a):
+        """The figure a GM_COMPATIBLE Arc of the same box and radials draws; None if it draws nothing."""
+        state = self._state
+        saved = state.recording_path, state.path
+        state.recording_path, state.path = True, ()
+        try:
+            self._apply_rectangle(Call.make("arc", **{key: a[key] for key in ARC_FIELDS}), None, None)
+            figures = state.path
+        finally:
+            state.recording_path, state.path = saved
+        return DevicePath(figures[0][0]) if figures else None
 
     def _floor_logical(self, point):
         """The logical point at or below a 28.4 device point, as GetCurrentPositionEx reports it."""
@@ -457,7 +500,6 @@ class RasterContext(ExecutionContext[DrawingState]):
         )
 
     def _prepare_angle_arc(self, a):
-        # GM_COMPATIBLE arcs take the same 28.4 geometry, without a world transform.
         if a["radius"] < 0:
             return NATIVE_FAILURE  # A radius past 2^31 fails natively.
 
@@ -468,15 +510,35 @@ class RasterContext(ExecutionContext[DrawingState]):
         x, y, radius = a["x"], a["y"], a["radius"]
         box = (x - radius, y - radius, x + radius, y + radius)
 
-        def point(angle):
+        def point(angle, centre=(x, y), radii=(radius, radius)):
             # Angles reduce to one turn first, as native trigonometry does.
             angle = math.radians(angle % 360)
-            return (x + radius * math.cos(angle), y - radius * math.sin(angle))
+            return (centre[0] + radii[0] * math.cos(angle), centre[1] - radii[1] * math.sin(angle))
+
+        if self.mapping.graphics_mode == GM_COMPATIBLE:
+            # GM_COMPATIBLE maps the circle's box to whole device pixels and
+            # builds the arc in device space, about that box's centre.
+            (x0, y0), (x1, y1) = self.mapping.point(x - radius, y - radius), self.mapping.point(x + radius, y + radius)
+            centre, radii = (Fraction(x0 + x1, 2), Fraction(y0 + y1, 2)), (Fraction(x1 - x0, 2), Fraction(y1 - y0, 2))
+
+            def figure(start, end, angles):
+                return advanced_arc(
+                    DEVICE_MAPPING,
+                    (x0, y0, x1, y1),
+                    point(start, centre, radii),
+                    point(end, centre, radii),
+                    direction=self._state.arc_direction,
+                    null_pen=self._state.pen.style == PS_NULL,
+                    angles=angles,
+                )
+        else:
+
+            def figure(start, end, angles):
+                return self._advanced_arc(box, point(start), point(end), angles=angles)
 
         def arc(start, sweep):
             """Bezier pieces of one arc; a zero sweep is one zero-length piece."""
-            angles = (start, start + sweep)
-            commands = self._advanced_arc(box, point(start), point(start + sweep), angles=angles).commands
+            commands = figure(start, start + sweep, (start, start + sweep)).commands
             return ((commands[0][0],) * 4,) if not sweep else commands
 
         # A sweep of a turn or more draws the remainder, then each turn as the
@@ -521,6 +583,17 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_set_world_transform(self, call, prepared, result):
         self.mapping.world = prepared
+
+    def _prepare_modify_world_transform(self, a):
+        matrix = tuple(float32(a[name]) for name in ("m11", "m12", "m21", "m22", "dx", "dy"))
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            raise InvalidOperation("World transforms require GM_ADVANCED")
+        world = modified_world(self.mapping.world, a["mode"], matrix)
+        if world is None:
+            raise InvalidOperation("ModifyWorldTransform fails for this matrix or mode")
+        return world
+
+    _apply_modify_world_transform = _apply_set_world_transform
 
     def _apply_set_layout(self, call, prepared, result):
         # Only right-to-left layout and bitmap orientation affect drawing.
@@ -862,7 +935,18 @@ class RasterContext(ExecutionContext[DrawingState]):
         self._state.position = a["x"], a["y"]
         self._state.fixed_position = None
 
+    def _prepare_line_to(self, a):
+        # LineTo fails once its device end point's next 28.4 pixel overflows.
+        exact = self.mapping.fixed_point(a["x"], a["y"])
+        if self.mapping.graphics_mode != GM_ADVANCED:
+            exact = tuple(value * 16 for value in self._point(a["x"], a["y"]))
+        if any(not -(2**31) <= value + 16 <= 0x7FFFFFFF for value in exact):
+            return NATIVE_FAILURE
+        return None
+
     def _apply_line_to(self, call, prepared, result):
+        if prepared is NATIVE_FAILURE:
+            return
         a = call.kwargs
         start = self._start_point()
         self._stroke_path(DevicePath.polyline((start, self._path_point(a["x"], a["y"]))), extend=True)
@@ -871,7 +955,51 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_polyline(self, call, prepared, result):
         a = call.kwargs
-        self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
+        if not self._fast_polylines((a["points"],)):
+            self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
+
+    def _fast_polylines(self, polylines) -> bool:
+        """Cosmetic polylines through a unit transform, as GDI's integer fast path draws them.
+
+        The points stay whole device pixels and the stroke is clipped to
+        their bounds, one past the far edges unless either far edge is the
+        largest 32-bit value (then neither is extended). The 28.4 points
+        then wrap, and a segment whose 28.4 span overflows is dropped.
+        Returns False when the path does not apply (bounds past 32 bits
+        take the general path).
+        """
+        mapping = self.mapping
+        if (
+            self._state.recording_path
+            or mapping.rotated
+            or not mapping.translation_only
+            or any(value % 16 for value in mapping.fixed_point(0, 0))
+            or not self._painter().realized_pen.cosmetic
+        ):
+            return False
+        lines = [[tuple(value >> 4 for value in mapping.fixed_point(x, y)) for x, y in line] for line in polylines]
+        xs = [x for line in lines for x, _ in line]
+        ys = [y for line in lines for _, y in line]
+        if not xs or any(not -(2**31) <= value <= 0x7FFFFFFF for value in (min(xs), max(xs), min(ys), max(ys))):
+            return False
+        right, bottom = max(xs), max(ys)
+        if 0x7FFFFFFF not in (right, bottom):
+            right, bottom = right + 1, bottom + 1
+        bounds = (max(min(xs), 0), max(min(ys), 0), min(right, self.surface.width), min(bottom, self.surface.height))
+        painter = RasterPainter(self.surface, replace(self._state, clip=self._state.clip.intersect(bounds)))
+        for line in lines:
+            points = [(_int32(x * 16), _int32(y * 16)) for x, y in line]
+            run = points[:1]
+            for start, end in zip(points, points[1:], strict=False):
+                if abs(end[0] - start[0]) > 0x7FFFFFFF or abs(end[1] - start[1]) > 0x7FFFFFFF:
+                    if len(run) > 1:
+                        painter.stroke_path(DevicePath.polyline(run))
+                    run = [end]
+                else:
+                    run.append(end)
+            if len(run) > 1:
+                painter.stroke_path(DevicePath.polyline(run))
+        return True
 
     def _prepare_poly_bezier(self, a):
         if len(a["points"]) % 3 != 1:
@@ -902,6 +1030,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             self._state.position, self._state.fixed_position = logical[-1], None
 
     def _apply_poly_polyline(self, call, prepared, result):
+        if self._fast_polylines([polyline for polyline in call.kwargs["polylines"] if len(polyline) > 1]):
+            return
         for polyline in call.kwargs["polylines"]:
             if len(polyline) > 1:
                 self._stroke_path(DevicePath.polyline(self._mapped_path(polyline)))
@@ -1534,6 +1664,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         # Rectangle's wide-pen path enters EBOX after its own decrement.
         shift = int(self.mapping.rtl) * (1 + (name == "rectangle" and not pen.cosmetic))
         advanced_bounds = corners = None
+        reversed_box = False
         if self.mapping.graphics_mode == GM_ADVANCED:
             # GM_ADVANCED paths use the transformed 28.4 box itself, lower-right
             # inclusive. The integer box takes the ceiling of each edge.
@@ -1566,6 +1697,13 @@ class RasterContext(ExecutionContext[DrawingState]):
         else:
             left, top = self._point(a["left"] - shift, a["top"])
             right, bottom = self._point(a["right"] - shift, a["bottom"])
+            if name != "rectangle":
+                # Curves are built from the 28.4 box, inclusive at the far
+                # edges, whose 32-bit values wrap.
+                left, top = (_int32(value * 16) >> 4 for value in (left, top))
+                right, bottom = ((_int32((value - 1) * 16) >> 4) + 1 for value in (right, bottom))
+                # A box the wrap reverses builds its curve reversed.
+                reversed_box = right < left
         left, right = sorted((left, right))
         top, bottom = sorted((top, bottom))
         if self.mapping.graphics_mode == GM_ADVANCED:
@@ -1586,6 +1724,28 @@ class RasterContext(ExecutionContext[DrawingState]):
                 if covered and name in {"arc", "chord", "pie"}:
                     return
             rectangle = name == "rectangle"
+            if rectangle and not corners and not self._state.recording_path:
+                # The outline runs through the 32-bit 28.4 box, which wraps:
+                # when that overflows or turns the box over, a unit transform
+                # (whose integer box survives) fills only the interior inside
+                # the outline, and any other draws nothing; when it merely
+                # wraps, the outline is drawn where it wrapped to.
+                exact = advanced_bounds or tuple(value * 16 for value in (left, top, right - 1, bottom - 1))
+                edges = [_int32(value) for value in exact]
+                overflows = edges[2] - edges[0] > 0x7FFFFFFF or edges[3] - edges[1] > 0x7FFFFFFF
+                if overflows or edges[0] > edges[2] or edges[1] > edges[3] or list(exact) != edges:
+                    turned = overflows or edges[0] > edges[2] or edges[1] > edges[3]
+                    if turned and not self.mapping.translation_only:
+                        return
+                    if self._state.brush.style != BS_NULL and right - left > 2 and bottom - top > 2:
+                        interior = ((left + 1) * 16, (top + 1) * 16, (right - 1) * 16, (bottom - 1) * 16)
+                        no_pen = replace(self._state, pen=replace(self._state.pen, style=PS_NULL))
+                        RasterPainter(self.surface, no_pen).paint_polygons(
+                            (DevicePath.polyline(box_corners(interior), closed=True),), brush=self._state.brush
+                        )
+                    if not (overflows or edges[0] > edges[2] or edges[1] > edges[3]):
+                        painter.stroke_path(DevicePath.polyline(box_corners(tuple(edges)), closed=True))
+                    return
             if name == "rectangle":
                 bounds = (left * 16, top * 16, (right - 1) * 16, (bottom - 1) * 16)
                 # Hairline rectangles use the integer box, except in paths.
@@ -1612,6 +1772,11 @@ class RasterContext(ExecutionContext[DrawingState]):
                     ),
                     closed=True,
                 )
+                if reversed_box:
+                    mirror = (left + right - 1) * 16
+                    path = DevicePath(
+                        tuple(tuple((mirror - x, y) for x, y in command) for command in path.commands), closed=True
+                    )
             elif name == "round_rect":
                 advanced = advanced_bounds is not None and drawing_bounds is advanced_bounds
                 # Corner proportions are established before integer device
@@ -1653,7 +1818,8 @@ class RasterContext(ExecutionContext[DrawingState]):
                     null_pen=self._state.pen.style == PS_NULL,
                     drawing_bounds=oriented_bounds if advanced else drawing_bounds,
                     radial_bounds=(x0, y0, x1, y1),
-                    clockwise=self.mapping.rtl,
+                    # AD_CLOCKWISE reverses a GM_COMPATIBLE arc in device space.
+                    clockwise=self.mapping.rtl != (not advanced and self._state.arc_direction == 2),
                     advanced=advanced,
                     corners=corners,
                 )
@@ -1668,6 +1834,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             if self._state.recording_path:
                 # A path keeps the box an inside-frame pen would fill.
                 self._record_figure(path if name == "arc" else replace(path, closed=True))
+            elif _overflows((path,)):
+                return
             elif covered:
                 for x, y in painter.contour_pixels((path.vertices,)):
                     painter.pen_pixel(x, y)
@@ -2138,6 +2306,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self._state.recording_path:
             self._record_figure(path, extend=extend)
             return
+        if _overflows((path,)):
+            return
         self._painter().stroke_path(path, miter=miter)
 
     def _record_figure(self, path, *, extend=False):
@@ -2157,6 +2327,8 @@ class RasterContext(ExecutionContext[DrawingState]):
         if self._state.recording_path:
             for path in paths:
                 self._record_figure(replace(path, closed=True))
+            return
+        if _overflows(paths):
             return
         self._painter().paint_polygons(paths, miter=miter, reserve_outline=reserve_outline, brush=brush)
 

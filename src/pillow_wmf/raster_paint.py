@@ -24,6 +24,7 @@ from .constants import (
 from .flood import flood_spans
 from .geometry import DevicePath, Polygon, coverage_spans
 from .gradient import triangle_spans
+from .mapping import _int32
 from .paint import pattern_rop2, rop2, rop3
 from .raster_state import Brush, DrawingState
 from .stroke import (
@@ -165,7 +166,8 @@ class RasterPainter:
         if operation is None:
             return  # Native PatBlt rejects operations requiring a source.
         left, top = self.state.mapping.edge_point(x, y)
-        right, bottom = self.state.mapping.edge_point(x + width, y + height)
+        # The far edges are 32-bit sums, which wrap.
+        right, bottom = self.state.mapping.edge_point(_int32(x + width), _int32(y + height))
         # PatBlt orders mapped rectangle edges (unlike mirrored source blits).
         left, right = sorted((left, right))
         top, bottom = sorted((top, bottom))

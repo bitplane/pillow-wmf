@@ -54,8 +54,8 @@ def test_supplied_symbol_face_wins_without_recoding():
     assert fonts.decode(REQUEST, face, b"AE") == "\uf041\uf045"
 
 
-def test_missing_unicode_glyph_is_not_silently_replaced():
-    fonts = FontCollection(wingdings_fallback=True)
+def test_missing_unicode_glyph_is_not_silently_replaced_under_the_strict_policy():
+    fonts = FontCollection(wingdings_fallback=True, missing_glyph="error")
     face = fonts.resolve(REQUEST)
     characters = fonts.decode(REQUEST, face, b"J")
     assert characters == "\u263a"

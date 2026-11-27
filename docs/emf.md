@@ -73,7 +73,31 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   zero-length Bezier. The current position ends at the final angle.
 - After `ArcTo` and `AngleArc` the DC keeps the arc's exact 28.4 end, and
   the next `LineTo`, `PolylineTo` or `PolyBezierTo` starts from it, so a
-  path figure continues across the arc.
+  path figure continues across the arc. Drawing starts from it as it is in
+  GM_ADVANCED under a page or world transform, and otherwise from it floored
+  to a whole device pixel.
+- In GM_COMPATIBLE (direct drawing; EMF playback is always GM_ADVANCED),
+  `ArcTo` draws the figure `Arc` would, and `AngleArc` maps its circle's box
+  to whole device pixels and builds the arc about that box's centre in
+  device space. `AD_CLOCKWISE` reverses GM_COMPATIBLE arcs, chords and pies
+  in device space
+  ([`test_compatible_arcs.py`](../test/unit/test_compatible_arcs.py)).
+- Device coordinates are 28.4 values in 32 bits, which wrap. A figure whose
+  28.4 extent overflows 32 bits is not drawn, and `LineTo` fails once its end
+  point's next 28.4 pixel overflows. Cosmetic `Polyline` and `PolyPolyline`
+  through a unit transform take GDI's integer path: the stroke is clipped to
+  the points' whole-pixel bounds, one past the far edges unless either far
+  edge is the largest 32-bit value (then neither is extended), the 28.4
+  points wrap, and a segment whose 28.4 span overflows is dropped. A
+  rectangle's outline runs through the wrapped box (GM_COMPATIBLE:
+  inclusive far edges): it is drawn where it wraps to, or, when it
+  overflows or turns over, dropped, leaving the interior inside it filled
+  from the true box under a unit transform (which keeps integer
+  coordinates) and nothing drawn under any other. Curved GM_COMPATIBLE
+  shapes are built from the wrapped inclusive box, mirrored when the wrap
+  reverses it. `PatBlt`'s far edges are 32-bit sums. A unit page scale maps
+  integers exactly
+  ([`test_coordinate_limits.py`](../test/unit/test_coordinate_limits.py)).
 - Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
   `PlgBlt`, `AlphaBlend`, `TransparentBlt`) map their logical source
   rectangle through the recorded source transform, rounding each edge half
@@ -143,6 +167,8 @@ Text records play through the font collection's faces:
   advances span the run's notional width through the x column of the
   glyph matrix (each component rounded to 28.4), measured and rounded to
   whole logical units.
+- A character the face lacks draws the face's glyph 0 (`.notdef`), as
+  natively; `FontCollection(missing_glyph="error")` refuses such text.
 - A missing weight or slant is simulated from the family's nearest face.
   Italic shears the outline by 0x5700/65536. Bold adds a device pixel to each
   advance (and its logical equivalent to each logical extent); under rotating
@@ -158,10 +184,28 @@ Text records play through the font collection's faces:
   whole. Horizontal monochrome text of an unhinted face takes the same
   TrueType scan rules and emboldening.
 - Stock fonts select their logical fonts (mostly raster faces, so
-  font-limited). Charset 254 decodes UTF-8.
+  font-limited). Charset 254 decodes UTF-8 with any face (a symbol face maps
+  the Latin-1 range to its F0xx glyphs).
+- A face whose OS/2 code pages lack the requested charset gives way, as in
+  Windows' mapper, to Wingdings (SYMBOL_CHARSET), MS PGothic (128), Gulim
+  (129), Nirmala UI Semilight (130), SimSun (134), PMingLiU (136), Leelawadee
+  UI (222) or otherwise Arial; a symbol face takes Arial for any charset but
+  DEFAULT, SYMBOL and UTF-8. Undefined charset values realize ANSI. A
+  `FontCollection` uses the substitute when it is supplied and refuses the
+  text otherwise, naming it
+  ([`probe-windows-charset-mapping.py`](../scripts/probe-windows-charset-mapping.py)).
 
 Exact comparisons use the controlled fonts in `test/fonts`; real fonts are
 font-limited and reported separately.
+
+Layout, metrics and face selection follow native GDI, but antialiased glyph
+coverage is FreeType's (gray for ANTIALIASED_QUALITY, LCD filtering for the
+ClearType qualities), so smoothed glyphs differ slightly from Windows. They are
+reviewed by eye: [`text_samples.py`](../scripts/text_samples.py) defines EMF
+sheets of common Windows faces across sizes, qualities, styles, rotations and
+character sets; the `text-samples` probe plays them natively, and
+`python scripts/text-samples-side-by-side.py NATIVE_DIR OUTPUT_DIR` renders the
+same files with the host's fonts beside the native images.
 
 ## Records
 
@@ -203,7 +247,7 @@ the codec and reference columns against the code and fixtures.
 | `EXCLUDECLIPRECT` | typed | full | yes |  |
 | `INTERSECTCLIPRECT` | typed | full | yes |  |
 | `SCALEVIEWPORTEXTEX` | typed | full | yes | 32-bit products and truncating division, as natively. |
-| `SCALEWINDOWEXTEX` | typed | full | no | As SCALEVIEWPORTEXTEX. |
+| `SCALEWINDOWEXTEX` | typed | full | yes | As SCALEVIEWPORTEXTEX. |
 | `SAVEDC` | typed | full | yes |  |
 | `RESTOREDC` | typed | full | yes | Absolute levels are ignored natively. |
 | `SETWORLDTRANSFORM` | typed | partial | yes | Rotations and shears cover all drawing, text included; see below. |
@@ -282,15 +326,15 @@ the codec and reference columns against the code and fixtures.
 | `NAMEDESCAPE` | typed | full | yes | No effect on a bitmap DC. |
 | `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
-| `SETICMPROFILEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
+| `SETICMPROFILEW` | typed | full | yes | No effect on a bitmap DC. |
 | `ALPHABLEND` | typed | full | yes | Constant and per-pixel alpha with nearest sampling. |
 | `SETLAYOUT` | typed | full | yes | Mirrors the playback transform about the reference device width; the DC layout is unchanged. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; without it native playback stops. |
 | `SETLINKEDUFIS` | typed | full | yes | No effect on shapes; font-limited. |
-| `SETTEXTJUSTIFICATION` | typed | full | no | Text is font-limited. |
+| `SETTEXTJUSTIFICATION` | typed | full | yes | Spreads break extra over the run's break characters. |
 | `COLORMATCHTOTARGETW` | typed | full | yes | `CS_ENABLE` without a profile name stops playback; otherwise no effect on a bitmap DC. |
-| `CREATECOLORSPACEW` | typed | full | no | No effect on a bitmap DC; unreferenced. |
+| `CREATECOLORSPACEW` | typed | full | yes | No effect on a bitmap DC. |
 
 ## Recording
 
@@ -309,7 +353,14 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   moves in by the logical size of one device pixel (window over viewport
   extent), rounded half to even. GM_ADVANCED boxes are written as given;
   there is no record for the graphics mode. `SetWorldTransform` is followed
-  by `ModifyWorldTransform(MWT_SET)` with the same matrix.
+  by `ModifyWorldTransform(MWT_SET)` with the same matrix;
+  `ModifyWorldTransform` is written as given. Once the DC has held a
+  non-identity world transform, whatever follows, GM_COMPATIBLE ellipses,
+  rounded rectangles, arcs, chords and pies keep their far edges in their
+  bounds; rectangles do not.
+- `OffsetViewportOrgEx` is written as `SetViewportOrgEx` of the result.
+  Escapes (`MFCOMMENT` included) and `SetMapperFlags` leave no record;
+  `gdi_comment` writes `EMR_GDICOMMENT`.
 - `SetArcDirection` is written just before the next arc that uses it.
 - Point records use their 16-bit forms when every coordinate fits.
 - Bounds are inclusive device pixels. A stroke reaches the miter limit times
@@ -317,7 +368,12 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   geometric miter joins), and half the width rounded up plus one otherwise;
   one-pixel pens add nothing. Arcs, chords and pies count their drawn sweep,
   `*To` records include the current position (unless `PolyDraw` opens with a
-  move), and a flood fill claims the whole device. Record and header bounds
+  move; after an arc, a one-pixel pen counts the floored logical point and
+  the device pixel the exact point rounds up to), arcs, chords and pies span
+  their figure's floored and rounded-up extremes, and a flood fill claims
+  the whole device. Under rotation or shear, points count the pixels their
+  exact 28.4 positions lie across, and a box its four corners, its far edges
+  exclusive except for a rectangle's. Record and header bounds
   are clipped to the clip region's bounding box; a figure with neither pen
   nor brush adds nothing.
 - Transfer sources are written as `GetDIBits` returns a source DC's bitmap:
@@ -330,7 +386,11 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   without a colour table (`DIB_PAL_INDICES`); a 32-bpp device bitmap brush
   becomes a bit-field DIB pattern brush. Packed DIB pattern brushes and pens
   are re-encoded the same way; `SetDIBitsToDevice` and `StretchDIBits` keep
-  the DIB as given.
+  the DIB as given. A legacy (Bitmap16) source is selected into a memory DC
+  compatible with the recording DC: a monochrome or reference-depth bitmap
+  selects and the transfer leaves no record, while any other depth fails to
+  select and the transfer records the memory DC's default 1x1 monochrome
+  bitmap.
 - Bitmap brushes carry a `0x20000000` DWORD before their BitmapInfo. A DIB
   pattern pen carries it in place of the header size; the player reads such
   a header as a 40-byte one.
@@ -639,12 +699,6 @@ source pixel. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
-- Device coordinates at or beyond 2^27 pixels, where 28.4 values wrap:
-  native primitives then fail, draw part of their figure or draw wrapped
-  geometry, each in its own way
-  ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
-  records the native results).
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
   differs from native along slanted edges.
-- `GM_COMPATIBLE` ArcTo and AngleArc take the `GM_ADVANCED` arc geometry.

@@ -93,7 +93,7 @@ class RasterFont:
     break_character: int = 32
     cmap: dict[int, int] = field(default_factory=dict)
     symbol: bool = False
-    missing_glyph: str = "error"
+    missing_glyph: str = "notdef"
     em_width: float = 0
     escapement: int = 0
     synthetic_bold: bool = False
@@ -345,7 +345,7 @@ class FontFace:
         face.cmap = {0xF000 | byte: face.cmap[0xF000 | byte] for byte in WINDOWS_SYMBOL_BYTES}
         return face
 
-    def realize(self, request, scale, *, missing_glyph="error", advanced=False, aspect=1):
+    def realize(self, request, scale, *, missing_glyph="notdef", advanced=False, aspect=1):
         """Classic compatible-mode realization; natural width follows height.
 
         In GM_ADVANCED the world transform stretches the glyphs: a natural
@@ -436,7 +436,7 @@ class FontFace:
         *,
         width=None,
         quality=3,
-        missing_glyph="error",
+        missing_glyph="notdef",
         escapement=0,
         synthetic_bold=False,
         synthetic_italic=False,
@@ -446,8 +446,10 @@ class FontFace:
         # Draft/proof affect legacy bitmap strike selection. For the static
         # TrueType outlines supported here, they share default smoothing.
         # Keep the requested value in the realized font and its cache key.
-        if quality not in range(7):
-            raise UnsupportedOperation("Unsupported font quality")
+        if quality not in range(256):
+            raise ValueError("Font quality is a byte")
+        if quality > 6:
+            quality = 0  # Undefined qualities render as DEFAULT_QUALITY.
         if missing_glyph not in ("error", "notdef"):
             raise ValueError("Missing-glyph policy must be 'error' or 'notdef'")
         if size <= 0:

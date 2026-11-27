@@ -142,6 +142,9 @@ PROBES = {
     "color-engine-phase": Probe("probe-windows-color-engine-phase.py", output="color-engine-phase"),
     "coordinate-limits": Probe("probe-windows-coordinate-limits.py", output="coordinate-limits"),
     "glyph-transforms": Probe("probe-windows-glyph-transforms.py", output="glyph-transforms"),
+    "compatible-arcs": Probe("probe-windows-compatible-arcs.py", output="compatible-arcs"),
+    "charset-mapping": Probe("probe-windows-charset-mapping.py", output="charset-mapping"),
+    **_family("probe-windows-text-samples.py", "text-samples", {"text-samples": ()}),
 }
 
 

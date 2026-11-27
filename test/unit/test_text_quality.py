@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pillow_wmf import FontCollection, FontFace, RasterContext, UnsupportedOperation
+from pillow_wmf import FontCollection, FontFace, RasterContext
 from pillow_wmf.objects import EncodedText
 from pillow_wmf.wmf.objects import Font
 
@@ -48,13 +48,6 @@ def test_outline_default_draft_and_proof_compose_identically(face):
         dc.text_out(2, 2, b"A")
         images.append(dc.image.tobytes())
     assert images[0] == images[1] == images[2]
-
-
-@pytest.mark.parametrize("quality", [7, 255])
-def test_unsupported_smoothing_modes_are_not_treated_as_default(quality):
-    face = FontFace.from_path(ROOT / "test/fonts/layout.ttf")
-    with pytest.raises(UnsupportedOperation, match="quality"):
-        face.at_size(24, quality=quality)
 
 
 def test_explicit_grayscale_and_cleartype_masks():

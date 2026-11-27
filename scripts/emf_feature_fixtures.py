@@ -803,6 +803,82 @@ def _stretch_dib(d, left, top, bounds, source):
     d.add(bitmaps.StretchDIBits(*bounds, *fields, 0, SRCCOPY, width, abs(height), info + bits))
 
 
+def _dib_variants():
+    """DIBs GDI may or may not draw: rarer headers, compressions and depths, 4x3 each."""
+    import io
+
+    from PIL import Image
+
+    pixels = [((x * 80) % 256, (y * 120) % 256, (x * 40 + y * 60) % 256) for y in range(3) for x in range(4)]
+
+    def info(header, depth, compression, size=0, colors=0, extra=b""):
+        base = struct.pack("<IiiHHIIiiII", header, 4, 3, 1, depth, compression, size, 0, 0, colors, 0)
+        return (base + extra).ljust(header, b"\0") if header > 40 else base + extra
+
+    def rows(depth, sample):
+        stride = (4 * depth + 31) // 32 * 4
+        data = bytearray()
+        for y in reversed(range(3)):
+            row = bytearray()
+            for x in range(4):
+                row += sample(*pixels[y * 4 + x])
+            data += bytes(row).ljust(stride, b"\0")
+        return bytes(data)
+
+    bgr = rows(24, lambda r, g, b: bytes((b, g, r)))
+    bgrx = rows(32, lambda r, g, b: bytes((b, g, r, 0xFF)))
+    masks = struct.pack("<III", 0xFF0000, 0xFF00, 0xFF)
+    image = Image.new("RGB", (4, 3))
+    image.putdata(pixels)
+    encoded = {}
+    for name in ("JPEG", "PNG"):
+        buffer = io.BytesIO()
+        image.save(buffer, name)
+        encoded[name] = buffer.getvalue()
+    two = bytes((0b00011011, 0b11100100, 0b01010101, 0b10101010) * 3)
+    cmyk = rows(32, lambda r, g, b: bytes((0, 255 - r, 255 - g, 255 - b))[::-1])
+    wide = rows(64, lambda r, g, b: struct.pack("<4H", b << 8, g << 8, r << 8, 0xFFFF))
+    return (
+        (info(52, 32, 3, extra=masks), bgrx),
+        (info(56, 32, 3, extra=masks + struct.pack("<I", 0xFF000000)), bgrx),
+        (info(64, 24, 0), bgr),
+        (info(40, 0, 4, len(encoded["JPEG"])), encoded["JPEG"]),
+        (info(40, 0, 5, len(encoded["PNG"])), encoded["PNG"]),
+        (info(40, 32, 6) + masks + struct.pack("<I", 0xFF000000), bgrx),
+        (info(40, 32, 11), cmyk),
+        (info(40, 2, 0, colors=4) + struct.pack("<4I", 0x000080, 0x008000, 0x800000, 0x808080), two),
+        (info(40, 64, 0), wide),
+    )
+
+
+def dib_variants(d):
+    """StretchDIBits of rarer DIB headers, compressions and depths, each enlarged in its own cell."""
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    for index, (header, bits) in enumerate(_dib_variants()):
+        left, top = 4 + 41 * (index % 3), 4 + 41 * (index // 3)
+        d.brush(BS_SOLID, 0xC0C0C0)
+        d.add(fixed.Rectangle(*d.rect(left - 2, top - 2, left + 38, top + 32)))
+        fields = (d.u(left), d.u(top), 0, 0, 4, 3, offset, len(header), offset + len(header), len(bits))
+        d.add(bitmaps.StretchDIBits(-1, -1, 1000, 1000, *fields, 0, SRCCOPY, d.u(36), d.u(30), header + bits))
+
+
+def dib_usages(d):
+    """StretchDIBits of 24- and 8-bit sources with every class of colour usage value."""
+    offset = 8 + struct.calcsize("<" + bitmaps.StretchDIBits.wire_layout)
+    rgb = struct.pack("<IiiHHIIiiII", 40, 2, 2, 1, 24, 0, 0, 0, 0, 0, 0)
+    rgb_bits = bytes((0, 0, 255, 0, 255, 0, 0, 0)) + bytes((255, 0, 0, 0, 255, 255, 0, 0))
+    indexed = struct.pack("<IiiHHIIiiII", 40, 2, 2, 1, 8, 0, 0, 0, 0, 4, 0)
+    table = struct.pack("<4I", 0x0000FF, 0x00FF00, 0xFF0000, 0x00FFFF)
+    sources = ((rgb, rgb_bits), (indexed + table, bytes((0, 1, 0, 0, 2, 3, 0, 0))))
+    for row, (header, bits) in enumerate(sources):
+        for column, usage in enumerate((0, 1, 2, 3, 4, 0xFFFFFFFF)):
+            left, top = 4 + 20 * column, 8 + 40 * row
+            d.brush(BS_SOLID, 0xC0C0C0)
+            d.add(fixed.Rectangle(*d.rect(left - 2, top - 2, left + 18, top + 18)))
+            fields = (d.u(left), d.u(top), 0, 0, 2, 2, offset, len(header), offset + len(header), len(bits))
+            d.add(bitmaps.StretchDIBits(-1, -1, 1000, 1000, *fields, usage, SRCCOPY, d.u(16), d.u(16), header + bits))
+
+
 def record_culling(dense):
     """Transfers and region painting whose record bounds miss the clip box.
 
@@ -1086,7 +1162,7 @@ TEXT_SCALES = (100 * 271 / 1024, 100 * 203 / 768)
 def text_font(d, height, **fields):
     """Select the controlled layout font."""
     face = TEXT_FACE.encode("utf-16-le").ljust(64, b"\0")
-    font = LogFont(height=height, quality=3, face_name=face, **{"weight": 400} | fields)
+    font = LogFont(height=height, face_name=face, **{"weight": 400, "quality": 3} | fields)
     return d.select(
         lambda slot: variable.ExtCreateFontIndirectW(slot, font, bytes(256) + struct.pack("<II", 0x08007664, 0))
     )
@@ -1299,6 +1375,35 @@ def text_transform_styles(d):
             d.add(fixed.ModifyWorldTransform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1))
 
 
+def scale_extents(d):
+    """ScaleWindowExtEx and ScaleViewportExtEx: anisotropic, isotropic, mirrored, and ignored in MM_TEXT."""
+    d.brush(BS_SOLID, 0x00A000)
+    cases = (
+        (8, fixed.ScaleWindowExtEx(3, 2, 2, 3), (4, 4, 60, 30)),
+        (7, fixed.ScaleViewportExtEx(2, 3, 4, 5), (70, 4, 124, 40)),
+        (8, fixed.ScaleWindowExtEx(-1, 1, 1, 1), (-60, 50, -8, 80)),
+        (1, fixed.ScaleWindowExtEx(2, 1, 2, 1), (70, 90, 124, 124)),
+    )
+    for mode, scale, box in cases:
+        d.add(fixed.SaveDC(), fixed.SetMapMode(mode))
+        if mode != 1:
+            d.add(fixed.SetWindowExtEx(d.u(100), d.u(100)), fixed.SetViewportExtEx(d.u(100), d.u(100)))
+        d.add(scale, fixed.Rectangle(*d.rect(*box)), fixed.Ellipse(*d.rect(*box)), fixed.RestoreDC(-1))
+
+
+def text_justification(d):
+    """SetTextJustification spreading extra space over break characters, before and with explicit advances."""
+    text_font(d, -d.u(12))
+    d.add(fixed.SetTextColor(0x802000))
+    rows = ((d.u(10), 1), (d.u(10), 2), (d.u(7), 3), (-d.u(3), 1), (d.u(20), 4))
+    for row, (extra, count) in enumerate(rows):
+        d.add(fixed.SetTextJustification(extra, count))
+        d.add(ext_text_a(d, d.u(4), d.u(4 + 20 * row), b"A B A"))
+    d.add(fixed.SetTextJustification(d.u(10), 1))
+    d.add(ext_text_a(d, d.u(70), d.u(4), b"A B A", advances=tuple(d.u(v) for v in (8, 5, 8, 5, 8))))
+    d.add(fixed.SetTextJustification(0, 0), ext_text_a(d, d.u(70), d.u(24), b"A B A"))
+
+
 def rotated_color_adjustment(d):
     """HALFTONE stretches with colour adjustment under a rotating transform."""
     transfer_background(d)
@@ -1496,6 +1601,7 @@ def state_record(*records):
 
 
 COLOR_SPACE = struct.pack("<5I", 0x50534F43, 0x400, 328, 0x73524742, 4) + bytes(308)
+COLOR_SPACE_W = struct.pack("<5I", 0x50534F43, 0x400, 588, 0x73524742, 4) + bytes(568)
 STATE_RECORDS = {
     "icm-on": (fixed.SetICMMode(2),),
     "icm-off": (fixed.SetICMMode(1),),
@@ -1505,6 +1611,8 @@ STATE_RECORDS = {
     "color-space": (system.CreateColorSpace(5, COLOR_SPACE), fixed.SetColorSpace(5), fixed.DeleteColorSpace(5)),
     "color-correct-palette": (fixed.ColorCorrectPalette(1, 0, 0, 0),),
     "icm-profile": (system.SetICMProfileA(0, b"sRGB\0\0\0\0"),),
+    "icm-profile-w": (system.SetICMProfileW(0, "sRGB\0\0\0\0".encode("utf-16-le")),),
+    "color-space-w": (system.CreateColorSpaceW(6, COLOR_SPACE_W), fixed.SetColorSpace(6), fixed.DeleteColorSpace(6)),
     "color-match": (system.ColorMatchToTargetW(1, 0, b"", b""),),
     "font-mapping": (fixed.ForceUFIMapping(1, 2), system.SetLinkedUFIs(((1, 2),))),
     "opengl": (system.GlsRecord(bytes(8)), system.GlsBoundedRecord((0, 0, 1, 1), bytes(8))),
@@ -1569,6 +1677,10 @@ FEATURES = (
     ("text-transforms", text_transforms, (128, 51)),
     ("text-records", text_records, (128, 51)),
     ("text-transform-styles", text_transform_styles, (128, 51)),
+    ("scale-extents", scale_extents, (128, 51)),
+    ("dib-variants", dib_variants, (128,)),
+    ("dib-usages", dib_usages, (128,)),
+    ("text-justification", text_justification, (128, 51)),
     ("plgblt-mirrored-masks", plgblt_mirrored_masks, (128,)),
     ("rle-bands", rle_bands, (128,)),
     ("invalid-modes", invalid_modes, (128,)),

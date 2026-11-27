@@ -284,7 +284,8 @@ class Mapping:
             )
         result = []
         for value, (scale, origin) in zip((x, y), self._transform(), strict=True):
-            product = float32(value * scale)
+            # A unit scale is a translation, applied to integers exactly.
+            product = value if scale == 1 else float32(value * scale)
             coordinate = fixed(product) + fixed(origin)
             result.append(coordinate)
         return tuple(result)

@@ -42,9 +42,13 @@ class SourceTransfer:
 def accepts_dib(layout):
     # The native reference surface is a 32-bit RGB DIB. PAL_INDICES avoids
     # colour translation and requires matching source/device pixel depths.
+    # JPEG, PNG, alpha bit fields, CMYK, 2- and 64-bit sources and OS/2
+    # Huffman or RLE24 sources do not draw on it.
     return (
         layout.header_size != 12
         and layout.compression in (0, 1, 2, 3)
+        and layout.depth in (1, 4, 8, 16, 24, 32)
+        and not (layout.header_size == 64 and layout.compression == 3)
         and (layout.color_usage != 2 or layout.depth == 32)
     )
 
@@ -69,6 +73,8 @@ class TransferPreparation:
 
     def prepare_device(self, args) -> SourceTransfer | TransferAction:
         """Realize a scan band without stretching its device-pixel geometry."""
+        if args["color_usage"] not in (0, 1, 2):
+            return TransferAction.NOOP  # Other colour usages fail natively.
         layout = read_dib(args["source"], color_usage=args["color_usage"], max_pixels=self.max_bitmap_pixels)
         x, y, width, height, source_x, source_y = (args[key] for key in ("x", "y", "width", "height", "src_x", "src_y"))
         start, count = args["start_scan"], args["scan_count"]
@@ -141,6 +147,8 @@ class TransferPreparation:
         )
 
     def prepare_dib(self, name, a) -> SourceTransfer | TransferAction:
+        if a.get("color_usage", 0) not in (0, 1, 2):
+            return TransferAction.NOOP  # Other colour usages fail natively.
         if pattern_rop2(a["rop"]) is not None:
             return TransferAction.PATTERN
         if a["source"] is None:

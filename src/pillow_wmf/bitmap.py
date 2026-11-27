@@ -77,7 +77,7 @@ def encode_dib(
         raise ValueError("Invalid DIB dimensions or sample count")
     if depth not in (1, 4, 8, 16, 24, 32) or any(not 0 <= s < 1 << depth for s in samples):
         raise ValueError("Invalid DIB sample depth or value")
-    if header_size not in (12, 40, 108, 124):
+    if header_size not in (12, 40, 52, 56, 64, 108, 124):
         raise ValueError("Invalid DIB header size")
     if header_size == 12 and (top_down or masks or rle or depth not in (1, 4, 8, 24) or max(width, height) > 65535):
         raise ValueError("Unsupported Core DIB representation")
@@ -335,7 +335,9 @@ def validate_masks(masks, depth):
 def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFAULT_MAX_BITMAP_PIXELS) -> DIBLayout:
     """Validate the supported packed DIB layout without allocating pixels.
 
-    Core/Info/V4/V5, RGB tables, direct RGB, bitfields and RLE4/RLE8.
+    Core, Info, V2, V3, OS/2 2.x, V4 and V5 headers; RGB tables, direct RGB,
+    bitfields and RLE4/RLE8. JPEG, PNG, alpha bit fields, CMYK and 2- or
+    64-bit layouts parse, but transfers do not draw them, as natively.
     Logical-palette references remain unresolved until decoding.
     The decoder checks the required pixel extent; bands may omit other rows.
     """
@@ -347,7 +349,7 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
     if len(data) < 4:
         raise FormatError("Truncated DIB header size")
     header_size = unpack_from("<I", data)[0]
-    if header_size not in (12, 40, 108, 124):
+    if header_size not in (12, 40, 52, 56, 64, 108, 124):
         raise UnsupportedOperation(f"DIB header size {header_size}")
     if len(data) < header_size:
         raise FormatError("Truncated DIB header")
@@ -360,12 +362,12 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
         )
     if width <= 0 or signed_height == 0 or planes != 1:
         raise FormatError("Invalid DIB dimensions or plane count")
-    if depth not in (0, 1, 4, 8, 16, 24, 32) or compression not in (0, 1, 2, 3, 4, 5, 11, 12, 13):
+    if depth not in (0, 1, 2, 4, 8, 16, 24, 32, 64) or compression not in (0, 1, 2, 3, 4, 5, 6, 11, 12, 13):
         raise UnsupportedOperation(f"DIB depth {depth}, compression {compression}")
     if (
         (compression == 1 and depth != 8)
         or (compression == 2 and depth != 4)
-        or (compression == 3 and depth not in (16, 32))
+        or (compression in (3, 6) and depth not in (16, 32))
         or (compression in (4, 5) and depth != 0)
         or (depth == 0 and compression not in (4, 5))
         or (compression == 11 and depth != 32)
@@ -381,13 +383,14 @@ def read_dib(bitmap: BitmapData, *, color_usage: int = 0, max_pixels: int = DEFA
         raise ResourceLimitError("Decoded bitmap pixel limit exceeded")
     offset = header_size
     masks = (0x7C00, 0x03E0, 0x001F) if depth == 16 else (0xFF0000, 0xFF00, 0xFF)
-    if compression == 3:
+    if compression in (3, 6) and header_size != 64:  # OS/2 compression 3 is Huffman, not masks.
         if len(data) < 52:
             raise FormatError("Truncated DIB channel masks")
         masks = unpack_from("<III", data, 40)
         validate_masks(masks, depth)
         if header_size == 40:
-            offset += 12
+            # BI_ALPHABITFIELDS carries an alpha mask after the colour masks.
+            offset += 16 if compression == 6 else 12
     # Colour-space/profile fields are retained but not interpreted. The RGB
     # playback device has ICM disabled; in particular, linked paths are never
     # opened. Packed V5 profiles follow the pixel array, not the colour table.

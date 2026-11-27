@@ -1220,6 +1220,147 @@ def text_scenarios():
     yield "text-bounds", None, text_bounds
 
 
+class ColorAdjustment(ctypes.Structure):
+    _fields_ = [
+        (name, ctypes.c_ushort) for name in ("size", "flags", "illuminant", "red", "green", "blue", "black", "white")
+    ]
+    _fields_ += [(name, ctypes.c_short) for name in ("contrast", "brightness", "colorfulness", "tint")]
+
+
+# A WMF of legacy-bitmap BitBlt and StretchBlt records, with and without a
+# source, as PlayMetaFile hands them to the recording DC.
+LEGACY_BLITS = bytes.fromhex(
+    "0100090000035400000000001800000000001600000022092000cc000000000002000200040004000000020002000600011803020106"
+    "05040908070c0b0a18000000230b2000cc0002000200000000000400060004000a0000000200020006000118030201060504090807"
+    "0c0b0a0c00000022092100f00000000000000003000300040014000e000000230b49005a00020002000000000000000500050004001e"
+    "00030000000000"
+)
+
+# Legacy-bitmap BitBlt from Bitmap16 sources of each depth: 1, 4, 8, 16, 24, 32.
+LEGACY_DEPTHS = bytes.fromhex(
+    "010009000003c300000000002e00000000001300000022092000cc00000000000300050028000400000005000300020001015000"
+    "a80050001600000022092000cc00000000000300050028001400000005000300040001040b61c0001c72d0002d83e00019000000"
+    "22092000cc0000000000030005002800240000000500030006000108003b76b1ec00417cb7f22d0082bdf8336e001f0000002209"
+    "2000cc000000000003000500280034000000050003000a00011000003b197632b14bec6441297c42b75bf2742d8e8252bd6bf884"
+    "339e6eb72800000022092000cc00000000000300050028004400000005000300100001180000003b1908763210b14b18ec642000"
+    "4129007c4208b75b10f274182d8e2000825200bd6b08f88410339e186eb720002e00000022092000cc0000000000030005002800"
+    "540000000500030014000120000000003b19080076321000b14b1800ec642000412900087c420808b75b1008f27418082d8e2008"
+    "82520010bd6b0810f8841010339e18106eb72010030000000000"
+)
+
+
+def completion_scenarios():
+    def completion(dc):
+        api("OffsetViewportOrgEx", boolean, ptr, integer, integer, ptr)(dc, 3, 4, None)
+        set_map_mode(dc, 8)
+        set_window_ext(dc, 100, 100, None)
+        set_viewport_ext(dc, 100, 100, None)
+        api("ScaleViewportExtEx", boolean, ptr, integer, integer, integer, integer, ptr)(dc, 2, 3, 4, 5, None)
+        set_map_mode(dc, 1)
+        adjustment = ColorAdjustment(24, 1, 2, 12000, 11000, 9000, 100, 9000, 10, -20, 30, -40)
+        api("SetColorAdjustment", boolean, ptr, ctypes.POINTER(ColorAdjustment))(dc, ctypes.byref(adjustment))
+        api("SetMapperFlags", dword, ptr, dword)(dc, 1)
+        escape = api("Escape", integer, ptr, integer, integer, ctypes.c_char_p, ptr)
+        escape(dc, 15, 5, b"note\0", None)  # MFCOMMENT
+        escape(dc, 8, 0, None, None)  # QUERYESCSUPPORT leaves no record
+        begin_path(dc)
+        rectangle(dc, 10, 10, 40, 30)
+        end_path(dc)
+        api("StrokeAndFillPath", boolean, ptr)(dc)
+        metafile = api("SetMetaFileBitsEx", ptr, wintypes.UINT, ctypes.c_char_p)(len(LEGACY_BLITS), LEGACY_BLITS)
+        api("PlayMetaFile", boolean, ptr, ptr)(dc, metafile)
+        api("DeleteMetaFile", boolean, ptr)(metafile)
+
+    yield "completion", None, completion
+
+    def legacy_depths(dc):
+        metafile = api("SetMetaFileBitsEx", ptr, wintypes.UINT, ctypes.c_char_p)(len(LEGACY_DEPTHS), LEGACY_DEPTHS)
+        api("PlayMetaFile", boolean, ptr, ptr)(dc, metafile)
+        api("DeleteMetaFile", boolean, ptr)(metafile)
+
+    yield "legacy-depths", None, legacy_depths
+
+    def transformed_shapes(m11, m12, m21, m22):
+        def draw(dc):
+            set_graphics_mode(dc, 2)
+            set_world_transform(dc, ctypes.byref(XForm(m11, m12, m21, m22, 20.0, 10.0)))
+            rectangle(dc, 10, 10, 30, 20)
+            ellipse(dc, 40, 10, 60, 24)
+            round_rect(dc, 10, 30, 30, 44, 6, 4)
+            arc(dc, 40, 30, 60, 44, 60, 37, 40, 30)
+            chord(dc, 10, 50, 30, 64, 30, 57, 10, 50)
+            pie(dc, 40, 50, 60, 64, 60, 57, 40, 50)
+            polygon(dc, *points((10, 70), (25, 72), (18, 80)))
+            polyline(dc, *points((40, 70), (55, 75), (48, 82)))
+            move_to(dc, 5, 85, None)
+            line_to(dc, 30, 90)
+
+        return draw
+
+    yield "sheared-shapes", None, transformed_shapes(1.0, 0.0, 0.45, 1.0)
+    yield "rotated-shapes", None, transformed_shapes(0.9, 0.4, -0.4, 0.9)
+
+    def compatible_after_world(dc):
+        set_graphics_mode(dc, 2)
+        set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
+        set_graphics_mode(dc, 1)
+        rectangle(dc, 10, 10, 30, 20)
+        ellipse(dc, 40, 10, 60, 30)
+        set_graphics_mode(dc, 2)
+        modify_world_transform(dc, None, 1)
+        set_graphics_mode(dc, 1)
+        rectangle(dc, 10, 40, 30, 50)
+        ellipse(dc, 40, 40, 60, 60)
+
+    yield "compatible-after-world", None, compatible_after_world
+
+    def flood_and_comment(dc):
+        api("FloodFill", boolean, ptr, integer, integer, dword)(dc, 10, 10, 0x00FF00)
+        gdi.GdiComment(dc, 5, b"note\0")
+
+    yield "flood-and-comment", None, flood_and_comment
+
+    shapes = {
+        "rectangle": lambda dc: rectangle(dc, 10, 10, 31, 23),
+        "ellipse": lambda dc: ellipse(dc, 10, 10, 31, 23),
+        "round-rect": lambda dc: round_rect(dc, 10, 10, 31, 23, 6, 4),
+        "arc": lambda dc: arc(dc, 10, 10, 31, 23, 31, 16, 10, 10),
+        "chord": lambda dc: chord(dc, 10, 10, 31, 23, 31, 23, 10, 10),
+        "pie": lambda dc: pie(dc, 10, 10, 31, 23, 31, 23, 10, 10),
+    }
+    for shape, draw_shape in shapes.items():
+        for world in (False, True):
+
+            def draw(dc, draw_shape=draw_shape, world=world):
+                if world:
+                    set_graphics_mode(dc, 2)
+                    set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
+                    set_graphics_mode(dc, 1)
+                draw_shape(dc)
+
+            yield f"compatible-{shape}{'-after-world' if world else ''}", None, draw
+
+    resets = {
+        "set": lambda dc: set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))),
+        "modify": lambda dc: modify_world_transform(dc, None, 1),
+        "modify-set": lambda dc: (
+            modify_world_transform(dc, None, 1),
+            set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0))),
+        ),
+    }
+    for shape in ("rectangle", "ellipse"):
+        for reset_name, reset in resets.items():
+
+            def draw(dc, shape=shapes[shape], reset=reset):
+                set_graphics_mode(dc, 2)
+                set_world_transform(dc, ctypes.byref(XForm(1.0, 0.0, 0.45, 1.0, 0.0, 0.0)))
+                reset(dc)
+                set_graphics_mode(dc, 1)
+                shape(dc)
+
+            yield f"compatible-{shape}-after-shear-{reset_name}", None, draw
+
+
 def records(data):
     position = 0
     while position < len(data):
@@ -1231,7 +1372,13 @@ def records(data):
 def main():
     print(f"Windows EMF recording probe: {platform.platform()}")
     print(f"Module versions: {module_versions()}")
-    for name, frame, draw in (*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios()):
+    for name, frame, draw in (
+        *scenarios(),
+        *more_scenarios(),
+        *gap_scenarios(),
+        *text_scenarios(),
+        *completion_scenarios(),
+    ):
         with private_fonts(FONTS), reference_surface(128, 128) as (_, reference, _bits):
             rect = wintypes.RECT(*frame) if frame else None
             dc = create_emf(reference, None, ctypes.byref(rect) if rect else None, None)

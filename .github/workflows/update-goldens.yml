@@ -91,6 +91,9 @@ on:
           - color-engine-phase
           - coordinate-limits
           - glyph-transforms
+          - compatible-arcs
+          - charset-mapping
+          - text-samples
   push:
     branches: [master]
     paths:
