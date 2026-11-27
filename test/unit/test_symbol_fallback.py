@@ -150,5 +150,7 @@ def test_host_face_named_symbol_with_symbol_cmap_is_still_selected(tmp_path):
 def test_unsupported_charset_reports_the_effective_charset(tmp_path):
     face = FontFace.from_path(_renamed_font(tmp_path, "layout.ttf", "Symbol"))
     request = Font(height=-20, charset=1, face_name=b"Symbol")
-    with pytest.raises(UnsupportedOperation, match="Unsupported text charset: 2$"):
+    with pytest.raises(UnsupportedOperation, match="advertise the requested charset"):
         FontCollection([face]).decode(request, face, b"abc")
+    with pytest.raises(UnsupportedOperation, match="lacks charset 2; Windows substitutes 'Wingdings'"):
+        FontCollection([face]).resolve(request)

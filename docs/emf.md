@@ -184,7 +184,16 @@ Text records play through the font collection's faces:
   whole. Horizontal monochrome text of an unhinted face takes the same
   TrueType scan rules and emboldening.
 - Stock fonts select their logical fonts (mostly raster faces, so
-  font-limited). Charset 254 decodes UTF-8.
+  font-limited). Charset 254 decodes UTF-8 with any face (a symbol face maps
+  the Latin-1 range to its F0xx glyphs).
+- A face whose OS/2 code pages lack the requested charset gives way, as in
+  Windows' mapper, to Wingdings (SYMBOL_CHARSET), MS PGothic (128), Gulim
+  (129), Nirmala UI Semilight (130), SimSun (134), PMingLiU (136), Leelawadee
+  UI (222) or otherwise Arial; a symbol face takes Arial for any charset but
+  DEFAULT, SYMBOL and UTF-8. Undefined charset values realize ANSI. A
+  `FontCollection` uses the substitute when it is supplied and refuses the
+  text otherwise, naming it
+  ([`probe-windows-charset-mapping.py`](../scripts/probe-windows-charset-mapping.py)).
 
 Exact comparisons use the controlled fonts in `test/fonts`; real fonts are
 font-limited and reported separately.

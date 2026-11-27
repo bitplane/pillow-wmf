@@ -27,9 +27,25 @@ from .text_layout import paired_background as paired_background
 from .text_math import text_rotation as text_rotation
 from .wingdings import decode_wingdings
 
+# The faces Windows' mapper substitutes when the requested face lacks the
+# charset; other charsets take Arial. Undefined charsets realize ANSI.
+NATIVE_SUBSTITUTES = {
+    2: "Wingdings",
+    128: "MS PGothic",
+    129: "Gulim",
+    130: "Nirmala UI Semilight",
+    134: "SimSun",
+    136: "PMingLiU",
+    222: "Leelawadee UI",
+}
+
 
 class FontCollection:
-    """Supplied faces and explicit aliases; never discover or substitute faces.
+    """Supplied faces and explicit aliases; never discover faces.
+
+    A face that lacks the requested charset gives way to the face Windows
+    substitutes (``NATIVE_SUBSTITUTES``, else Arial) when it is supplied, as
+    native GDI's mapper does; otherwise such text is refused.
 
     A character the selected face lacks draws its glyph 0 (``.notdef``), as
     native GDI does; ``missing_glyph="error"`` refuses such text instead.
@@ -155,7 +171,56 @@ class FontCollection:
             face = self._symbol_face
         if face is None:
             raise UnsupportedOperation(f"Font face unavailable: {family!r}, weight={key[1]}, italic={key[2]}")
-        return face
+        charset = self._charset(request)
+        if self._covers(face, charset):
+            return face
+        substitute = NATIVE_SUBSTITUTES.get(charset, "Arial")
+        replacement = self._select_face((self.aliases.get(substitute.casefold(), substitute.casefold()), *key[1:]))
+        if replacement is None and charset == 2 and self.wingdings_fallback:
+            with self._lock:
+                if self._wingdings_face is None:
+                    self._wingdings_face = FontFace.bundled_wingdings()
+            replacement = self._wingdings_face
+        if replacement is None:
+            raise UnsupportedOperation(
+                f"Font face unavailable: {family!r} lacks charset {charset}; Windows substitutes {substitute!r}"
+            )
+        return replacement
+
+    def _covers(self, face, charset):
+        """Whether the mapper keeps ``face`` for ``charset`` rather than substituting."""
+        if charset == 254:
+            return True  # The UTF-8 extension keeps any face.
+        if face.symbol or face is self._wingdings_face:
+            return charset in (1, 2)
+        if charset == 2:
+            return False
+        try:
+            codepage, bit = self._encoding_for(charset)
+        except UnsupportedOperation:
+            return False
+        coverage = 1 << bit
+        if charset == 255:
+            page_bit = OEM_COVERAGE_BITS.get(codepage, CODEPAGE_BITS.get(codepage))
+            if page_bit is not None:
+                coverage |= 1 << page_bit
+        return bool(face.codepages & coverage)
+
+    def _realized_charset(self, request, face):
+        """The charset text decodes in: the request's, or what its substitute realizes."""
+        charset = self._charset(request)
+        if self._covers(face, charset):
+            return charset
+        substitute = NATIVE_SUBSTITUTES.get(charset, "Arial").casefold()
+        if face is not self._wingdings_face and self.aliases.get(face.family.casefold(), face.family.casefold()) != (
+            self.aliases.get(substitute, substitute)
+        ):
+            raise UnsupportedOperation("Font does not advertise the requested charset; explicit selection is required")
+        if charset in TEXT_CHARSETS or charset in (1, 2, 255):
+            return charset
+        if charset == 77 and self.mac_codepage is not None:
+            return charset
+        return 0  # Undefined charsets realize ANSI.
 
     def __getstate__(self):
         return {key: value for key, value in vars(self).items() if key != "_lock"}
@@ -192,7 +257,9 @@ class FontCollection:
         return decode_codepage(data.split(b"\0", 1)[0], self.ansi_codepage).text
 
     def _encoding(self, request):
-        charset = self._charset(request)
+        return self._encoding_for(self._charset(request))
+
+    def _encoding_for(self, charset):
         if charset == 1:
             return self.ansi_codepage, CODEPAGE_BITS[self.ansi_codepage]
         if charset == 255:
@@ -209,7 +276,12 @@ class FontCollection:
         return self.decode_run(request, face, data).text
 
     def decode_run(self, request, face, data):
-        charset = self._charset(request)
+        charset = self._realized_charset(request, face)
+        if charset == 254 and (face.symbol or face is self._wingdings_face):
+            # Symbol faces map UTF-8 text's Latin-1 range to their F0xx glyphs.
+            decoded = decode_codepage(data, UTF8_CODEPAGE)
+            text = "".join(chr(0xF000 | ord(c)) if 0x20 <= ord(c) <= 0xFF else c for c in decoded.text)
+            return replace(decoded, text=text)
         if face is self._wingdings_face:
             if charset not in (1, 2):
                 raise UnsupportedOperation("Unsupported Wingdings fallback charset request")
@@ -218,16 +290,7 @@ class FontCollection:
             if charset not in (1, 2):
                 raise UnsupportedOperation("Unsupported symbol font charset request")
             return DecodedText.single_byte("".join(chr(0xF000 | byte) for byte in data))
-        codepage, bit = self._encoding(request)
-        if bit is None:
-            return decode_codepage(data, codepage)  # UTF-8 needs no code-page coverage.
-        coverage = 1 << bit
-        if charset == 255:
-            page_bit = OEM_COVERAGE_BITS.get(codepage, CODEPAGE_BITS.get(codepage))
-            if page_bit is not None:
-                coverage |= 1 << page_bit
-        if not face.codepages & coverage:
-            raise UnsupportedOperation("Font does not advertise the requested charset; explicit selection is required")
+        codepage, _ = self._encoding_for(charset)
         return decode_codepage(data, codepage)
 
 

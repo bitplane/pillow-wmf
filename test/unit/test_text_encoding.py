@@ -60,8 +60,53 @@ def test_ansi_request_does_not_force_an_arbitrary_symbol_face():
     face = FontFace.from_path(FONTS / "symbols.ttf")
     fonts = FontCollection([face])
     request = replace(REQUEST, face_name=face.family.encode(), charset=0)
-    with pytest.raises(UnsupportedOperation, match="symbol font charset"):
+    with pytest.raises(UnsupportedOperation, match="advertise the requested charset"):
         fonts.decode(request, face, b"AB")
+    with pytest.raises(UnsupportedOperation, match="Windows substitutes 'Arial'"):
+        fonts.resolve(request)
+
+
+def _renamed(tmp_path, source, family):
+    from fontTools.ttLib import TTFont
+
+    with TTFont(FONTS / source) as font:
+        names = font["name"]
+        names.names = [record for record in names.names if record.nameID not in (1, 4, 16, 21)]
+        for name_id in (1, 4):
+            names.setName(family, name_id, 3, 1, 0x409)
+        path = tmp_path / f"{family}-{source}"
+        font.save(path)
+    return FontFace.from_path(path)
+
+
+@pytest.mark.parametrize(
+    "charset,substitute,characters",
+    [
+        (204, "Arial", "\u0439\u0402"),
+        (238, "Arial", "\u00e9\u20ac"),
+        (3, "Arial", "\u00e9\u20ac"),
+        (100, "Arial", "\u00e9\u20ac"),
+    ],
+)
+def test_a_face_lacking_the_charset_gives_way_to_the_native_substitute(tmp_path, charset, substitute, characters):
+    # Native GDI's mapper replaces a face whose OS/2 code pages lack the
+    # charset (Arial for these); undefined charsets realize ANSI.
+    latin = FontFace.from_path(FONTS / "layout.ttf")
+    arial = _renamed(tmp_path, "encoding.ttf", substitute)
+    fonts = FontCollection([latin, arial])
+    request = replace(REQUEST, face_name=latin.family.encode(), charset=charset)
+    assert fonts.resolve(request) is arial
+    assert fonts.decode(request, arial, b"\xe9\x80") == characters
+    assert fonts.resolve(replace(request, charset=0)) is latin
+
+
+def test_a_symbol_face_decodes_utf8_text_through_its_symbol_glyphs():
+    face = FontFace.from_path(FONTS / "symbols.ttf")
+    fonts = FontCollection([face])
+    request = replace(REQUEST, face_name=face.family.encode(), charset=254)
+    assert fonts.resolve(request) is face
+    characters = fonts.decode(request, face, b"AB \xc3\xa9\xff")
+    assert tuple(map(ord, characters)) == (0xF041, 0xF042, 0xF020, 0xF0E9, 0xFFFD)
 
 
 def test_missing_glyph_policy_is_explicit_and_cache_isolation_is_preserved(face):
