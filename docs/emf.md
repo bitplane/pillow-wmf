@@ -84,14 +84,19 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   ([`test_compatible_arcs.py`](../test/unit/test_compatible_arcs.py)).
 - Device coordinates are 28.4 values in 32 bits, which wrap. A figure whose
   28.4 extent overflows 32 bits is not drawn, and `LineTo` fails once its end
-  point's next 28.4 pixel overflows. A rectangle's outline runs through the
-  wrapped box (GM_COMPATIBLE: inclusive far edges): it is drawn where it
-  wraps to, or, when it overflows or turns over, dropped, leaving the
-  interior inside it filled from the true box under a unit transform (which
-  keeps integer coordinates) and nothing drawn under any other. Curved
-  GM_COMPATIBLE shapes are built from the wrapped inclusive box, mirrored
-  when the wrap reverses it. `PatBlt`'s far edges are 32-bit
-  sums. A unit page scale maps integers exactly
+  point's next 28.4 pixel overflows. Cosmetic `Polyline` and `PolyPolyline`
+  through a unit transform take GDI's integer path: the stroke is clipped to
+  the points' whole-pixel bounds, one past the far edges unless either far
+  edge is the largest 32-bit value (then neither is extended), the 28.4
+  points wrap, and a segment whose 28.4 span overflows is dropped. A
+  rectangle's outline runs through the wrapped box (GM_COMPATIBLE:
+  inclusive far edges): it is drawn where it wraps to, or, when it
+  overflows or turns over, dropped, leaving the interior inside it filled
+  from the true box under a unit transform (which keeps integer
+  coordinates) and nothing drawn under any other. Curved GM_COMPATIBLE
+  shapes are built from the wrapped inclusive box, mirrored when the wrap
+  reverses it. `PatBlt`'s far edges are 32-bit sums. A unit page scale maps
+  integers exactly
   ([`test_coordinate_limits.py`](../test/unit/test_coordinate_limits.py)).
 - Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
   `PlgBlt`, `AlphaBlend`, `TransparentBlt`) map their logical source
@@ -676,10 +681,6 @@ source pixel. A mask bit of 1 copies the source pixel.
 
 ## Playback behaviours not yet modelled
 
-- Past 2^27 device pixels most drawing follows the native rules below; a
-  polyline whose 28.4 coordinates wrap without overflowing still differs
-  ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
-  records the native results).
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
   differs from native along slanted edges.

@@ -1,8 +1,7 @@
 """Native drawing with device coordinates near and past the 28.4 range.
 
 ``coordinate_limits.json`` holds what the ``coordinate-limits`` probe drew on
-a 32x32 surface with the black stock brush and pen, for the cases modelled
-exactly (see docs/emf.md for those that are not).
+a 32x32 surface with the black stock brush and pen, for every probe case.
 """
 
 import json

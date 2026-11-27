@@ -955,7 +955,51 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _apply_polyline(self, call, prepared, result):
         a = call.kwargs
-        self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
+        if not self._fast_polylines((a["points"],)):
+            self._stroke_path(DevicePath.polyline(self._mapped_path(a["points"])))
+
+    def _fast_polylines(self, polylines) -> bool:
+        """Cosmetic polylines through a unit transform, as GDI's integer fast path draws them.
+
+        The points stay whole device pixels and the stroke is clipped to
+        their bounds, one past the far edges unless either far edge is the
+        largest 32-bit value (then neither is extended). The 28.4 points
+        then wrap, and a segment whose 28.4 span overflows is dropped.
+        Returns False when the path does not apply (bounds past 32 bits
+        take the general path).
+        """
+        mapping = self.mapping
+        if (
+            self._state.recording_path
+            or mapping.rotated
+            or not mapping.translation_only
+            or any(value % 16 for value in mapping.fixed_point(0, 0))
+            or not self._painter().realized_pen.cosmetic
+        ):
+            return False
+        lines = [[tuple(value >> 4 for value in mapping.fixed_point(x, y)) for x, y in line] for line in polylines]
+        xs = [x for line in lines for x, _ in line]
+        ys = [y for line in lines for _, y in line]
+        if not xs or any(not -(2**31) <= value <= 0x7FFFFFFF for value in (min(xs), max(xs), min(ys), max(ys))):
+            return False
+        right, bottom = max(xs), max(ys)
+        if 0x7FFFFFFF not in (right, bottom):
+            right, bottom = right + 1, bottom + 1
+        bounds = (max(min(xs), 0), max(min(ys), 0), min(right, self.surface.width), min(bottom, self.surface.height))
+        painter = RasterPainter(self.surface, replace(self._state, clip=self._state.clip.intersect(bounds)))
+        for line in lines:
+            points = [(_int32(x * 16), _int32(y * 16)) for x, y in line]
+            run = points[:1]
+            for start, end in zip(points, points[1:], strict=False):
+                if abs(end[0] - start[0]) > 0x7FFFFFFF or abs(end[1] - start[1]) > 0x7FFFFFFF:
+                    if len(run) > 1:
+                        painter.stroke_path(DevicePath.polyline(run))
+                    run = [end]
+                else:
+                    run.append(end)
+            if len(run) > 1:
+                painter.stroke_path(DevicePath.polyline(run))
+        return True
 
     def _prepare_poly_bezier(self, a):
         if len(a["points"]) % 3 != 1:
@@ -986,6 +1030,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             self._state.position, self._state.fixed_position = logical[-1], None
 
     def _apply_poly_polyline(self, call, prepared, result):
+        if self._fast_polylines([polyline for polyline in call.kwargs["polylines"] if len(polyline) > 1]):
+            return
         for polyline in call.kwargs["polylines"]:
             if len(polyline) > 1:
                 self._stroke_path(DevicePath.polyline(self._mapped_path(polyline)))
