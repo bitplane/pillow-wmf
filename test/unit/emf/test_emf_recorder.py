@@ -985,9 +985,120 @@ def degenerate_scenarios():
 
         return draw
 
+    yield "degenerate-shapes-rotated", None, degenerate((0.866, 0.5, -0.5, 0.866, 20.0, 0.0))
     for box_name, box in boxes.items():
-        for call in ("arc", "chord", "pie", "round_rect", "ellipse", "angle_arc"):
+        for call in ("arc", "chord", "pie", "arc_to", "round_rect", "ellipse", "angle_arc"):
             yield f"degenerate-rotated-{box_name}-{call}", None, rotated(call, box)
+
+    def clip(widen):
+        def draw(r):
+            if widen:
+                r.select_object(r.ext_create_pen(0x10000, 6, 0))
+            r.begin_path()
+            r.move_to(5, 5)
+            r.poly_draw(((30, 5), (40, 20), (10, 30)), bytes((2, 4, 3)))  # fails natively
+            r.line_to(50, 10)
+            r.ellipse(10, 20, 40, 50)
+            r.end_path()
+            if widen:
+                r.widen_path()
+            r.select_clip_path(1 if widen else 5)
+            r.rectangle(0, 0, 60, 60)
+
+        return draw
+
+    yield "invalid-polydraw-clip-path", None, clip(False)
+    yield "invalid-polydraw-widened-clip-path", None, clip(True)
+
+
+def position_scenarios():
+    """The current position across transform changes, and paths after a failed PolyDraw."""
+    rotate, shift, scale = (
+        (0.866, 0.5, -0.5, 0.866, 20.0, 0.0),
+        (1.0, 0.0, 0.0, 1.0, 7.0, 3.0),
+        (2.0, 0.0, 0.0, 1.5, 0.0, 0.0),
+    )
+    arc_to = ("arc_to", (20, 20, 40, 34, 40, 27, 20, 20))
+    draws = {
+        "line_to": ("line_to", (40, 30)),
+        "arc_to": arc_to,
+        "angle_arc": ("angle_arc", (30, 30, 8, 30.0, 120.0)),
+        "polyline_to": ("polyline_to", (((40, 30), (30, 40)),)),
+    }
+
+    def steps(sequence):
+        def draw(r):
+            r.set_graphics_mode(2)
+            for step in sequence:
+                if len(step) == 6:
+                    r.set_world_transform(*step)
+                else:
+                    getattr(r, step[0])(*step[1])
+
+        return draw
+
+    for start in ("initial", "moved"):
+        for transform_name, transform in (("rotate", rotate), ("shift", shift), ("scale", scale)):
+            for name, call in draws.items():
+                moves = [("move_to", (10, 12))] if start == "moved" else []
+                yield f"position-{start}-{transform_name}-{name}", None, steps([*moves, transform, call])
+    rectangle = ("rectangle", (30, 30, 40, 40))
+    for name, sequence in {
+        "move-rectangle-transform-arcto": [("move_to", (10, 12)), rectangle, rotate, arc_to],
+        "rectangle-transform-arcto": [rectangle, rotate, arc_to],
+        "transform-rectangle-arcto": [rotate, rectangle, arc_to],
+        "transform-transform-arcto": [shift, rotate, arc_to],
+        "move-line-transform-arcto": [("move_to", (10, 12)), ("line_to", (15, 15)), rotate, arc_to],
+        "line-transform-arcto": [("line_to", (30, 30)), rotate, arc_to],
+        "anglearc-transform-arcto": [("angle_arc", (30, 30, 8, 30.0, 120.0)), rotate, arc_to],
+        "arcto-transform-arcto": [arc_to, rotate, arc_to],
+        "arc-transform-arcto": [("arc", (20, 20, 40, 34, 40, 27, 20, 20)), rotate, arc_to],
+        "move-transform-lineto": [("move_to", (10, 12)), rectangle, rotate, ("line_to", (40, 30))],
+    }.items():
+        yield f"sequence-{name}", None, steps(sequence)
+
+    def path(types, tail):
+        def draw(r):
+            r.begin_path()
+            r.move_to(5, 5)
+            r.poly_draw(((30, 5), (40, 20), (10, 30)), bytes(types))
+            if tail != "alone":
+                r.line_to(50, 10)
+            if tail == "line-ellipse":
+                r.ellipse(10, 20, 40, 50)
+            r.end_path()
+
+        return draw
+
+    for name, types in {"lone-bezier": (2, 4, 3), "undefined": (2, 2, 9), "short-bezier": (2, 4, 4)}.items():
+        for tail in ("alone", "line", "line-ellipse"):
+            yield f"polydraw-path-{name}-{tail}", None, path(types, tail)
+
+    def clip(build):
+        def draw(r):
+            r.begin_path()
+            r.move_to(5, 5)
+            build(r)
+            r.ellipse(10, 20, 40, 50)
+            r.end_path()
+            r.select_clip_path(5)
+            r.rectangle(0, 0, 60, 60)
+
+        return draw
+
+    def failed(r):
+        r.poly_draw(((30, 5), (40, 20), (10, 30)), bytes((2, 4, 3)))
+        r.line_to(50, 10)
+
+    def rebuilt(r):
+        r.line_to(30, 5)
+        r.move_to(5, 5)
+        r.line_to(50, 10)
+
+    yield "clip-failed-polydraw", None, clip(failed)
+    yield "clip-rebuilt-path", None, clip(rebuilt)
+    yield "clip-line", None, clip(lambda r: r.line_to(50, 10))
+    yield "clip-ellipse-only", None, clip(lambda r: None)
 
 
 SCENARIOS = [
@@ -997,6 +1108,7 @@ SCENARIOS = [
     *text_scenarios(),
     *completion_scenarios(),
     *degenerate_scenarios(),
+    *position_scenarios(),
 ]
 
 

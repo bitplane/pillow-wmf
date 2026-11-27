@@ -225,6 +225,32 @@ DEVICE_MAPPING = Mapping()
 ARC_FIELDS = ("left", "top", "right", "bottom", "start_x", "start_y", "end_x", "end_y")
 
 
+# Drawing calls that invalidate the DC's cached device position (see
+# DrawingState.device_position).
+POSITION_INVALIDATING_CALLS = frozenset(
+    (
+        "arc",
+        "chord",
+        "pie",
+        "ellipse",
+        "rectangle",
+        "round_rect",
+        "polygon",
+        "poly_polygon",
+        "polyline",
+        "poly_polyline",
+        "poly_bezier",
+        "set_pixel",
+        "text_out",
+        "ext_text_out",
+        "pat_blt",
+        "fill_path",
+        "stroke_path",
+        "stroke_and_fill_path",
+    )
+)
+
+
 class RasterContext(ExecutionContext[DrawingState]):
     """Draw the currently supported GDI calls into an RGB Pillow image.
 
@@ -337,6 +363,10 @@ class RasterContext(ExecutionContext[DrawingState]):
         with self._geometry_budget.activate():
             if not failed:
                 handler(call, prepared, result)
+                if call.name in POSITION_INVALIDATING_CALLS:
+                    # Drawing leaves the cached device position to be
+                    # recomputed from the logical position when next used.
+                    self._state.device_position = None
         self._commit(call)
         if isinstance(result, Handle) and self.is_null_object(result):
             # Intern failed creations so file-slot reuse cannot leak handles.
@@ -436,15 +466,18 @@ class RasterContext(ExecutionContext[DrawingState]):
             inside_frame=width,
         )
 
-    def _stroke_from_position(self, path, end):
+    def _stroke_from_position(self, path, end, *, cached=False):
         """Stroke a line from the current position into ``path``; move to ``end``.
 
         The current position is the exact logical end point, floored, as
-        native recording reports it after AngleArc and ArcTo.
+        native recording reports it after AngleArc and ArcTo. With ``cached``
+        the line starts from the DC's cached device position while it is valid.
         """
-        start = self._start_point()
+        start = self._state.device_position if cached else None
+        start = start if start is not None else self._start_point()
         self._stroke_path(DevicePath(((start, path.commands[0][0]), *path.commands)), extend=True)
         self._state.position = (math.floor(end[0]), math.floor(end[1]))
+        self._state.device_position = None
         self._state.fixed_position = path.commands[-1][-1]
 
     def _start_point(self):
@@ -473,7 +506,11 @@ class RasterContext(ExecutionContext[DrawingState]):
         if path is None:
             return  # A box narrower than an inside-frame pen: nothing happens.
         # The current position is the arc's 28.4 end, floored to a logical point.
-        self._stroke_from_position(path, self._floor_logical(path.commands[-1][-1]))
+        # ArcTo starts from the DC's cached device position while it is
+        # valid, even if a world transform has changed since it was cached.
+        self._stroke_from_position(
+            path, self._floor_logical(path.commands[-1][-1]), cached=self._state.fixed_position is None
+        )
 
     def _compatible_arc(self, a):
         """The figure a GM_COMPATIBLE Arc of the same box and radials draws; None if it draws nothing."""
@@ -933,6 +970,7 @@ class RasterContext(ExecutionContext[DrawingState]):
     def _apply_move_to(self, call, prepared, result):
         a = call.kwargs
         self._state.position = a["x"], a["y"]
+        self._state.device_position = None
         self._state.fixed_position = None
 
     def _prepare_line_to(self, a):
@@ -951,6 +989,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         start = self._start_point()
         self._stroke_path(DevicePath.polyline((start, self._path_point(a["x"], a["y"]))), extend=True)
         self._state.position = a["x"], a["y"]
+        self._state.device_position = self._path_point(*self._state.position)
         self._state.fixed_position = None
 
     def _apply_polyline(self, call, prepared, result):
@@ -1021,6 +1060,7 @@ class RasterContext(ExecutionContext[DrawingState]):
                 DevicePath(tuple(tuple(points[i : i + 4]) for i in range(0, len(points) - 1, 3))), extend=True
             )
             self._state.position, self._state.fixed_position = logical[-1], None
+            self._state.device_position = self._path_point(*self._state.position)
 
     def _apply_polyline_to(self, call, prepared, result):
         logical = (self._state.position, *call.kwargs["points"])
@@ -1028,6 +1068,7 @@ class RasterContext(ExecutionContext[DrawingState]):
             points = [self._start_point(), *self._mapped_path(logical[1:])]
             self._stroke_path(DevicePath.polyline(points), extend=True)
             self._state.position, self._state.fixed_position = logical[-1], None
+            self._state.device_position = self._path_point(*self._state.position)
 
     def _apply_poly_polyline(self, call, prepared, result):
         if self._fast_polylines([polyline for polyline in call.kwargs["polylines"] if len(polyline) > 1]):
@@ -1062,6 +1103,13 @@ class RasterContext(ExecutionContext[DrawingState]):
                 position = points[index + 2]
                 last = index + 2
                 index += 3
+            elif self._state.recording_path:
+                # Inside a path bracket the points before an invalid type stay
+                # in the path; the call then fails, leaving the position as it
+                # was. Outside one nothing is drawn.
+                if figure:
+                    figures.append((tuple(figure), False))
+                return tuple(figures), self._state.position, True
             else:
                 raise InvalidOperation("Invalid PolyDraw point type")
             if types[last] & 1:  # PT_CLOSEFIGURE
@@ -1071,16 +1119,19 @@ class RasterContext(ExecutionContext[DrawingState]):
         if figure:
             figures.append((tuple(figure), False))
         del closed
-        return tuple(figures), position
+        return tuple(figures), position, False
 
     def _apply_poly_draw(self, call, prepared, result):
-        figures, position = prepared
+        figures, position, failed = prepared
         for commands, closed in figures:
             mapped = tuple(tuple(self._path_point(*point) for point in command) for command in commands)
             self._stroke_path(DevicePath(mapped, closed=closed))
+        if failed:
+            return
         if figures or position != self._state.position:
             self._state.fixed_position = None
         self._state.position = position
+        self._state.device_position = self._path_point(*self._state.position)
 
     def _apply_polygon(self, call, prepared, result):
         name = call.name
@@ -2290,6 +2341,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         painter.text(layout, rectangle, options)
         if layout.position is not None:
             self._state.position = layout.position
+            self._state.device_position = None
             self._state.text_position = (layout.position, layout.fixed_position)
         painter.decorations(layout, rectangle, options)
 

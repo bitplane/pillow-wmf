@@ -76,6 +76,16 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   path figure continues across the arc. Drawing starts from it as it is in
   GM_ADVANCED under a page or world transform, and otherwise from it floored
   to a whole device pixel.
+- Otherwise `ArcTo` starts from the DC's cached device position, which a
+  world transform change does not update: the device origin on a fresh DC,
+  the device end point after `LineTo`, `PolylineTo`, `PolyBezierTo` or
+  `PolyDraw`, and the logical position mapped afresh after `MoveTo` or any
+  other drawing. Other calls start from the logical position
+  ([`test_current_position.py`](../test/unit/test_current_position.py)).
+- `PolyDraw` with an invalid point type fails. Inside a path bracket the
+  points before the invalid one stay in the path, and the current position
+  is left where it was, so the next call opens a new figure there; outside
+  one nothing is drawn.
 - In GM_COMPATIBLE (direct drawing; EMF playback is always GM_ADVANCED),
   `ArcTo` draws the figure `Arc` would, and `AngleArc` maps its circle's box
   to whole device pixels and builds the arc about that box's centre in
@@ -425,8 +435,15 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   overlapping caps can cancel. Shapes and arcs take the playback figures; in
   `GM_COMPATIBLE`, `AngleArc` builds them as in `GM_ADVANCED`, and `ArcTo` as
   described above. A path without figures makes no region: `SelectClipPath`
-  then keeps the clip. A path call that fails (such as `PolyDraw` with an
-  invalid point type, which is still recorded) leaves the path as it was.
+  then keeps the clip. A failed `PolyDraw` is still recorded and leaves the
+  path as playback describes. The region's box also reaches, for each
+  figure without area (an open line closed onto itself), the scan row each
+  non-horizontal edge ends at: the first row whose pixel centre it does not
+  reach, above the coverage, or the row before it below. A recording DC's
+  cached device position follows playback's, except that its drawing calls
+  refresh a valid cached position under the current transform instead of
+  dropping it; after an arc under rotation or shear, a one-pixel pen's
+  bounds count only the exact end point's pixel.
 - A wide stroke reaches past its figure's 28.4 bounds by, on each axis, the
   larger device magnitude of the pen width's (w, w) and (w, -w) vectors,
   halved, plus one pixel; square caps add half of that again, and mitred
@@ -719,7 +736,3 @@ source pixel. A mask bit of 1 copies the source pixel.
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
   differs from native along slanted edges.
-- Recorded header bounds in two corners: an `ArcTo` drawn from the initial
-  current position after a world transform is set (native bounds then
-  reach the device origin), and a clip path built after a failed `PolyDraw`
-  (the records themselves match native recordings).

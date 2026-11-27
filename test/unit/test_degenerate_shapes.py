@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from pillow_wmf import InvalidOperation, RasterContext
+from pillow_wmf import RasterContext
 from pillow_wmf.emf import Metafile
 from pillow_wmf.emf.recorder import Recorder
 
@@ -75,15 +75,3 @@ def test_clip_path_after_a_failed_poly_draw_is_recorded(widen):
         (["ExtCreatePen", "SelectObject"] if widen else []) + path + tail + ["SelectClipPath", "Rectangle", "Eof"]
     )
     assert names == expected
-
-
-def test_failed_poly_draw_keeps_the_raster_path():
-    dc = RasterContext(64, 64)
-    dc.begin_path()
-    dc.move_to(5, 5)
-    with pytest.raises(InvalidOperation):
-        dc.poly_draw(((30, 5), (40, 20), (10, 30)), bytes((2, 4, 3)))
-    dc.line_to(50, 10)
-    dc.end_path()
-    dc.stroke_path()
-    assert dc.image.getpixel((5, 5)) == (0, 0, 0)

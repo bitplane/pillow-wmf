@@ -49,6 +49,7 @@ from ..mapping import IDENTITY_TRANSFORM, REFERENCE_DEVICE, Mapping, ReferenceDe
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
 from ..objects import BitmapData, EncodedText, FontRequest, RegionGeometry
+from ..raster import POSITION_INVALIDATING_CALLS
 from ..stroke import realize_pen
 from ..trace import TraceContext
 from ..world import modified as modified_world
@@ -258,6 +259,30 @@ def _log_font(request: FontRequest) -> LogFont:
     return LogFont(**values, face_name=encoded.ljust(FACE_NAME_BYTES, b"\0"))
 
 
+def _region_box(spans, contours) -> Rect:
+    """The inclusive box GDI gives the region a path's fill coverage makes.
+
+    A figure without area (an open line closed onto itself) covers nothing,
+    yet each of its non-horizontal edges ends a scan band at the first pixel
+    row whose centre it does not reach, stretching the box: up to that row
+    above the coverage, or to the row before it below. With no coverage the
+    region is empty.
+    """
+    box = _box(point for y, start, end in spans for point in ((start, y), (end - 1, y)))
+    if box is None:
+        return (0, 0, -1, -1)
+    left, top, right, bottom = box
+    for points in contours:
+        closed = list(zip(points, points[1:] + points[:1], strict=True))
+        if sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in closed):
+            continue  # A figure with area bounds the region by its coverage.
+        for (_, y0), (_, y1) in closed:
+            if y0 != y1:
+                end = -((8 - max(y0, y1)) // 16)  # ceil((max - 8) / 16) in 28.4
+                top, bottom = min(top, end), max(bottom, end - 1)
+    return left, top, right, bottom
+
+
 def _poly_draw_valid(types, count) -> bool:
     """Whether PolyDraw accepts these point types: moves, lines and whole cubics."""
     if len(types) != count:
@@ -306,6 +331,9 @@ class _State:
     # The exact 28.4 device point an arc left the current position at, which
     # the next *To call starts from; None once a logical point sets it.
     fixed_position: tuple[int, int] | None = None
+    # The cached 28.4 device position ArcTo starts from (see raster_state).
+    # On a recording DC drawing refreshes it under the current transform.
+    device_position: tuple[int, int] | None = (0, 0)
     # Whether the DC has ever held a non-identity world transform. From then
     # on GM_COMPATIBLE curved shapes keep their far edges in their bounds,
     # whatever transform follows.
@@ -526,7 +554,9 @@ class Recorder(TraceContext):
             if self._extent(state) != (0, 0):
                 return (), (state.fixed_position,), ()
             x, y = state.fixed_position
-            return (state.position,), (), (((x + 15) >> 4, (y + 15) >> 4),)
+            pixel = ((x + 15) >> 4, (y + 15) >> 4)
+            # Under rotation or shear only the exact point counts.
+            return ((), (), (pixel,)) if state.mapping.rotated else ((state.position,), (), (pixel,))
         return (state.position,), (), ()
 
     def _clipped(self, state: _State, box: Rect | None) -> Rect | None:
@@ -581,6 +611,10 @@ class Recorder(TraceContext):
         if state.recording_path and state.shadow is not None and name in _PATH_CALLS:
             self._follow_path(call, state)
         handler(a, state, records)
+        if name in POSITION_INVALIDATING_CALLS and state.device_position is not None:
+            # A recording DC's drawing refreshes a valid cached device
+            # position under the current transform.
+            state.device_position = state.mapping.fixed_point(*state.position)
         return records
 
     # Objects
@@ -856,6 +890,7 @@ class Recorder(TraceContext):
         self._draw(state, bounds)
         if position is not None:
             state.position = position
+            state.device_position = None
             state.text_position = (position, fixed_position)
             state.fixed_position = None
 
@@ -1128,13 +1163,19 @@ class Recorder(TraceContext):
             for value, (scale, origin) in zip(point, mapping._transform(), strict=True)
         )
 
-    def _stroke_from_position(self, state, path, end):
+    def _stroke_from_position(self, state, path, end, *, cached=False):
         """Account a line from the current position into ``path``; move to ``end``.
 
-        The current position is the exact logical end point, floored.
+        The current position is the exact logical end point, floored. With
+        ``cached`` the line starts from the cached device position while it
+        is valid.
         """
         points = [point for command in path.commands for point in command]
-        logical, exact, pixels = self._start(state)
+        if cached and state.device_position is not None:
+            x, y = state.device_position
+            logical, exact, pixels = (), ((x, y),), ((x >> 4, y >> 4),)
+        else:
+            logical, exact, pixels = self._start(state)
         if pixels:
             logical_box = self._device_box(state, logical)
             start = _union(logical_box, _box(pixels)) if logical_box is not None else _box(pixels)
@@ -1152,6 +1193,7 @@ class Recorder(TraceContext):
             box = self._stroked(state, _union(box, start), fixed_points=exact)
         self._draw(state, box)
         state.position = (floor(end[0]), floor(end[1]))
+        state.device_position = None
         state.fixed_position = path.commands[-1][-1]
 
     def _record_arc_to(self, a, state, records):
@@ -1176,11 +1218,15 @@ class Recorder(TraceContext):
         if path is None:
             return  # A box narrower than an inside-frame pen: the call does nothing.
         # The current position is the arc's 28.4 end, floored to a logical point.
-        self._stroke_from_position(state, path, self._floor_logical(state, path.commands[-1][-1]))
+        # A DC whose position was never set starts ArcTo from the device origin.
+        self._stroke_from_position(
+            state, path, self._floor_logical(state, path.commands[-1][-1]), cached=state.fixed_position is None
+        )
 
     def _record_move_to(self, a, state, records):
         records.append(fixed.MoveToEx(a["x"], a["y"]))
         state.position, state.fixed_position = (a["x"], a["y"]), None
+        state.device_position = None
         self._trace(state, ((a["x"], a["y"]),))
 
     def _record_line_to(self, a, state, records):
@@ -1192,6 +1238,7 @@ class Recorder(TraceContext):
             box = _union(box, _box(pixels))
         self._draw(state, self._stroked(state, box, fixed_points=exact))
         state.position, state.fixed_position = (a["x"], a["y"]), None
+        state.device_position = state.mapping.fixed_point(a["x"], a["y"])
 
     def _points(self, a, state, records, wide, narrow, *, key="points", to=False):
         points = tuple(tuple(point) for point in a[key])
@@ -1219,6 +1266,7 @@ class Recorder(TraceContext):
         if to and points and ("types" not in a or _poly_draw_valid(a["types"], len(points))):
             # A PolyDraw that fails validation is recorded but moves nothing.
             state.position, state.fixed_position = points[-1], None
+            state.device_position = state.mapping.fixed_point(*points[-1])
 
     def _record_polyline(self, a, state, records):
         self._points(a, state, records, variable.Polyline, variable.Polyline16)
@@ -1370,9 +1418,14 @@ class Recorder(TraceContext):
             try:
                 if not shadow._state.path:
                     shadow._state.position = state.position
+                    shadow._state.device_position = state.device_position
                     shadow._state.fixed_position = state.fixed_position
                 shadow.mapping = deepcopy(state.mapping)
-                shadow._stroke_from_position(path, self._floor_logical(state, path.commands[-1][-1]))
+                shadow._stroke_from_position(
+                    path,
+                    self._floor_logical(state, path.commands[-1][-1]),
+                    cached=state.fixed_position is None,
+                )
             except InvalidOperation:
                 pass  # The call failed before changing the path, as natively.
             except UnsupportedOperation:
@@ -1388,6 +1441,7 @@ class Recorder(TraceContext):
                 # The path starts at the DC's current position; afterwards the
                 # shadow keeps its own, so figures continue across curves.
                 shadow._state.position = state.position
+                shadow._state.device_position = state.device_position
                 shadow._state.fixed_position = state.fixed_position
             shadow._state.arc_direction = state.arc_direction
             shadow.invoke(call)
@@ -1447,7 +1501,7 @@ class Recorder(TraceContext):
             ys = [y for points in contours for _, y in points]
             left, top, right, bottom = min(xs) // 16 - 1, min(ys) // 16 - 1, max(xs) // 16 + 2, max(ys) // 16 + 2
             spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
-            return _box(point for y, start, end in spans for point in ((start, y), (end - 1, y))) or (0, 0, -1, -1)
+            return _region_box(spans, contours)
         if figures is None:
             raise UnsupportedOperation("SelectClipPath of this path is not recorded")
         figures = [(points, closed) for points, closed in figures if points]
@@ -1460,8 +1514,7 @@ class Recorder(TraceContext):
         right, bottom = (max(xs) + margin) // 16 + 1, (max(ys) + margin) // 16 + 1
         contours = tuple(list(points) for points, _ in figures)
         spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
-        box = _box(point for y, start, end in spans for point in ((start, y), (end - 1, y)))
-        return box or (0, 0, -1, -1)
+        return _region_box(spans, contours)
 
     def _record_end_path(self, a, state, records):
         records.append(fixed.EndPath())
@@ -1840,6 +1893,7 @@ _SAVED = (
     "pen",
     "position",
     "fixed_position",
+    "device_position",
     "clip",
     "miter_limit",
     "brush_null",
