@@ -13,6 +13,13 @@ with GetPath (device points), with the current position after the PolyDraw:
 
     path NAME polydraw=R position=X,Y count=N x,y:TYPE ...
 
+Then, per invalid type, the clip region SelectClipPath makes from the
+line-and-ellipse path (the surface filled black through it), and the failed
+PolyDraw drawn outside a path followed by a LineTo:
+
+    region NAME clip=C result=R
+    row Y X0 ##..#
+
 Then the same position and path cases recorded natively, in the format of
 probe-windows-emf-recording.py:
 
@@ -66,6 +73,8 @@ def functions(gdi):
         "GetCurrentPositionEx": (ctypes.POINTER(wintypes.POINT),),
         "BeginPath": (),
         "EndPath": (),
+        "SelectClipPath": (integer,),
+        "PatBlt": (integer, integer, integer, integer, wintypes.DWORD),
     }.items():
         api[name] = bind(gdi, name, integer if name == "SetGraphicsMode" else boolean, ptr, *args)
     api["GetPath"] = bind(gdi, "GetPath", integer, ptr, ctypes.POINTER(wintypes.POINT), ctypes.c_char_p, integer)
@@ -132,6 +141,30 @@ def main():
             api["GetPath"](dc, points, kinds, count)
             listed = " ".join(f"{points[i].x},{points[i].y}:{kinds.raw[i]}" for i in range(max(count, 0)))
             print(f"path {name} polydraw={result} position={position[0]},{position[1]} count={count} {listed}")
+    for name, types in INVALID_TYPES.items():
+        for clip in (True, False):
+            # With a clip path: the region it makes, filled black. Without:
+            # the failed PolyDraw drawn outside a path, then a LineTo.
+            with reference_surface(SIZE, SIZE) as (gdi, dc, bits):
+                api = functions(gdi)
+                if clip:
+                    path_case(api, dc, types, "line-ellipse")
+                    result = api["SelectClipPath"](dc, 5)
+                    api["PatBlt"](dc, 0, 0, SIZE, SIZE, 0x00000042)  # BLACKNESS
+                else:
+                    api["MoveToEx"](dc, 5, 5, None)
+                    points = (wintypes.POINT * 3)(wintypes.POINT(30, 5), wintypes.POINT(40, 20), wintypes.POINT(10, 30))
+                    result = api["PolyDraw"](dc, points, (ctypes.c_ubyte * 3)(*types), 3)
+                    api["LineTo"](dc, 50, 60)
+                gdi.GdiFlush()
+                pixels = ctypes.cast(bits, ctypes.POINTER(ctypes.c_uint32))
+                print(f"region {name} clip={clip} result={result}")
+                for y in range(SIZE):
+                    row = [pixels[y * SIZE + x] & 0xFFFFFF != 0xFFFFFF for x in range(SIZE)]
+                    if any(row):
+                        first = row.index(True)
+                        last = SIZE - 1 - row[::-1].index(True)
+                        print(f"row {y} {first} " + "".join("#" if v else "." for v in row[first : last + 1]))
     gdi = ctypes.WinDLL("gdi32", use_last_error=True)
     api = functions(gdi)
     ptr = ctypes.c_void_p
