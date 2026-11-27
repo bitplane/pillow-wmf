@@ -143,6 +143,7 @@ PROBES = {
     "coordinate-limits": Probe("probe-windows-coordinate-limits.py", output="coordinate-limits"),
     "glyph-transforms": Probe("probe-windows-glyph-transforms.py", output="glyph-transforms"),
     "compatible-arcs": Probe("probe-windows-compatible-arcs.py", output="compatible-arcs"),
+    "charset-mapping": Probe("probe-windows-charset-mapping.py", output="charset-mapping"),
 }
 
 

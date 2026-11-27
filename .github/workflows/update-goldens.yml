@@ -92,6 +92,7 @@ on:
           - coordinate-limits
           - glyph-transforms
           - compatible-arcs
+          - charset-mapping
   push:
     branches: [master]
     paths:
