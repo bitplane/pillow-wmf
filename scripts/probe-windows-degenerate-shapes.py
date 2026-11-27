@@ -10,9 +10,14 @@ rotation and a non-uniform scale:
     case mode=M box=B call=C drawn=R
     row Y X0 ##..#               (# marks a changed pixel)
 
+Then the path (device points and types) after a PolyDraw with an invalid
+point type inside a path bracket, and after a following LineTo:
+
+    path step=S result=R count=N x,y:TYPE ...
+
 Then native EMF recordings, in the format of probe-windows-emf-recording.py,
-of the same shapes and of clip paths built after a PolyDraw with an invalid
-point type:
+of the same shapes (all at once per mode, and each alone under the rotation)
+and of clip paths built after the failed PolyDraw:
 
     [NAME] frame=None result=R
       type=T size=S payload=HEX
@@ -113,6 +118,17 @@ def recordings(api):
     for mode in MODES:
         yield f"degenerate-shapes-{mode}", degenerate(mode)
 
+    def single(box, call):
+        def draw(dc):
+            set_mode(api, dc, "rotated")
+            return shape(api, dc, call, box)
+
+        return draw
+
+    for box_name, box in BOXES.items():
+        for call in CALLS:
+            yield f"degenerate-rotated-{box_name}-{call}", single(box, call)
+
     def clip(widen):
         def draw(dc):
             results = []
@@ -162,6 +178,24 @@ def main():
                             print(f"row {y} {first} " + "".join("#" if v else "." for v in row[first : last + 1]))
     gdi = ctypes.WinDLL("gdi32", use_last_error=True)
     api = functions(gdi)
+    get_path = bind(
+        gdi, "GetPath", ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(wintypes.POINT), ctypes.c_char_p, ctypes.c_int
+    )
+    with reference_surface(SIZE, SIZE) as (_, dc, _bits):
+        # The path after each step, in device pixels.
+        api["BeginPath"](dc)
+        api["MoveToEx"](dc, 5, 5, None)
+        for step, call in (
+            ("poly-draw", lambda: invalid_poly_draw(api, dc)),
+            ("line-to", lambda: api["LineTo"](dc, 50, 10)),
+        ):
+            result = call()
+            count = get_path(dc, None, None, 0)
+            points, kinds = (wintypes.POINT * max(count, 1))(), ctypes.create_string_buffer(max(count, 1))
+            get_path(dc, points, kinds, count)
+            listed = " ".join(f"{points[i].x},{points[i].y}:{kinds.raw[i]}" for i in range(max(count, 0)))
+            print(f"path step={step} result={result} count={count} {listed}")
+        api["EndPath"](dc)
     ptr = ctypes.c_void_p
     create_emf = bind(gdi, "CreateEnhMetaFileW", ptr, ptr, ctypes.c_wchar_p, ptr, ctypes.c_wchar_p)
     close_emf = bind(gdi, "CloseEnhMetaFile", ptr, ptr)
