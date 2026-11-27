@@ -214,6 +214,44 @@ def main():
         api["MoveToEx"](dc, 5, 5, None)
         api["LineTo"](dc, 50, 10)
 
+    # Region boxes of paths with degenerate open figures, on a memory DC and
+    # on a recording DC: one figure of points (x,y;...), optionally followed
+    # by the ellipse (10,20)-(40,50).
+    figures = {
+        "down-right": ((5, 5), (50, 10)),
+        "up-right": ((5, 10), (50, 5)),
+        "steep": ((5, 5), (20, 40)),
+        "horizontal": ((5, 10), (50, 10)),
+        "vertical": ((30, 5), (30, 15)),
+        "below": ((5, 60), (50, 55)),
+        "zigzag": ((5, 5), (50, 10), (5, 15)),
+        "inside": ((15, 30), (35, 40)),
+    }
+
+    def region_box(dc, points, ellipse):
+        api["BeginPath"](dc)
+        api["MoveToEx"](dc, *points[0], None)
+        for point in points[1:]:
+            api["LineTo"](dc, *point)
+        if ellipse:
+            api["Ellipse"](dc, 10, 20, 40, 50)
+        api["EndPath"](dc)
+        selected = api["SelectClipPath"](dc, 5)
+        region, box = create_rgn(0, 0, 0, 0), wintypes.RECT()
+        has = get_clip_rgn(dc, region)
+        kind = get_rgn_box(region, ctypes.byref(box))
+        return f"selected={selected} has={has} kind={kind} box={box.left},{box.top},{box.right},{box.bottom}"
+
+    for name, points in figures.items():
+        for ellipse in (False, True):
+            with reference_surface(SIZE, SIZE) as (_, dc, _bits):
+                memory = region_box(dc, points, ellipse)
+            with reference_surface(128, 128) as (_, reference, _bits):
+                dc = create_emf(reference, None, None, None)
+                recording = region_box(dc, points, ellipse)
+                delete_emf(close_emf(dc))
+            print(f"regionbox {name} ellipse={ellipse} memory {memory} recording {recording}")
+
     recordings = [
         ("clip-failed-polydraw", clip_variant(failed)),
         ("clip-rebuilt-path", clip_variant(rebuilt)),
