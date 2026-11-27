@@ -73,6 +73,8 @@ class TransferPreparation:
 
     def prepare_device(self, args) -> SourceTransfer | TransferAction:
         """Realize a scan band without stretching its device-pixel geometry."""
+        if args["color_usage"] not in (0, 1, 2):
+            return TransferAction.NOOP  # Other colour usages fail natively.
         layout = read_dib(args["source"], color_usage=args["color_usage"], max_pixels=self.max_bitmap_pixels)
         x, y, width, height, source_x, source_y = (args[key] for key in ("x", "y", "width", "height", "src_x", "src_y"))
         start, count = args["start_scan"], args["scan_count"]
@@ -145,6 +147,8 @@ class TransferPreparation:
         )
 
     def prepare_dib(self, name, a) -> SourceTransfer | TransferAction:
+        if a.get("color_usage", 0) not in (0, 1, 2):
+            return TransferAction.NOOP  # Other colour usages fail natively.
         if pattern_rop2(a["rop"]) is not None:
             return TransferAction.PATTERN
         if a["source"] is None:

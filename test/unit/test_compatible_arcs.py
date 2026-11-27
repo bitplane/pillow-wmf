@@ -1,4 +1,4 @@
-"""Native ArcTo and AngleArc pixels in both graphics modes under scaled page mappings.
+"""Native ArcTo, AngleArc, Arc, Chord and Pie pixels in both graphics modes and directions.
 
 ``compatible_arcs.json`` holds the pixels the ``compatible-arcs`` probe read
 back: a one-pixel pen moves to (5, 90), draws one call, then a line to

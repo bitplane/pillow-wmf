@@ -13,7 +13,8 @@ import math
 import struct
 from collections.abc import Callable
 
-from ..binary import FormatError, Limits
+from ..binary import FormatError, Limits, ResourceLimitError
+from ..bitmap import read_dib
 from ..bitmap16 import encode_bitmap16
 from ..constants import (
     ALTERNATE,
@@ -122,7 +123,19 @@ def _font(record):
 
 
 def _dib(record) -> BitmapData:
-    return BitmapData("dib", record.bitmap_info + record.bits)
+    """The record's BitmapInfo and bits as one packed DIB.
+
+    The bits sit where the header puts them for the record's colour usage
+    (a DIB_PAL_COLORS table holds 16-bit entries), as native playback reads
+    them from their own offset whatever the BitmapInfo block's size.
+    """
+    info, bits = record.bitmap_info, record.bits
+    usage = getattr(record, "usage", DIB_RGB_COLORS)
+    try:
+        offset = read_dib(BitmapData("dib", info + bits), color_usage=usage if usage in (0, 1, 2) else 0).offset
+    except (FormatError, UnsupportedOperation, ResourceLimitError):
+        return BitmapData("dib", info + bits)
+    return BitmapData("dib", info[:offset].ljust(offset, b"\0") + bits)
 
 
 def _source_blit(record):
