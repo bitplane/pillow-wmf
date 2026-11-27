@@ -145,6 +145,7 @@ PROBES = {
     "compatible-arcs": Probe("probe-windows-compatible-arcs.py", output="compatible-arcs"),
     "charset-mapping": Probe("probe-windows-charset-mapping.py", output="charset-mapping"),
     **_family("probe-windows-text-samples.py", "text-samples", {"text-samples": ()}),
+    "degenerate-shapes": Probe("probe-windows-degenerate-shapes.py", output="degenerate-shapes"),
 }
 
 

@@ -94,6 +94,7 @@ on:
           - compatible-arcs
           - charset-mapping
           - text-samples
+          - degenerate-shapes
   push:
     branches: [master]
     paths:
