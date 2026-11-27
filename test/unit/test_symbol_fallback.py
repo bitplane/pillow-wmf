@@ -62,12 +62,14 @@ def test_supplied_face_precedes_bundled_fallback(symbol):
     assert FontCollection([symbol], symbol_fallback=True).resolve(Font(face_name=b"Symbol")) is symbol
 
 
-def test_bundled_font_cannot_claim_native_glyph_number_compatibility():
+def test_bundled_font_draws_glyph_indices_as_the_realized_face():
+    # Glyph numbers address the face actually realized, which the
+    # substitution report names.
     fonts = SystemFontCollection(paths=[])
     request = Font(face_name=b"Symbol", charset=2)
     face = fonts.resolve(request)
-    with pytest.raises(UnsupportedOperation, match="Glyph-index"):
-        fonts.layout_font(request, face, (1, 1))
+    assert fonts.layout_font(request, face, (1, 1)) is not None
+    assert fonts.substitutions[-1].reason == "bundled symbol font"
 
 
 def test_explicit_collection_does_not_alias_other_specialist_fonts():
@@ -88,8 +90,7 @@ def test_missing_symbol_family_uses_family_hint_and_reports_substitution(name, p
     assert text == ("\uf0c5" if pitch == 18 else "\u2bb2")
     assert fonts.substitutions[-1].requested == name.decode()
     assert fonts.substitutions[-1].reason == "symbol charset fallback"
-    with pytest.raises(UnsupportedOperation, match="Glyph-index"):
-        fonts.layout_font(request, face, (1, 1))
+    assert fonts.layout_font(request, face, (1, 1)) is not None
 
 
 def test_missing_roman_symbol_renders_like_an_explicit_symbol_request():

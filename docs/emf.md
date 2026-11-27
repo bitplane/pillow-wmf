@@ -200,7 +200,9 @@ font-limited and reported separately.
 
 TrueType, CFF (PostScript-outline OpenType) and variable faces are accepted;
 a variable face draws its default instance, and FreeType rasterizes CFF
-glyphs, with no attempt to match the native OpenType driver.
+glyphs, with no attempt to match the native OpenType driver. Glyph-index text
+draws the indices in whichever face was realized, as natively, even when
+that face substitutes for the requested one (the substitution is reported).
 
 Layout, metrics and face selection follow native GDI, but antialiased glyph
 coverage is FreeType's (gray for ANTIALIASED_QUALITY, LCD filtering for the

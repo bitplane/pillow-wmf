@@ -304,20 +304,12 @@ def test_variable_face_is_selected(installed):
     assert fonts.resolve(request()).family == "Arial"
 
 
-def test_style_substitution_rejects_glyph_indices(installed):
-    fonts = SystemFontCollection(paths=[installed("Arial")])
-    req = request(weight=700)
-    face = fonts.resolve(req)
-    assert fonts.substitutions[0].reason == "style"
-    with pytest.raises(UnsupportedOperation, match="Glyph-index"):
-        fonts.layout_font(req, face, (1, 1))
-
-
-def test_glyph_indices_cannot_use_substituted_family(installed):
+def test_substituted_face_draws_glyph_indices(installed):
     fonts = SystemFontCollection(paths=[installed("Liberation Sans")])
-    req = request()
-    with pytest.raises(UnsupportedOperation, match="Glyph-index"):
-        fonts.layout_font(req, fonts.resolve(req), (1, 1))
+    for req in (request(weight=700), request("Missing")):
+        face = fonts.resolve(req)
+        assert face.family == "Liberation Sans"
+        assert fonts.layout_font(req, face, (1, 1)) is not None
 
 
 def test_empty_inventory_is_explicit_failure():
