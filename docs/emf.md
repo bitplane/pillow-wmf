@@ -98,6 +98,11 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   reverses it. `PatBlt`'s far edges are 32-bit sums. A unit page scale maps
   integers exactly
   ([`test_coordinate_limits.py`](../test/unit/test_coordinate_limits.py)).
+- In GM_ADVANCED, an arc, chord, pie or `ArcTo` whose logical box has no
+  width or height sweeps its whole degenerate ellipse, from and back to its
+  zero-angle point, and a `RoundRect` of such a box draws as the box; in
+  GM_COMPATIBLE such shapes draw nothing
+  ([`test_degenerate_shapes.py`](../test/unit/test_degenerate_shapes.py)).
 - Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
   `PlgBlt`, `AlphaBlend`, `TransparentBlt`) map their logical source
   rectangle through the recorded source transform, rounding each edge half
@@ -363,7 +368,9 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   `ModifyWorldTransform` is written as given. Once the DC has held a
   non-identity world transform, whatever follows, GM_COMPATIBLE ellipses,
   rounded rectangles, arcs, chords and pies keep their far edges in their
-  bounds; rectangles do not.
+  bounds; rectangles do not. A GM_COMPATIBLE ellipse, rounded rectangle,
+  arc, chord, pie or `ArcTo` whose inclusive edges turn its box over is not
+  recorded at all.
 - `OffsetViewportOrgEx` is written as `SetViewportOrgEx` of the result.
   Escapes (`MFCOMMENT` included) and `SetMapperFlags` leave no record;
   `gdi_comment` writes `EMR_GDICOMMENT`.
@@ -379,7 +386,10 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   their figure's floored and rounded-up extremes, and a flood fill claims
   the whole device. Under rotation or shear, points count the pixels their
   exact 28.4 positions lie across, and a box its four corners, its far edges
-  exclusive except for a rectangle's. Record and header bounds
+  exclusive except for a rectangle's; ellipses, rounded rectangles, arcs,
+  chords and pies (with a visible, non-inside-frame pen) instead span their
+  drawn figure's floored and rounded-up 28.4 points, Bézier control points
+  included. Record and header bounds
   are clipped to the clip region's bounding box; a figure with neither pen
   nor brush adds nothing.
 - Transfer sources are written as `GetDIBits` returns a source DC's bitmap:
@@ -415,7 +425,8 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   overlapping caps can cancel. Shapes and arcs take the playback figures; in
   `GM_COMPATIBLE`, `AngleArc` builds them as in `GM_ADVANCED`, and `ArcTo` as
   described above. A path without figures makes no region: `SelectClipPath`
-  then keeps the clip.
+  then keeps the clip. A path call that fails (such as `PolyDraw` with an
+  invalid point type, which is still recorded) leaves the path as it was.
 - A wide stroke reaches past its figure's 28.4 bounds by, on each axis, the
   larger device magnitude of the pen width's (w, w) and (w, -w) vectors,
   halved, plus one pixel; square caps add half of that again, and mitred
@@ -708,3 +719,7 @@ source pixel. A mask bit of 1 copies the source pixel.
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
   differs from native along slanted edges.
+- Recorded header bounds in two corners: an `ArcTo` drawn from the initial
+  current position after a world transform is set (native bounds then
+  reach the device origin), and a clip path built after a failed `PolyDraw`
+  (the records themselves match native recordings).

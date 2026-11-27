@@ -1781,8 +1781,10 @@ class RasterContext(ExecutionContext[DrawingState]):
                 advanced = advanced_bounds is not None and drawing_bounds is advanced_bounds
                 # Corner proportions are established before integer device
                 # mapping, just like arc radial directions.
-                width = Fraction(abs(a["ellipse_width"]) * (right - left), abs(a["right"] - a["left"]))
-                height = Fraction(abs(a["ellipse_height"]) * (bottom - top), abs(a["bottom"] - a["top"]))
+                # A box with no logical width or height draws as the plain box.
+                logical_width, logical_height = abs(a["right"] - a["left"]), abs(a["bottom"] - a["top"])
+                width = Fraction(abs(a["ellipse_width"]) * (right - left), logical_width) if logical_width else 0
+                height = Fraction(abs(a["ellipse_height"]) * (bottom - top), logical_height) if logical_height else 0
                 rectangle = not width or not height
                 path = round_rect_figure(
                     left,

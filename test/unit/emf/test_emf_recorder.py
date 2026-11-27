@@ -948,7 +948,56 @@ def completion_scenarios():
             yield f"compatible-{shape}-after-shear-{reset_name}", None, draw
 
 
-SCENARIOS = [*scenarios(), *more_scenarios(), *gap_scenarios(), *text_scenarios(), *completion_scenarios()]
+def degenerate_scenarios():
+    """Curved shapes with empty logical boxes: all at once per mode, and each alone rotated."""
+    boxes = {"w0": (20, 10, 20, 40), "h0": (10, 20, 40, 20), "both0": (20, 20, 20, 20), "w1": (20, 10, 21, 40)}
+    modes = {"compatible": None, "identity": (1.0, 0.0, 0.0, 1.0, 0.0, 0.0), "scaled": (1.5, 0.0, 0.0, 0.5, 0.0, 10.0)}
+
+    def shape(r, call, box):
+        if call == "round_rect":
+            r.round_rect(*box, 8, 8)
+        elif call == "ellipse":
+            r.ellipse(*box)
+        elif call == "angle_arc":
+            r.angle_arc(box[0], box[1], 0, 30.0, 120.0)
+        else:
+            getattr(r, call)(*box, 50, 5, 5, 50)
+
+    def degenerate(transform):
+        def draw(r):
+            if transform is not None:
+                r.set_graphics_mode(2)
+                r.set_world_transform(*transform)
+            for box in boxes.values():
+                for call in ("arc", "chord", "pie", "arc_to", "round_rect", "ellipse", "angle_arc"):
+                    shape(r, call, box)
+
+        return draw
+
+    for mode, transform in modes.items():
+        yield f"degenerate-shapes-{mode}", None, degenerate(transform)
+
+    def rotated(call, box):
+        def draw(r):
+            r.set_graphics_mode(2)
+            r.set_world_transform(0.866, 0.5, -0.5, 0.866, 20.0, 0.0)
+            shape(r, call, box)
+
+        return draw
+
+    for box_name, box in boxes.items():
+        for call in ("arc", "chord", "pie", "round_rect", "ellipse", "angle_arc"):
+            yield f"degenerate-rotated-{box_name}-{call}", None, rotated(call, box)
+
+
+SCENARIOS = [
+    *scenarios(),
+    *more_scenarios(),
+    *gap_scenarios(),
+    *text_scenarios(),
+    *completion_scenarios(),
+    *degenerate_scenarios(),
+]
 
 
 @pytest.mark.parametrize(("name", "frame", "draw"), SCENARIOS, ids=[name for name, _, _ in SCENARIOS])
