@@ -67,6 +67,7 @@ def functions(gdi):
         "LineTo": (integer, integer),
         "ArcTo": (integer,) * 8,
         "Ellipse": (integer,) * 4,
+        "Rectangle": (integer,) * 4,
         "AngleArc": (integer, integer, wintypes.DWORD, ctypes.c_float, ctypes.c_float),
         "PolylineTo": (ctypes.POINTER(wintypes.POINT), wintypes.DWORD),
         "PolyDraw": (ctypes.POINTER(wintypes.POINT), ctypes.POINTER(ctypes.c_ubyte), integer),
