@@ -1618,6 +1618,7 @@ class RasterContext(ExecutionContext[DrawingState]):
         # Rectangle's wide-pen path enters EBOX after its own decrement.
         shift = int(self.mapping.rtl) * (1 + (name == "rectangle" and not pen.cosmetic))
         advanced_bounds = corners = None
+        reversed_box = False
         if self.mapping.graphics_mode == GM_ADVANCED:
             # GM_ADVANCED paths use the transformed 28.4 box itself, lower-right
             # inclusive. The integer box takes the ceiling of each edge.
@@ -1655,6 +1656,8 @@ class RasterContext(ExecutionContext[DrawingState]):
                 # edges, whose 32-bit values wrap.
                 left, top = (_int32(value * 16) >> 4 for value in (left, top))
                 right, bottom = ((_int32((value - 1) * 16) >> 4) + 1 for value in (right, bottom))
+                # A box the wrap reverses builds its curve reversed.
+                reversed_box = right < left
         left, right = sorted((left, right))
         top, bottom = sorted((top, bottom))
         if self.mapping.graphics_mode == GM_ADVANCED:
@@ -1677,13 +1680,17 @@ class RasterContext(ExecutionContext[DrawingState]):
             rectangle = name == "rectangle"
             if rectangle and not corners and not self._state.recording_path:
                 # The outline runs through the 32-bit 28.4 box, which wraps:
-                # when that overflows or turns the box over, only the
-                # interior inside the outline is filled; when it merely
+                # when that overflows or turns the box over, a unit transform
+                # (whose integer box survives) fills only the interior inside
+                # the outline, and any other draws nothing; when it merely
                 # wraps, the outline is drawn where it wrapped to.
                 exact = advanced_bounds or tuple(value * 16 for value in (left, top, right - 1, bottom - 1))
                 edges = [_int32(value) for value in exact]
                 overflows = edges[2] - edges[0] > 0x7FFFFFFF or edges[3] - edges[1] > 0x7FFFFFFF
                 if overflows or edges[0] > edges[2] or edges[1] > edges[3] or list(exact) != edges:
+                    turned = overflows or edges[0] > edges[2] or edges[1] > edges[3]
+                    if turned and not self.mapping.translation_only:
+                        return
                     if self._state.brush.style != BS_NULL and right - left > 2 and bottom - top > 2:
                         interior = ((left + 1) * 16, (top + 1) * 16, (right - 1) * 16, (bottom - 1) * 16)
                         no_pen = replace(self._state, pen=replace(self._state.pen, style=PS_NULL))
@@ -1719,6 +1726,11 @@ class RasterContext(ExecutionContext[DrawingState]):
                     ),
                     closed=True,
                 )
+                if reversed_box:
+                    mirror = (left + right - 1) * 16
+                    path = DevicePath(
+                        tuple(tuple((mirror - x, y) for x, y in command) for command in path.commands), closed=True
+                    )
             elif name == "round_rect":
                 advanced = advanced_bounds is not None and drawing_bounds is advanced_bounds
                 # Corner proportions are established before integer device

@@ -40,6 +40,19 @@ def cases():
         yield f"advanced-rectangle-right-{edge}", "ADVANCED", ("Rectangle", 4, 4, edge, 12)
         yield f"advanced-polyline-{edge}", "ADVANCED", ("Polyline", (4, 20), (edge, 20))
         yield f"advanced-polygon-{edge}", "ADVANCED", ("Polygon", (4, 4), (edge, 8), (4, 28))
+    # Polylines whose 28.4 points wrap to just left or right of the start.
+    wraps = {
+        "wrap-2147483646": ((4, 20), (2**31 - 2, 20)),
+        "wrap-268435455": ((4, 20), (2**28 - 1, 20)),
+        "wrap-268435457": ((4, 20), (2**28 + 1, 20)),
+        "wrap-reversed-2147483647": ((2**31 - 1, 20), (4, 20)),
+        "wrap-slanted-2147483647": ((4, 20), (2**31 - 1, 24)),
+        "wrap-turning-2147483647": ((4, 20), (2**31 - 1, 20), (10, 26)),
+        "wrap-vertical-2147483647": ((20, 4), (20, 2**31 - 1)),
+        "wrap-vertical-268435456": ((20, 4), (20, 2**28)),
+    }
+    for name, line in wraps.items():
+        yield f"polyline-{name}", "COMPATIBLE", ("Polyline", *line)
     # Page scales reaching the limit from small logical coordinates.
     for viewport in (2**22, 2**23 + 1, 2**24, 1073840127):
         yield f"scaled-rectangle-{viewport}", ("SCALED", viewport), ("Rectangle", 0, 0, 10, 10)

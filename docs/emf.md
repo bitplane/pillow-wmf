@@ -87,8 +87,10 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   point's next 28.4 pixel overflows. A rectangle's outline runs through the
   wrapped box (GM_COMPATIBLE: inclusive far edges): it is drawn where it
   wraps to, or, when it overflows or turns over, dropped, leaving the
-  interior inside it filled from the true box. Curved GM_COMPATIBLE shapes
-  are built from the wrapped inclusive box. `PatBlt`'s far edges are 32-bit
+  interior inside it filled from the true box under a unit transform (which
+  keeps integer coordinates) and nothing drawn under any other. Curved
+  GM_COMPATIBLE shapes are built from the wrapped inclusive box, mirrored
+  when the wrap reverses it. `PatBlt`'s far edges are 32-bit
   sums. A unit page scale maps integers exactly
   ([`test_coordinate_limits.py`](../test/unit/test_coordinate_limits.py)).
 - Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
@@ -675,9 +677,7 @@ source pixel. A mask bit of 1 copies the source pixel.
 ## Playback behaviours not yet modelled
 
 - Past 2^27 device pixels most drawing follows the native rules below; a
-  polyline whose 28.4 coordinates wrap without overflowing, an ellipse whose
-  box wraps over itself, and a rectangle under a page scale that carries it
-  past the range still differ
+  polyline whose 28.4 coordinates wrap without overflowing still differs
   ([`probe-windows-coordinate-limits.py`](../scripts/probe-windows-coordinate-limits.py)
   records the native results).
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
