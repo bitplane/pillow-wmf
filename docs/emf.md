@@ -198,6 +198,10 @@ Text records play through the font collection's faces:
 Exact comparisons use the controlled fonts in `test/fonts`; real fonts are
 font-limited and reported separately.
 
+TrueType, CFF (PostScript-outline OpenType) and variable faces are accepted;
+a variable face draws its default instance, and FreeType rasterizes CFF
+glyphs, with no attempt to match the native OpenType driver.
+
 Layout, metrics and face selection follow native GDI, but antialiased glyph
 coverage is FreeType's (gray for ANTIALIASED_QUALITY, LCD filtering for the
 ClearType qualities), so smoothed glyphs differ slightly from Windows. They are

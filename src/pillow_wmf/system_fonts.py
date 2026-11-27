@@ -120,7 +120,7 @@ def catalogue(paths):
                     count = len(collection.fonts)
             for index in range(count):
                 with TTFont(path, fontNumber=index, lazy=True) as font:
-                    if "glyf" not in font or "fvar" in font:
+                    if not any(tag in font for tag in ("glyf", "CFF ", "CFF2")):
                         continue
                     family = font["name"].getBestFamilyName()
                     if not family:

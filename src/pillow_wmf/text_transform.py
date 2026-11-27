@@ -743,14 +743,51 @@ def baseline_vector(matrix, world_baseline):
 
 
 def _raw_contours(outline):
-    """Contours of notional (point, on-curve) pairs as the font stores them."""
+    """Contours of notional (point, on-curve) pairs as the font stores them.
+
+    CFF outlines' cubic arcs become eight on-curve lines each, so that every
+    later stage sees TrueType's quadratic contours.
+    """
     points, tags, ends = outline.points, outline.tags, outline.contours
     start = 0
     for end in ends:
-        raw = [(points[i], tags[i] & 1) for i in range(start, end + 1)]
+        raw = [(points[i], tags[i] & 3) for i in range(start, end + 1)]
         start = end + 1
+        if any(tag == 2 for _, tag in raw):
+            raw = _cubic_lines(raw)
         if raw:
-            yield raw
+            yield [(point, tag & 1) for point, tag in raw]
+
+
+def _cubic_lines(raw):
+    """A contour of (point, tag) with each cubic arc (tag 2 controls) replaced by eight lines."""
+    first = next((i for i, (_, tag) in enumerate(raw) if tag == 1), None)
+    if first is None:
+        return []
+    raw = raw[first:] + raw[:first]
+    contour = [raw[0]]
+    i = 1
+    while i <= len(raw):
+        point, tag = raw[i % len(raw)]
+        if tag == 2:
+            p0, p1, p2, p3 = contour[-1][0], point, raw[(i + 1) % len(raw)][0], raw[(i + 2) % len(raw)][0]
+            for step in range(1, 9):
+                t = Fraction(step, 8)
+                s = 1 - t
+                contour.append(
+                    (
+                        tuple(
+                            s**3 * p0[k] + 3 * s * s * t * p1[k] + 3 * s * t * t * p2[k] + t**3 * p3[k] for k in (0, 1)
+                        ),
+                        1,
+                    )
+                )
+            i += 3
+        else:
+            contour.append((point, tag))
+            i += 1
+    contour.pop()  # the closing copy of the start point
+    return contour
 
 
 def _flatten(raw, half=lambda value: value / 2):

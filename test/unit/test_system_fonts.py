@@ -273,13 +273,6 @@ def test_missing_webdings_fallback_does_not_recurse_or_change_encoding():
             fonts.resolve(request(family, charset=2, pitch_and_family=17))
 
 
-def test_glyph_indices_cannot_use_substituted_family(installed):
-    fonts = SystemFontCollection(paths=[installed("Liberation Sans")])
-    req = request()
-    with pytest.raises(UnsupportedOperation, match="Glyph-index"):
-        fonts.layout_font(req, fonts.resolve(req), (1, 1))
-
-
 def test_bad_font_inventory_entry_is_ignored(installed, tmp_path):
     broken = tmp_path / "broken.ttf"
     broken.write_bytes(b"not a font")
@@ -300,7 +293,7 @@ def test_collection_face_indices_are_preserved(installed, tmp_path):
     assert fonts.resolve(request("Second")).index == 1
 
 
-def test_variable_face_is_not_selected(installed):
+def test_variable_face_is_selected(installed):
     from fontTools.ttLib import newTable
 
     path = installed("Arial")
@@ -308,7 +301,7 @@ def test_variable_face_is_not_selected(installed):
         font["fvar"] = newTable("fvar")
         font.save(path)
     fonts = SystemFontCollection(paths=[path, installed("Liberation Sans")])
-    assert fonts.resolve(request()).family == "Liberation Sans"
+    assert fonts.resolve(request()).family == "Arial"
 
 
 def test_style_substitution_rejects_glyph_indices(installed):
@@ -318,6 +311,13 @@ def test_style_substitution_rejects_glyph_indices(installed):
     assert fonts.substitutions[0].reason == "style"
     with pytest.raises(UnsupportedOperation, match="Glyph-index"):
         fonts.layout_font(req, face, (1, 1))
+
+
+def test_glyph_indices_cannot_use_substituted_family(installed):
+    fonts = SystemFontCollection(paths=[installed("Liberation Sans")])
+    req = request()
+    with pytest.raises(UnsupportedOperation, match="Glyph-index"):
+        fonts.layout_font(req, fonts.resolve(req), (1, 1))
 
 
 def test_empty_inventory_is_explicit_failure():
