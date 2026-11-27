@@ -172,7 +172,56 @@ def main():
     close_emf = bind(gdi, "CloseEnhMetaFile", ptr, ptr)
     get_bits = bind(gdi, "GetEnhMetaFileBits", wintypes.UINT, ptr, wintypes.UINT, ptr)
     delete_emf = bind(gdi, "DeleteEnhMetaFile", wintypes.BOOL, ptr)
-    recordings = [(f"position-{name}", lambda dc, c=case: position_case(api, dc, *c)) for name, *case in POSITION_CASES]
+    get_clip_box = bind(gdi, "GetClipBox", ctypes.c_int, ptr, ctypes.POINTER(wintypes.RECT))
+    create_rgn = bind(gdi, "CreateRectRgn", ptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int)
+    get_clip_rgn = bind(gdi, "GetClipRgn", ctypes.c_int, ptr, ptr)
+    get_rgn_box = bind(gdi, "GetRgnBox", ctypes.c_int, ptr, ctypes.POINTER(wintypes.RECT))
+
+    def clip_variant(builder):
+        def draw(dc):
+            api["BeginPath"](dc)
+            api["MoveToEx"](dc, 5, 5, None)
+            builder(dc)
+            api["Ellipse"](dc, 10, 20, 40, 50)
+            api["EndPath"](dc)
+            count = api["GetPath"](dc, None, None, 0)
+            size = max(count, 1)
+            points, kinds = (wintypes.POINT * size)(), ctypes.create_string_buffer(size)
+            api["GetPath"](dc, points, kinds, count)
+            path = " ".join(f"{points[i].x},{points[i].y}:{kinds.raw[i]}" for i in range(max(count, 0)))
+            selected = api["SelectClipPath"](dc, 5)
+            box, region_box = wintypes.RECT(), wintypes.RECT()
+            kind = get_clip_box(dc, ctypes.byref(box))
+            region = create_rgn(0, 0, 0, 0)
+            has = get_clip_rgn(dc, region)
+            get_rgn_box(region, ctypes.byref(region_box))
+            api["Rectangle"](dc, 0, 0, 60, 60)
+            return (
+                f"selected={selected} clipbox={kind}:{box.left},{box.top},{box.right},{box.bottom} "
+                f"cliprgn={has}:{region_box.left},{region_box.top},{region_box.right},{region_box.bottom} path={path}"
+            )
+
+        return draw
+
+    def failed(dc):
+        points = (wintypes.POINT * 3)(wintypes.POINT(30, 5), wintypes.POINT(40, 20), wintypes.POINT(10, 30))
+        api["PolyDraw"](dc, points, (ctypes.c_ubyte * 3)(2, 4, 3), 3)
+        api["LineTo"](dc, 50, 10)
+
+    def rebuilt(dc):
+        api["LineTo"](dc, 30, 5)
+        api["MoveToEx"](dc, 5, 5, None)
+        api["LineTo"](dc, 50, 10)
+
+    recordings = [
+        ("clip-failed-polydraw", clip_variant(failed)),
+        ("clip-rebuilt-path", clip_variant(rebuilt)),
+        ("clip-line", clip_variant(lambda dc: api["LineTo"](dc, 50, 10))),
+        ("clip-ellipse-only", clip_variant(lambda dc: None)),
+    ]
+    recordings += [
+        (f"position-{name}", lambda dc, c=case: position_case(api, dc, *c)) for name, *case in POSITION_CASES
+    ]
     recordings += [(f"polydraw-path-{name}", lambda dc, c=case: path_case(api, dc, *c)) for name, *case in PATH_CASES]
     for name, draw in recordings:
         with reference_surface(128, 128) as (_, reference, _bits):
