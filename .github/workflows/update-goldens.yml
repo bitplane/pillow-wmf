@@ -93,6 +93,7 @@ on:
           - glyph-transforms
           - compatible-arcs
           - charset-mapping
+          - text-samples
   push:
     branches: [master]
     paths:

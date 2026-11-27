@@ -198,6 +198,15 @@ Text records play through the font collection's faces:
 Exact comparisons use the controlled fonts in `test/fonts`; real fonts are
 font-limited and reported separately.
 
+Layout, metrics and face selection follow native GDI, but antialiased glyph
+coverage is FreeType's (gray for ANTIALIASED_QUALITY, LCD filtering for the
+ClearType qualities), so smoothed glyphs differ slightly from Windows. They are
+reviewed by eye: [`text_samples.py`](../scripts/text_samples.py) defines EMF
+sheets of common Windows faces across sizes, qualities, styles, rotations and
+character sets; the `text-samples` probe plays them natively, and
+`python scripts/text-samples-side-by-side.py NATIVE_DIR OUTPUT_DIR` renders the
+same files with the host's fonts beside the native images.
+
 ## Records
 
 *Codec*: `typed` records decode into fields; `opaque` ones round-trip as bytes.
