@@ -40,6 +40,7 @@ from ..constants import (
     MM_TEXT,
     PS_INSIDEFRAME,
     PS_NULL,
+    PS_SOLID,
 )
 from ..ellipse import advanced_arc, arc_figure
 from ..gdi import Call, Handle, InvalidOperation, UnsupportedOperation
@@ -498,10 +499,13 @@ class Recorder(TraceContext):
         each axis takes the larger magnitude, halved, plus one pixel. Square
         caps add half of that again; mitred strokes (Rectangle frames, and
         geometric pens with miter joins) take it times the miter limit. Null
-        and one-pixel pens reach nothing.
+        and one-pixel pens reach nothing, but a zero-width geometric pen reaches
+        its one pixel.
         """
         pen = state.pen
-        if pen.style == PS_NULL or abs(pen.width * state.mapping.linear_scale[0]) <= 1:
+        zero_geometric = pen.width == 0 and pen.realize is not None and pen.realize[0] == "ext_create_pen"
+        zero_geometric = zero_geometric and bool(pen.realize[1]["style"] & 0x00010000)
+        if pen.style == PS_NULL or (abs(pen.width * state.mapping.linear_scale[0]) <= 1 and not zero_geometric):
             return (0, 0)
         mapping, width = state.mapping, pen.width
         if mapping.rotated:
@@ -682,6 +686,10 @@ class Recorder(TraceContext):
             )
 
         geometric = bool(style & 0x00010000)
+        if geometric and width <= 0 and style & 15 != PS_SOLID:
+            # Only solid geometric pens may have zero width; creation fails.
+            self._created(state, _Object("pen", null=True))
+            return
         self._created(
             state,
             _Object(

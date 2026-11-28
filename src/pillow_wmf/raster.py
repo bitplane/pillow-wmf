@@ -791,8 +791,8 @@ class RasterContext(ExecutionContext[DrawingState]):
             # User style units are three pixels, like the predefined styles.
             pattern = {PS_ALTERNATE: (1, 1), PS_USERSTYLE: tuple(3 * e for e in entries)}.get(line_style, ())
             return Pen(color, 0, PS_SOLID if pattern else line_style, pattern=pattern, cosmetic=True)
-        if a["width"] <= 0 or line_style == PS_ALTERNATE:
-            raise InvalidOperation("Geometric pens need a positive width and no alternate style")
+        if line_style == PS_ALTERNATE or (a["width"] <= 0 and line_style != PS_SOLID):
+            raise InvalidOperation("Geometric pens need a positive width unless solid, and no alternate style")
         if line_style == PS_USERSTYLE:
             pattern = entries
         else:
@@ -1225,8 +1225,13 @@ class RasterContext(ExecutionContext[DrawingState]):
 
     def _prepare_alpha_blend(self, a):
         operation, flags, constant, alpha_format = (a["blend"] >> shift & 255 for shift in (0, 8, 16, 24))
-        if operation != 0 or flags != 0 or alpha_format not in (0, 1):
+        if operation != 0 or alpha_format not in (0, 1):
             raise InvalidOperation("Unsupported BLENDFUNCTION")
+        if flags & 1:
+            # Native playback honours bit 0 of BlendFlags with blend arithmetic
+            # that differs in the last bit at some alphas; other bits, which
+            # Windows applications write, are ignored.
+            raise UnsupportedOperation("AlphaBlend BlendFlags bit 0 arithmetic")
         layout = read_dib(a["source"], max_pixels=self.max_bitmap_pixels)
         alpha = None
         if alpha_format:

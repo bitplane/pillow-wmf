@@ -123,6 +123,13 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   colour table indexes the default palette, whatever palette the metafile
   selected, with indexes wrapping modulo its 20 entries.
 
+A record size below 8, not a multiple of 4 or past the end of the data
+ends playback: native playback draws the records before it, then stops and
+reports failure, and the player does the same with an omission.
+`emf.loader.read` reads such a file up to that record (`Metafile.stopped_at`
+names its offset, and the result cannot be encoded); `Metafile.from_bytes`
+rejects it unless asked to stop there.
+
 Calls and records that fail natively (invalid modes, unrealizable objects,
 malformed bitmaps, masks that are not 1-bpp) fail without effect here too, and
 a created object that fails leaves its slot empty; record types playback does
@@ -330,7 +337,7 @@ the codec and reference columns against the code and fixtures.
 | `POLYDRAW16` | typed | full | yes |  |
 | `CREATEMONOBRUSH` | typed | full | yes | Colours come from the text and background colours. |
 | `CREATEDIBPATTERNBRUSHPT` | typed | full | yes |  |
-| `EXTCREATEPEN` | typed | full | yes | Cosmetic, alternate and user-styled pens; geometric pens with any cap, join, dash, hatch or DIB pattern. |
+| `EXTCREATEPEN` | typed | full | yes | Cosmetic, alternate and user-styled pens; geometric pens with any cap, join, dash, hatch or DIB pattern. Only a solid geometric pen may have zero width. |
 | `POLYTEXTOUTA` | typed | partial | yes | Each entry plays as ExtTextOut, always with its rectangle and advances. |
 | `POLYTEXTOUTW` | typed | partial | yes | Each entry plays as ExtTextOut, always with its rectangle and advances. |
 | `SETICMMODE` | typed | full | yes | No effect on a bitmap DC. |
@@ -348,7 +355,7 @@ the codec and reference columns against the code and fixtures.
 | `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEW` | typed | full | yes | No effect on a bitmap DC. |
-| `ALPHABLEND` | typed | full | yes | Constant and per-pixel alpha with nearest sampling. |
+| `ALPHABLEND` | typed | partial | yes | Constant and per-pixel alpha with nearest sampling. BlendFlags bits other than bit 0 (applications write `0x80`) are ignored, as natively; bit 0 changes native blend rounding and is reported as an omission. |
 | `SETLAYOUT` | typed | full | yes | Mirrors the playback transform about the reference device width; the DC layout is unchanged. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; without it native playback stops. |
@@ -449,7 +456,9 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   halved, plus one pixel; square caps add half of that again, and mitred
   strokes (`Rectangle` frames, and geometric pens with miter joins) take it
   times the miter limit. The low edges round down and the high edges up. A
-  call following an arc starts from the exact 28.4 point the arc left.
+  call following an arc starts from the exact 28.4 point the arc left. A
+  zero-width geometric pen is not a one-pixel pen here: it reaches the one
+  pixel of a zero width.
 - Without an explicit frame, the frame is the bounds in 0.01 mm of the
   reference device; the header's micrometre extension is the reference
   display's size at 96 DPI.
@@ -477,6 +486,10 @@ Wide pens are widened as native GDI widens a path
 replaces each figure with the outlines, and a wide stroke fills them with the
 winding rule. `Rectangle` frames are the exception described under
 transforms.
+
+`ExtCreatePen` accepts a zero width only for a solid geometric pen, which
+draws like a geometric pen of width one with its caps and joins; a styled
+geometric pen of zero width fails to create.
 
 - Each figure is walked line by line. A Bézier is flattened as it is walked:
   its first piece takes the start tangent and its last piece the end tangent
@@ -736,3 +749,5 @@ source pixel. A mask bit of 1 copies the source pixel.
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
   differs from native along slanted edges.
+- `AlphaBlend` with bit 0 of BlendFlags set: native blending then rounds
+  some mid-range alphas differently; such blends are omissions.

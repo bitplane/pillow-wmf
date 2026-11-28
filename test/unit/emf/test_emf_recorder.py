@@ -1101,6 +1101,18 @@ def position_scenarios():
     yield "clip-ellipse-only", None, clip(lambda r: None)
 
 
+def zero_width_pen_scenarios():
+    """Zero-width geometric pens: solid ones reach a pixel, dashed ones fail to create."""
+    for style in (0x10000, 0x10001, 0x12200):
+
+        def draw(r, style=style):
+            r.select_object(r.ext_create_pen(style, 0, 0x80))
+            r.move_to(4, 4)
+            r.line_to(59, 20)
+
+        yield f"zero-width-pen-{style:#x}", None, draw
+
+
 SCENARIOS = [
     *scenarios(),
     *more_scenarios(),
@@ -1109,6 +1121,7 @@ SCENARIOS = [
     *completion_scenarios(),
     *degenerate_scenarios(),
     *position_scenarios(),
+    *zero_width_pen_scenarios(),
 ]
 
 

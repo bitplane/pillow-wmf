@@ -1099,4 +1099,10 @@ def play(
                 raise PlaybackError(f"Record {index}: object creation did not return a handle")
             # Replacing an occupied slot leaves the earlier object alive, as natively.
             slots[record.object_index] = result if ok else unavailable
+    else:
+        if metafile.stopped_at is not None:
+            # Native playback stops at the invalid record; earlier drawing remains.
+            omissions.omit(
+                len(metafile.records), 0, f"Invalid record size at byte {metafile.stopped_at}; playback stops"
+            )
     return omissions.result()
