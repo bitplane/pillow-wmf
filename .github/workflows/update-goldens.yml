@@ -96,6 +96,7 @@ on:
           - text-samples
           - degenerate-shapes
           - current-position
+          - corpus-boundaries
   push:
     branches: [master]
     paths:

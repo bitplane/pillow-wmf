@@ -184,6 +184,7 @@ EXPECTED = {
     "text-samples": ("scripts/probe-windows-text-samples.py --output text-samples", "text-samples", True, True),
     "degenerate-shapes": ("scripts/probe-windows-degenerate-shapes.py", "degenerate-shapes", True, True),
     "current-position": ("scripts/probe-windows-current-position.py", "current-position", True, True),
+    "corpus-boundaries": ("scripts/probe-windows-corpus-boundaries.py", "corpus-boundaries", True, True),
 }
 
 
