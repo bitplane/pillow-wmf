@@ -186,9 +186,13 @@ def palette_count(eof: Record | UnknownRecord) -> int:
 
 @dataclass(frozen=True)
 class Metafile:
+    """A header and its records; ``stopped_at`` is the byte offset of an
+    invalid record size where a playback read ended, without EOF."""
+
     header: Header
     records: tuple[Record | UnknownRecord, ...]
     trailing: bytes = b""
+    stopped_at: int | None = None
 
     @classmethod
     def build(
@@ -241,7 +245,13 @@ class Metafile:
         return header.to_bytes() + b"".join(encoded) + self.trailing
 
     @classmethod
-    def from_bytes(cls, data: bytes, *, limits: Limits | None = None):
+    def from_bytes(cls, data: bytes, *, limits: Limits | None = None, stop_at_invalid_size: bool = False):
+        """Decode a stream; every record must be well formed.
+
+        With ``stop_at_invalid_size``, as native playback does, an invalid
+        record size ends the records instead, and ``stopped_at`` names it.
+        Such a metafile plays but does not encode.
+        """
         limits = limits if limits is not None else Limits()
         if not isinstance(data, bytes):
             raise TypeError("Input must be immutable bytes")
@@ -261,6 +271,8 @@ class Metafile:
                 raise FormatError(f"Truncated record header at byte {offset}")
             kind, size = reader.unpack("II")
             if size < 8 or size % 4 or size > end - offset:
+                if stop_at_invalid_size:
+                    return cls(header, tuple(records), data[offset:], stopped_at=offset)
                 raise FormatError(f"Invalid record size at byte {offset}")
             payload = reader.take(size - 8)
             try:

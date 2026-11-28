@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import Lock, RLock
 
 import freetype as ft
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 from PIL import Image
 
@@ -254,14 +255,21 @@ def default_em_height(m21, m22) -> Fraction:
 
 
 class FontFace:
-    """A pinned TrueType face with its Windows metrics, not Pillow's metrics."""
+    """A pinned font face with its Windows metrics, not Pillow's metrics.
+
+    TrueType, CFF and CFF2 outlines are accepted; FreeType rasterizes CFF
+    glyphs, and a variable font draws its default instance.
+    """
 
     def __init__(self, data: bytes, *, index=0):
         self.data = bytes(data)
         self.index = index
         with TTFont(BytesIO(self.data), fontNumber=index) as font:
-            if "glyf" not in font or "fvar" in font:
-                raise UnsupportedOperation("Only static TrueType outlines are supported")
+            # Variable fonts draw their default instance; CFF and CFF2 outlines
+            # are rasterized by FreeType like TrueType ones.
+            outlines = next((tag for tag in ("glyf", "CFF ", "CFF2") if tag in font), None)
+            if outlines is None:
+                raise UnsupportedOperation("Font has no TrueType or CFF outlines")
             self.family = font["name"].getBestFamilyName()
             self.weight = font["OS/2"].usWeightClass
             self.italic = bool(font["OS/2"].fsSelection & 1)
@@ -280,20 +288,33 @@ class FontFace:
             first = font["OS/2"].usFirstCharIndex
             self.break_character = first + 2 if first <= 1 else 32
             self.design_advances = {i: font["hmtx"][name][0] for i, name in enumerate(font.getGlyphOrder())}
-            glyf = font["glyf"]
             # Black boxes along the baseline: the left side bearing to it plus the box width.
             # Black boxes across it: the box bottom and top.
             self.ink_spans, self.ink_heights = {}, {}
-            for i, name in enumerate(font.getGlyphOrder()):
-                glyph = glyf[name]
-                if getattr(glyph, "numberOfContours", 0):
-                    bearing = font["hmtx"][name][1]
-                    self.ink_spans[i] = (bearing, bearing + glyph.xMax - glyph.xMin)
-                    self.ink_heights[i] = (glyph.yMin, glyph.yMax)
-            self.hinted = "fpgm" in font or any(
-                getattr(glyph, "program", None) and glyph.program.getBytecode()
-                for glyph in (font["glyf"][name] for name in font.getGlyphOrder())
-            )
+            if outlines == "glyf":
+                glyf = font["glyf"]
+                for i, name in enumerate(font.getGlyphOrder()):
+                    glyph = glyf[name]
+                    if getattr(glyph, "numberOfContours", 0):
+                        bearing = font["hmtx"][name][1]
+                        self.ink_spans[i] = (bearing, bearing + glyph.xMax - glyph.xMin)
+                        self.ink_heights[i] = (glyph.yMin, glyph.yMax)
+                self.hinted = "fpgm" in font or any(
+                    getattr(glyph, "program", None) and glyph.program.getBytecode()
+                    for glyph in (glyf[name] for name in font.getGlyphOrder())
+                )
+            else:
+                glyphs = font.getGlyphSet()
+                for i, name in enumerate(font.getGlyphOrder()):
+                    pen = BoundsPen(glyphs)
+                    glyphs[name].draw(pen)
+                    if pen.bounds is not None:
+                        x_min, y_min, x_max, y_max = (round(value) for value in pen.bounds)
+                        bearing = font["hmtx"][name][1]
+                        self.ink_spans[i] = (bearing, bearing + x_max - x_min)
+                        self.ink_heights[i] = (y_min, y_max)
+                # FreeType's own CFF engine draws horizontal glyphs at every quality.
+                self.hinted = True
             symbol_map = next(
                 (table.cmap for table in font["cmap"].tables if table.platformID == 3 and table.platEncID == 0), None
             )

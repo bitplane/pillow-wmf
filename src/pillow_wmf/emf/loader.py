@@ -37,7 +37,8 @@ def placement(header: bytes) -> Placement:
 
 
 def read(data: bytes, limits: Limits | None = None) -> Metafile:
-    return Metafile.from_bytes(data, limits=limits)
+    """Read for playback: records end at an invalid record size, as natively."""
+    return Metafile.from_bytes(data, limits=limits, stop_at_invalid_size=True)
 
 
 def play_into(context, data: bytes, area: Placement | None) -> None:

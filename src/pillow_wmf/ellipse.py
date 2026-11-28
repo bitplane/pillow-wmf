@@ -333,7 +333,11 @@ def arc_cubics(
         quadrant = (0, 1, 3, 2)[(x < 0) + 2 * (y < 0)]
         return atan2_degrees(y, x), quadrant
 
-    if angles is None:
+    if angles is None and not (radial_rx and radial_ry):
+        # A radial box without width or height cuts nowhere: the arc is the
+        # whole degenerate ellipse, from and back to its zero-angle point.
+        (first, first_quadrant), (last, last_quadrant) = (float32(0), 0), (float32(0), 0)
+    elif angles is None:
         (first, first_quadrant), (last, last_quadrant) = angle(start), angle(end)
     else:
         first, last = (float32(value % 360) for value in angles)

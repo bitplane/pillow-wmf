@@ -76,6 +76,16 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   path figure continues across the arc. Drawing starts from it as it is in
   GM_ADVANCED under a page or world transform, and otherwise from it floored
   to a whole device pixel.
+- Otherwise `ArcTo` starts from the DC's cached device position, which a
+  world transform change does not update: the device origin on a fresh DC,
+  the device end point after `LineTo`, `PolylineTo`, `PolyBezierTo` or
+  `PolyDraw`, and the logical position mapped afresh after `MoveTo` or any
+  other drawing. Other calls start from the logical position
+  ([`test_current_position.py`](../test/unit/test_current_position.py)).
+- `PolyDraw` with an invalid point type fails. Inside a path bracket the
+  points before the invalid one stay in the path, and the current position
+  is left where it was, so the next call opens a new figure there; outside
+  one nothing is drawn.
 - In GM_COMPATIBLE (direct drawing; EMF playback is always GM_ADVANCED),
   `ArcTo` draws the figure `Arc` would, and `AngleArc` maps its circle's box
   to whole device pixels and builds the arc about that box's centre in
@@ -98,6 +108,11 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   reverses it. `PatBlt`'s far edges are 32-bit sums. A unit page scale maps
   integers exactly
   ([`test_coordinate_limits.py`](../test/unit/test_coordinate_limits.py)).
+- In GM_ADVANCED, an arc, chord, pie or `ArcTo` whose logical box has no
+  width or height sweeps its whole degenerate ellipse, from and back to its
+  zero-angle point, and a `RoundRect` of such a box draws as the box; in
+  GM_COMPATIBLE such shapes draw nothing
+  ([`test_degenerate_shapes.py`](../test/unit/test_degenerate_shapes.py)).
 - Transfers with a source bitmap (`BitBlt`, `StretchBlt`, `MaskBlt`,
   `PlgBlt`, `AlphaBlend`, `TransparentBlt`) map their logical source
   rectangle through the recorded source transform, rounding each edge half
@@ -107,6 +122,13 @@ Playback follows `PlayEnhMetaFile` on the reference oracle:
   source draws nothing, as GDI rejects such a source DC. A `DIB_PAL_COLORS`
   colour table indexes the default palette, whatever palette the metafile
   selected, with indexes wrapping modulo its 20 entries.
+
+A record size below 8, not a multiple of 4 or past the end of the data
+ends playback: native playback draws the records before it, then stops and
+reports failure, and the player does the same with an omission.
+`emf.loader.read` reads such a file up to that record (`Metafile.stopped_at`
+names its offset, and the result cannot be encoded); `Metafile.from_bytes`
+rejects it unless asked to stop there.
 
 Calls and records that fail natively (invalid modes, unrealizable objects,
 malformed bitmaps, masks that are not 1-bpp) fail without effect here too, and
@@ -197,6 +219,12 @@ Text records play through the font collection's faces:
 
 Exact comparisons use the controlled fonts in `test/fonts`; real fonts are
 font-limited and reported separately.
+
+TrueType, CFF (PostScript-outline OpenType) and variable faces are accepted;
+a variable face draws its default instance, and FreeType rasterizes CFF
+glyphs, with no attempt to match the native OpenType driver. Glyph-index text
+draws the indices in whichever face was realized, as natively, even when
+that face substitutes for the requested one (the substitution is reported).
 
 Layout, metrics and face selection follow native GDI, but antialiased glyph
 coverage is FreeType's (gray for ANTIALIASED_QUALITY, LCD filtering for the
@@ -309,7 +337,7 @@ the codec and reference columns against the code and fixtures.
 | `POLYDRAW16` | typed | full | yes |  |
 | `CREATEMONOBRUSH` | typed | full | yes | Colours come from the text and background colours. |
 | `CREATEDIBPATTERNBRUSHPT` | typed | full | yes |  |
-| `EXTCREATEPEN` | typed | full | yes | Cosmetic, alternate and user-styled pens; geometric pens with any cap, join, dash, hatch or DIB pattern. |
+| `EXTCREATEPEN` | typed | full | yes | Cosmetic, alternate and user-styled pens; geometric pens with any cap, join, dash, hatch or DIB pattern. Only a solid geometric pen may have zero width. |
 | `POLYTEXTOUTA` | typed | partial | yes | Each entry plays as ExtTextOut, always with its rectangle and advances. |
 | `POLYTEXTOUTW` | typed | partial | yes | Each entry plays as ExtTextOut, always with its rectangle and advances. |
 | `SETICMMODE` | typed | full | yes | No effect on a bitmap DC. |
@@ -327,7 +355,7 @@ the codec and reference columns against the code and fixtures.
 | `COLORCORRECTPALETTE` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEA` | typed | full | yes | No effect on a bitmap DC. |
 | `SETICMPROFILEW` | typed | full | yes | No effect on a bitmap DC. |
-| `ALPHABLEND` | typed | full | yes | Constant and per-pixel alpha with nearest sampling. |
+| `ALPHABLEND` | typed | partial | yes | Constant and per-pixel alpha with nearest sampling. BlendFlags bits other than bit 0 (applications write `0x80`) are ignored, as natively; bit 0 changes native blend rounding and is reported as an omission. |
 | `SETLAYOUT` | typed | full | yes | Mirrors the playback transform about the reference device width; the DC layout is unchanged. |
 | `TRANSPARENTBLT` | typed | full | yes | Stretches without combining samples, skipping the key colour. |
 | `GRADIENTFILL` | typed | full | yes | Rectangle records reserve twelve bytes per mesh; without it native playback stops. |
@@ -357,7 +385,9 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   `ModifyWorldTransform` is written as given. Once the DC has held a
   non-identity world transform, whatever follows, GM_COMPATIBLE ellipses,
   rounded rectangles, arcs, chords and pies keep their far edges in their
-  bounds; rectangles do not.
+  bounds; rectangles do not. A GM_COMPATIBLE ellipse, rounded rectangle,
+  arc, chord, pie or `ArcTo` whose inclusive edges turn its box over is not
+  recorded at all.
 - `OffsetViewportOrgEx` is written as `SetViewportOrgEx` of the result.
   Escapes (`MFCOMMENT` included) and `SetMapperFlags` leave no record;
   `gdi_comment` writes `EMR_GDICOMMENT`.
@@ -373,7 +403,10 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   their figure's floored and rounded-up extremes, and a flood fill claims
   the whole device. Under rotation or shear, points count the pixels their
   exact 28.4 positions lie across, and a box its four corners, its far edges
-  exclusive except for a rectangle's. Record and header bounds
+  exclusive except for a rectangle's; ellipses, rounded rectangles, arcs,
+  chords and pies (with a visible, non-inside-frame pen) instead span their
+  drawn figure's floored and rounded-up 28.4 points, Bézier control points
+  included. Record and header bounds
   are clipped to the clip region's bounding box; a figure with neither pen
   nor brush adds nothing.
 - Transfer sources are written as `GetDIBits` returns a source DC's bitmap:
@@ -409,13 +442,23 @@ emulating the recording DC on the reference device (MM_TEXT, GM_COMPATIBLE):
   overlapping caps can cancel. Shapes and arcs take the playback figures; in
   `GM_COMPATIBLE`, `AngleArc` builds them as in `GM_ADVANCED`, and `ArcTo` as
   described above. A path without figures makes no region: `SelectClipPath`
-  then keeps the clip.
+  then keeps the clip. A failed `PolyDraw` is still recorded and leaves the
+  path as playback describes. The region's box also reaches, for each
+  figure without area (an open line closed onto itself), the scan row each
+  non-horizontal edge ends at: the first row whose pixel centre it does not
+  reach, above the coverage, or the row before it below. A recording DC's
+  cached device position follows playback's, except that its drawing calls
+  refresh a valid cached position under the current transform instead of
+  dropping it; after an arc under rotation or shear, a one-pixel pen's
+  bounds count only the exact end point's pixel.
 - A wide stroke reaches past its figure's 28.4 bounds by, on each axis, the
   larger device magnitude of the pen width's (w, w) and (w, -w) vectors,
   halved, plus one pixel; square caps add half of that again, and mitred
   strokes (`Rectangle` frames, and geometric pens with miter joins) take it
   times the miter limit. The low edges round down and the high edges up. A
-  call following an arc starts from the exact 28.4 point the arc left.
+  call following an arc starts from the exact 28.4 point the arc left. A
+  zero-width geometric pen is not a one-pixel pen here: it reaches the one
+  pixel of a zero width.
 - Without an explicit frame, the frame is the bounds in 0.01 mm of the
   reference device; the header's micrometre extension is the reference
   display's size at 96 DPI.
@@ -443,6 +486,10 @@ Wide pens are widened as native GDI widens a path
 replaces each figure with the outlines, and a wide stroke fills them with the
 winding rule. `Rectangle` frames are the exception described under
 transforms.
+
+`ExtCreatePen` accepts a zero width only for a solid geometric pen, which
+draws like a geometric pen of width one with its caps and joins; a styled
+geometric pen of zero width fails to create.
 
 - Each figure is walked line by line. A Bézier is flattened as it is walked:
   its first piece takes the start tangent and its last piece the end tangent
@@ -702,3 +749,5 @@ source pixel. A mask bit of 1 copies the source pixel.
 - EMF+ (GDI+) drawing, which native GDI playback does not draw either.
 - Synthetic bold italic above 50 pixels per em under an identity transform
   differs from native along slanted edges.
+- `AlphaBlend` with bit 0 of BlendFlags set: native blending then rounds
+  some mid-range alphas differently; such blends are omissions.

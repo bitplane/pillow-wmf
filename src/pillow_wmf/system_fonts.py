@@ -120,7 +120,7 @@ def catalogue(paths):
                     count = len(collection.fonts)
             for index in range(count):
                 with TTFont(path, fontNumber=index, lazy=True) as font:
-                    if "glyf" not in font or "fvar" in font:
+                    if not any(tag in font for tag in ("glyf", "CFF ", "CFF2")):
                         continue
                     family = font["name"].getBestFamilyName()
                     if not family:
@@ -361,12 +361,8 @@ class SystemFontCollection(FontCollection):
 
     def layout_font(self, request, face, scale, *, characters=None, advanced=False, aspect=1):
         if characters is None:
-            if face is self._symbol_face or (face.family.casefold(), face.weight, face.italic) != (
-                self._name(request).casefold(),
-                request.weight or 400,
-                bool(request.italic),
-            ):
-                raise UnsupportedOperation("Glyph-index text requires the requested font, not a substitute")
+            # Glyph indices address whichever face was realized, as natively,
+            # even when it substitutes for the requested one.
             return self.realize(request, face, scale, advanced=advanced, aspect=aspect)
         missing = {ord(c) for c in characters if ord(c) >= 32 and not face.cmap.get(ord(c))}
         linked = []

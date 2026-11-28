@@ -68,6 +68,12 @@ class DrawingState:
     # The exact 28.4 current point after ArcTo or AngleArc, which the next
     # LineTo, PolylineTo or PolyBezierTo starts from; None otherwise.
     fixed_position: tuple[int, int] | None = None
+    # The DC's cached 28.4 device position, which ArcTo starts from: the
+    # device origin on a fresh DC and the device end point after LineTo,
+    # PolylineTo, PolyBezierTo or PolyDraw; None (recomputed from the
+    # logical position) after MoveTo, arcs, text and other drawing. A world
+    # transform change does not update it.
+    device_position: tuple[int, int] | None = (0, 0)
     # (logical position, 28.4 device position) after current-position text:
     # the next such run continues from the device point while the logical
     # position is unchanged.

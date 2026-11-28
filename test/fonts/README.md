@@ -36,3 +36,9 @@ modern Windows substitutes the requested Mac face/charset.
 test characters and their ANSI byte interpretations, distinguishing direct GDI
 encoding from WMF's charset normalization without system font substitution.
 The byte generator is [`scripts/utf8_cases.py`](../../scripts/utf8_cases.py).
+
+`cff.otf` (family "Pillow WMF CFF") repeats the layout font's A and B as
+unhinted CFF charstrings and adds a cubic-arc ring (C), thin strokes (D), a
+hairline frame (E) and a narrow wedge (F), so PostScript-outline faces can be
+tested beside the TrueType face. Regenerate it with
+`.venv/bin/python scripts/cff_font.py`.

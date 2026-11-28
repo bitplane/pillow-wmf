@@ -40,6 +40,7 @@ from ..constants import (
     MM_TEXT,
     PS_INSIDEFRAME,
     PS_NULL,
+    PS_SOLID,
 )
 from ..ellipse import advanced_arc, arc_figure
 from ..gdi import Call, Handle, InvalidOperation, UnsupportedOperation
@@ -49,6 +50,7 @@ from ..mapping import IDENTITY_TRANSFORM, REFERENCE_DEVICE, Mapping, ReferenceDe
 from ..mapping import fixed as to_fixed
 from ..numeric import float32
 from ..objects import BitmapData, EncodedText, FontRequest, RegionGeometry
+from ..raster import POSITION_INVALIDATING_CALLS
 from ..stroke import realize_pen
 from ..trace import TraceContext
 from ..world import modified as modified_world
@@ -57,6 +59,7 @@ from .file import Metafile
 from .objects import FACE_NAME_BYTES, LogFont
 
 STOCK_OBJECT = 0x80000000
+_RADIAL_ARGUMENTS = ("left", "top", "right", "bottom", "start_x", "start_y", "end_x", "end_y")
 DEFAULT_PALETTE = 15
 NULL_PEN = 8
 BLACK_PEN = 7
@@ -257,6 +260,46 @@ def _log_font(request: FontRequest) -> LogFont:
     return LogFont(**values, face_name=encoded.ljust(FACE_NAME_BYTES, b"\0"))
 
 
+def _region_box(spans, contours) -> Rect:
+    """The inclusive box GDI gives the region a path's fill coverage makes.
+
+    A figure without area (an open line closed onto itself) covers nothing,
+    yet each of its non-horizontal edges ends a scan band at the first pixel
+    row whose centre it does not reach, stretching the box: up to that row
+    above the coverage, or to the row before it below. With no coverage the
+    region is empty.
+    """
+    box = _box(point for y, start, end in spans for point in ((start, y), (end - 1, y)))
+    if box is None:
+        return (0, 0, -1, -1)
+    left, top, right, bottom = box
+    for points in contours:
+        closed = list(zip(points, points[1:] + points[:1], strict=True))
+        if sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in closed):
+            continue  # A figure with area bounds the region by its coverage.
+        for (_, y0), (_, y1) in closed:
+            if y0 != y1:
+                end = -((8 - max(y0, y1)) // 16)  # ceil((max - 8) / 16) in 28.4
+                top, bottom = min(top, end), max(bottom, end - 1)
+    return left, top, right, bottom
+
+
+def _poly_draw_valid(types, count) -> bool:
+    """Whether PolyDraw accepts these point types: moves, lines and whole cubics."""
+    if len(types) != count:
+        return False
+    index = 0
+    while index < count:
+        kind = types[index] & ~1
+        if kind in (2, 6):  # PT_LINETO, PT_MOVETO
+            index += 1
+        elif kind == 4 and index + 2 < count and all(t & ~1 == 4 for t in types[index : index + 3]):
+            index += 3
+        else:
+            return False
+    return True
+
+
 @dataclass
 class _Object:
     kind: str
@@ -289,6 +332,9 @@ class _State:
     # The exact 28.4 device point an arc left the current position at, which
     # the next *To call starts from; None once a logical point sets it.
     fixed_position: tuple[int, int] | None = None
+    # The cached 28.4 device position ArcTo starts from (see raster_state).
+    # On a recording DC drawing refreshes it under the current transform.
+    device_position: tuple[int, int] | None = (0, 0)
     # Whether the DC has ever held a non-identity world transform. From then
     # on GM_COMPATIBLE curved shapes keep their far edges in their bounds,
     # whatever transform follows.
@@ -453,10 +499,13 @@ class Recorder(TraceContext):
         each axis takes the larger magnitude, halved, plus one pixel. Square
         caps add half of that again; mitred strokes (Rectangle frames, and
         geometric pens with miter joins) take it times the miter limit. Null
-        and one-pixel pens reach nothing.
+        and one-pixel pens reach nothing, but a zero-width geometric pen reaches
+        its one pixel.
         """
         pen = state.pen
-        if pen.style == PS_NULL or abs(pen.width * state.mapping.linear_scale[0]) <= 1:
+        zero_geometric = pen.width == 0 and pen.realize is not None and pen.realize[0] == "ext_create_pen"
+        zero_geometric = zero_geometric and bool(pen.realize[1]["style"] & 0x00010000)
+        if pen.style == PS_NULL or (abs(pen.width * state.mapping.linear_scale[0]) <= 1 and not zero_geometric):
             return (0, 0)
         mapping, width = state.mapping, pen.width
         if mapping.rotated:
@@ -509,7 +558,9 @@ class Recorder(TraceContext):
             if self._extent(state) != (0, 0):
                 return (), (state.fixed_position,), ()
             x, y = state.fixed_position
-            return (state.position,), (), (((x + 15) >> 4, (y + 15) >> 4),)
+            pixel = ((x + 15) >> 4, (y + 15) >> 4)
+            # Under rotation or shear only the exact point counts.
+            return ((), (), (pixel,)) if state.mapping.rotated else ((state.position,), (), (pixel,))
         return (state.position,), (), ()
 
     def _clipped(self, state: _State, box: Rect | None) -> Rect | None:
@@ -564,6 +615,10 @@ class Recorder(TraceContext):
         if state.recording_path and state.shadow is not None and name in _PATH_CALLS:
             self._follow_path(call, state)
         handler(a, state, records)
+        if name in POSITION_INVALIDATING_CALLS and state.device_position is not None:
+            # A recording DC's drawing refreshes a valid cached device
+            # position under the current transform.
+            state.device_position = state.mapping.fixed_point(*state.position)
         return records
 
     # Objects
@@ -631,6 +686,10 @@ class Recorder(TraceContext):
             )
 
         geometric = bool(style & 0x00010000)
+        if geometric and width <= 0 and style & 15 != PS_SOLID:
+            # Only solid geometric pens may have zero width; creation fails.
+            self._created(state, _Object("pen", null=True))
+            return
         self._created(
             state,
             _Object(
@@ -839,6 +898,7 @@ class Recorder(TraceContext):
         self._draw(state, bounds)
         if position is not None:
             state.position = position
+            state.device_position = None
             state.text_position = (position, fixed_position)
             state.fixed_position = None
 
@@ -969,9 +1029,39 @@ class Recorder(TraceContext):
 
     # Drawing
 
+    def _turned_over(self, state, a, right, bottom) -> bool:
+        """Whether GM_COMPATIBLE's inclusive edges turn a curved shape's box over.
+
+        The recording DC then records nothing, and nothing is drawn.
+        """
+        return state.graphics_mode == GM_COMPATIBLE and (
+            right < a["left"] <= a["right"] or bottom < a["top"] <= a["bottom"]
+        )
+
+    def _figure_box(self, state, call) -> Rect:
+        """The device box a rotated curved shape's figure spans, control points included.
+
+        The shape is built as it is drawn, on a shadow DC with the recording
+        DC's transform; the box floors its least and ceils its greatest 28.4
+        coordinates.
+        """
+        from ..raster import RasterContext
+
+        shadow = RasterContext(1, 1, trace_calls=False)
+        shadow.mapping = deepcopy(state.mapping)
+        shadow._state.arc_direction = state.arc_direction
+        shadow.begin_path()
+        shadow.invoke(call)
+        shadow.end_path()
+        points = [point for path in shadow._path_figures(close=False) for command in path.commands for point in command]
+        xs, ys = [x for x, _ in points], [y for _, y in points]
+        return min(xs) >> 4, min(ys) >> 4, (max(xs) + 15) >> 4, (max(ys) + 15) >> 4
+
     def _record_box(self, a, state, records, record_type, *extra):
         left, top = a["left"], a["top"]
         right, bottom = self._inclusive(state, a["right"], a["bottom"])
+        if record_type is not fixed.Rectangle and self._turned_over(state, a, right, bottom):
+            return
         if record_type is fixed.Rectangle and state.recording_path and state.pen.style != PS_INSIDEFRAME:
             # Inside-frame pens inset the box; the shadow DC follows that.
             box = self._device_rect(state, left, top, a["right"], a["bottom"])
@@ -983,6 +1073,12 @@ class Recorder(TraceContext):
         records.append(record_type(left, top, right, bottom, *extra))
         rectangle = record_type is fixed.Rectangle
         box = self._device_rect(state, left, top, a["right"], a["bottom"], closed=rectangle, curved=not rectangle)
+        if state.mapping.rotated and not rectangle and state.pen.style not in (PS_NULL, PS_INSIDEFRAME):
+            name = "ellipse" if record_type is fixed.Ellipse else "round_rect"
+            arguments = {k: a[k] for k in ("left", "top", "right", "bottom")}
+            if extra:
+                arguments |= {"ellipse_width": extra[0], "ellipse_height": extra[1]}
+            box = self._figure_box(state, Call.make(name, **arguments))
         if state.pen.style == PS_NULL:
             if state.brush_null:
                 return  # Neither outline nor interior is drawn.
@@ -1004,14 +1100,18 @@ class Recorder(TraceContext):
 
     def _radial(self, a, state, records, record_type):
         """Arcs, chords and pies count only the drawn sweep, and a pie its centre."""
-        self._untraced(state)
         left, top = a["left"], a["top"]
         right, bottom = self._inclusive(state, a["right"], a["bottom"])
+        if self._turned_over(state, a, right, bottom):
+            return
+        self._untraced(state)
         start, end = (a["start_x"], a["start_y"]), (a["end_x"], a["end_y"])
         self._arc_direction(state, records)
         records.append(record_type(left, top, right, bottom, *start, *end))
         x0, y0, x1, y1 = self._device_rect(state, left, top, a["right"], a["bottom"], curved=True)
         closure = {fixed.Arc: "open", fixed.ArcTo: "open", fixed.Chord: "chord", fixed.Pie: "pie"}[record_type]
+        # A logical box without width or height sweeps its whole ellipse.
+        degenerate = a["left"] == a["right"] or a["top"] == a["bottom"]
         figure = arc_figure(
             x0,
             y0,
@@ -1020,11 +1120,14 @@ class Recorder(TraceContext):
             self._device(state, *start),
             self._device(state, *end),
             closure=closure,
-            radial_bounds=(x0, y0, x1 + 1, y1 + 1),
+            radial_bounds=(x0, y0, x0 if degenerate else x1 + 1, y1 + 1),
         )
         points = [point for command in figure.commands for point in command]
         xs, ys = [x for x, _ in points], [y for _, y in points]
         box = (min(xs) >> 4, min(ys) >> 4, (max(xs) + 15) >> 4, (max(ys) + 15) >> 4)
+        if state.mapping.rotated and state.pen.style not in (PS_NULL, PS_INSIDEFRAME):
+            name = {fixed.Arc: "arc", fixed.ArcTo: "arc", fixed.Chord: "chord", fixed.Pie: "pie"}[record_type]
+            box = self._figure_box(state, Call.make(name, **{k: a[k] for k in _RADIAL_ARGUMENTS}))
         if record_type is fixed.ArcTo:
             box = _union(box, self._device_box(state, (state.position,)))
         self._draw(state, self._stroked(state, box))
@@ -1068,13 +1171,19 @@ class Recorder(TraceContext):
             for value, (scale, origin) in zip(point, mapping._transform(), strict=True)
         )
 
-    def _stroke_from_position(self, state, path, end):
+    def _stroke_from_position(self, state, path, end, *, cached=False):
         """Account a line from the current position into ``path``; move to ``end``.
 
-        The current position is the exact logical end point, floored.
+        The current position is the exact logical end point, floored. With
+        ``cached`` the line starts from the cached device position while it
+        is valid.
         """
         points = [point for command in path.commands for point in command]
-        logical, exact, pixels = self._start(state)
+        if cached and state.device_position is not None:
+            x, y = state.device_position
+            logical, exact, pixels = (), ((x, y),), ((x >> 4, y >> 4),)
+        else:
+            logical, exact, pixels = self._start(state)
         if pixels:
             logical_box = self._device_box(state, logical)
             start = _union(logical_box, _box(pixels)) if logical_box is not None else _box(pixels)
@@ -1082,17 +1191,25 @@ class Recorder(TraceContext):
             start = self._device_box(state, logical)
         if self._extent(state) != (0, 0):
             box = self._stroked(state, start, fixed_points=(*exact, *points))
+        elif state.mapping.rotated:
+            # A rotated figure spans the pixels its 28.4 points lie across.
+            xs, ys = [x for x, _ in points], [y for _, y in points]
+            box = (min(xs) >> 4, min(ys) >> 4, (max(xs) + 15) >> 4, (max(ys) + 15) >> 4)
+            box = self._stroked(state, _union(box, start), fixed_points=exact)
         else:
             box = _box(((x + 15) // 16, (y + 15) // 16) for x, y in points)
             box = self._stroked(state, _union(box, start), fixed_points=exact)
         self._draw(state, box)
         state.position = (floor(end[0]), floor(end[1]))
+        state.device_position = None
         state.fixed_position = path.commands[-1][-1]
 
     def _record_arc_to(self, a, state, records):
-        self._untraced(state)
         left, top = a["left"], a["top"]
         right, bottom = self._inclusive(state, a["right"], a["bottom"])
+        if self._turned_over(state, a, right, bottom):
+            return
+        self._untraced(state)
         start, end = (a["start_x"], a["start_y"]), (a["end_x"], a["end_y"])
         self._arc_direction(state, records)
         records.append(fixed.ArcTo(left, top, right, bottom, *start, *end))
@@ -1109,11 +1226,15 @@ class Recorder(TraceContext):
         if path is None:
             return  # A box narrower than an inside-frame pen: the call does nothing.
         # The current position is the arc's 28.4 end, floored to a logical point.
-        self._stroke_from_position(state, path, self._floor_logical(state, path.commands[-1][-1]))
+        # A DC whose position was never set starts ArcTo from the device origin.
+        self._stroke_from_position(
+            state, path, self._floor_logical(state, path.commands[-1][-1]), cached=state.fixed_position is None
+        )
 
     def _record_move_to(self, a, state, records):
         records.append(fixed.MoveToEx(a["x"], a["y"]))
         state.position, state.fixed_position = (a["x"], a["y"]), None
+        state.device_position = None
         self._trace(state, ((a["x"], a["y"]),))
 
     def _record_line_to(self, a, state, records):
@@ -1125,6 +1246,7 @@ class Recorder(TraceContext):
             box = _union(box, _box(pixels))
         self._draw(state, self._stroked(state, box, fixed_points=exact))
         state.position, state.fixed_position = (a["x"], a["y"]), None
+        state.device_position = state.mapping.fixed_point(a["x"], a["y"])
 
     def _points(self, a, state, records, wide, narrow, *, key="points", to=False):
         points = tuple(tuple(point) for point in a[key])
@@ -1149,8 +1271,10 @@ class Recorder(TraceContext):
         written = None if state.recording_path else bounds
         records.append(record_type(written or (0, 0, -1, -1), points, *extra))
         self._draw(state, bounds)
-        if to and points:
+        if to and points and ("types" not in a or _poly_draw_valid(a["types"], len(points))):
+            # A PolyDraw that fails validation is recorded but moves nothing.
             state.position, state.fixed_position = points[-1], None
+            state.device_position = state.mapping.fixed_point(*points[-1])
 
     def _record_polyline(self, a, state, records):
         self._points(a, state, records, variable.Polyline, variable.Polyline16)
@@ -1302,10 +1426,17 @@ class Recorder(TraceContext):
             try:
                 if not shadow._state.path:
                     shadow._state.position = state.position
+                    shadow._state.device_position = state.device_position
                     shadow._state.fixed_position = state.fixed_position
                 shadow.mapping = deepcopy(state.mapping)
-                shadow._stroke_from_position(path, self._floor_logical(state, path.commands[-1][-1]))
-            except (UnsupportedOperation, InvalidOperation):
+                shadow._stroke_from_position(
+                    path,
+                    self._floor_logical(state, path.commands[-1][-1]),
+                    cached=state.fixed_position is None,
+                )
+            except InvalidOperation:
+                pass  # The call failed before changing the path, as natively.
+            except UnsupportedOperation:
                 state.shadow = None
             return
         if call.name == "angle_arc" and graphics_mode != GM_ADVANCED:
@@ -1318,10 +1449,13 @@ class Recorder(TraceContext):
                 # The path starts at the DC's current position; afterwards the
                 # shadow keeps its own, so figures continue across curves.
                 shadow._state.position = state.position
+                shadow._state.device_position = state.device_position
                 shadow._state.fixed_position = state.fixed_position
             shadow._state.arc_direction = state.arc_direction
             shadow.invoke(call)
-        except (UnsupportedOperation, InvalidOperation):
+        except InvalidOperation:
+            pass  # The call failed before changing the path, as natively.
+        except UnsupportedOperation:
             state.shadow = None
 
     def _record_close_figure(self, a, state, records):
@@ -1334,9 +1468,9 @@ class Recorder(TraceContext):
 
     def _record_widen_path(self, a, state, records):
         records.append(fixed.WidenPath())
-        state.widened = True
         shadow = state.shadow
         if shadow is None:
+            state.widened = True
             return
         try:
             # The shadow DC widens the path with the selected pen, as natively.
@@ -1345,8 +1479,11 @@ class Recorder(TraceContext):
             shadow.mapping.graphics_mode = state.graphics_mode
             shadow.set_miter_limit(state.miter_limit)
             shadow.widen_path()
-        except (UnsupportedOperation, InvalidOperation):
+        except InvalidOperation:
+            return  # WidenPath failed and left the path as it was.
+        except UnsupportedOperation:
             state.shadow = None
+        state.widened = True
 
     def _clip_path_box(self, state) -> Rect | None:
         """The bounding box of the region SelectClipPath makes from the path.
@@ -1372,7 +1509,7 @@ class Recorder(TraceContext):
             ys = [y for points in contours for _, y in points]
             left, top, right, bottom = min(xs) // 16 - 1, min(ys) // 16 - 1, max(xs) // 16 + 2, max(ys) // 16 + 2
             spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
-            return _box(point for y, start, end in spans for point in ((start, y), (end - 1, y))) or (0, 0, -1, -1)
+            return _region_box(spans, contours)
         if figures is None:
             raise UnsupportedOperation("SelectClipPath of this path is not recorded")
         figures = [(points, closed) for points, closed in figures if points]
@@ -1385,8 +1522,7 @@ class Recorder(TraceContext):
         right, bottom = (max(xs) + margin) // 16 + 1, (max(ys) + margin) // 16 + 1
         contours = tuple(list(points) for points, _ in figures)
         spans = coverage_spans(contours, left, top, right, bottom, fill_mode=state.fill_mode)
-        box = _box(point for y, start, end in spans for point in ((start, y), (end - 1, y)))
-        return box or (0, 0, -1, -1)
+        return _region_box(spans, contours)
 
     def _record_end_path(self, a, state, records):
         records.append(fixed.EndPath())
@@ -1765,6 +1901,7 @@ _SAVED = (
     "pen",
     "position",
     "fixed_position",
+    "device_position",
     "clip",
     "miter_limit",
     "brush_null",
